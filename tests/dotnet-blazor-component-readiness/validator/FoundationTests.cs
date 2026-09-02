@@ -775,10 +775,10 @@ internal static class FoundationTests
 
         Assert(
             bash.StandardError.Contains(expectedMessage, StringComparison.Ordinal),
-            $"Bash {name} message");
+            $"Bash {name} message. Actual stderr: {bash.StandardError}");
         Assert(
             powershell.StandardError.Contains(expectedMessage, StringComparison.Ordinal),
-            $"PowerShell {name} message");
+            $"PowerShell {name} message. Actual stderr: {powershell.StandardError}");
         AssertEqual(
             NormalizeLineEndings(bash.StandardError),
             NormalizeLineEndings(powershell.StandardError),
@@ -910,9 +910,16 @@ internal static class FoundationTests
         AssertEqual(4, bashInvocations.Length, "launcher invocation count");
         AssertEqual("CALL\t--version", bashInvocations[0], "SDK invocation arguments");
         Assert(
+            bashInvocations[1].StartsWith("CALL\tmsbuild\t", StringComparison.Ordinal) &&
             bashInvocations[1].Contains(
-                "CALL\tmsbuild\t" +
-                Path.Combine(validatorDirectory, "BlazorComponentReadiness.Validator.csproj") +
+                Path.Combine(
+                    "plugins",
+                    "dotnet-blazor-component-readiness",
+                    "skills",
+                    "blazor-component-readiness",
+                    "scripts",
+                    "validator",
+                    "BlazorComponentReadiness.Validator.csproj") +
                 "\t-target:Restore",
                 StringComparison.Ordinal),
             "restore invocation arguments");
@@ -1143,10 +1150,18 @@ internal static class FoundationTests
             "undocumented validator exit parity");
     }
 
-    private static string[] ReadNormalizedInvocations(string logPath, string readinessTemp) =>
-        File.ReadAllLines(logPath)
-            .Select(line => line.Replace(readinessTemp, "<TEMP>", StringComparison.Ordinal))
+    private static string[] ReadNormalizedInvocations(string logPath, string readinessTemp)
+    {
+        var aliases = OperatingSystem.IsMacOS() &&
+            readinessTemp.StartsWith("/tmp/", StringComparison.Ordinal)
+                ? new[] { "/private" + readinessTemp, readinessTemp }
+                : [readinessTemp];
+        return File.ReadAllLines(logPath)
+            .Select(line => aliases.Aggregate(
+                line,
+                (current, alias) => current.Replace(alias, "<TEMP>", StringComparison.Ordinal)))
             .ToArray();
+    }
 
     private static string NormalizeLineEndings(string value) =>
         value.Replace("\r\n", "\n", StringComparison.Ordinal);

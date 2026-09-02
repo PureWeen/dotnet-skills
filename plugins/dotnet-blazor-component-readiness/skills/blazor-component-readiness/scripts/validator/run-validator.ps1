@@ -47,7 +47,7 @@ function Resolve-PhysicalDirectoryPath {
                 throw "Could not resolve symbolic-link directory: $candidate"
             }
 
-            $current = $target.FullName
+            $current = Resolve-PhysicalDirectoryPath $target.FullName
         }
         else {
             $current = $item.FullName
@@ -57,7 +57,7 @@ function Resolve-PhysicalDirectoryPath {
     return [IO.Path]::GetFullPath($current)
 }
 
-$scriptDir = $PSScriptRoot
+$scriptDir = Resolve-PhysicalDirectoryPath $PSScriptRoot
 $pluginRoot = Resolve-PhysicalDirectoryPath (Join-Path $scriptDir '../../../..')
 $project = Join-Path $scriptDir 'BlazorComponentReadiness.Validator.csproj'
 $restoreConfig = Join-Path $scriptDir 'restore-offline.config'
