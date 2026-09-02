@@ -173,7 +173,14 @@ try {
         exit 3
     }
 
-    & dotnet $validator @ValidatorArguments
+    $previousSkillRoot = $env:READINESS_SKILL_ROOT
+    $env:READINESS_SKILL_ROOT = [IO.Path]::GetFullPath((Join-Path $scriptDir '../..'))
+    try {
+        & dotnet $validator @ValidatorArguments
+    }
+    finally {
+        $env:READINESS_SKILL_ROOT = $previousSkillRoot
+    }
     $validatorExit = $LASTEXITCODE
     if ($validatorExit -in 0, 1, 2, 3) {
         exit $validatorExit

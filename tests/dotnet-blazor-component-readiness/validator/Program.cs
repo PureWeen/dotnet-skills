@@ -170,8 +170,9 @@ Assert(
 
 FoundationTests.Run(root, plugin);
 EvidenceTests.Run(root, plugin);
+AssessmentTests.Run(root, plugin);
 
-Console.WriteLine("All Blazor component readiness Commit 1 through Commit 3 tests passed.");
+Console.WriteLine("All Blazor component readiness Commit 1 through Commit 4 tests passed.");
 
 static string FindRepositoryRoot()
 {

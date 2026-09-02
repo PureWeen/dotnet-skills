@@ -108,7 +108,7 @@ if [[ ! -f "$validator" || -L "$validator" ]]; then
   exit 3
 fi
 
-if dotnet "$validator" "$@"; then
+if READINESS_SKILL_ROOT="$script_dir/../.." dotnet "$validator" "$@"; then
   exit 0
 else
   validator_exit=$?

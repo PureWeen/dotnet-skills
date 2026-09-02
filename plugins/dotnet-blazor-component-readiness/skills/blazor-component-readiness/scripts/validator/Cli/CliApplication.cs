@@ -14,11 +14,19 @@ public static class CliApplication
 
         Commands:
           package inspect    Inspect the exact identity and digest of a local .nupkg.
+          inputs discover    Canonicalize discovery candidates into a draft input manifest.
+          inputs confirm     Freeze a validated draft as an immutable confirmed manifest.
+          inputs validate    Recheck confirmed manifest package and local input bytes.
           evidence ledger-build
                              Build an immutable repository or component source ledger.
           evidence ledger-validate
                              Validate canonical source-ledger bytes and identities.
           evidence bundle    Select evidence into a self-contained assessment bundle.
+          assessment init    Create canonical unified, package, or component rows.
+          assessment validate
+                             Validate an assessment against inputs, rubric, and evidence.
+          report render      Render immutable deterministic revision 0001.
+          report verify      Verify report bytes and every validation-manifest binding.
           help               Show this help.
 
         Run 'readiness-validator <command> --help' for command details.
@@ -54,6 +62,21 @@ public static class CliApplication
             if (string.Equals(args[0], "evidence", StringComparison.Ordinal))
             {
                 return EvidenceCommand.Run(args.Skip(1).ToArray(), output);
+            }
+
+            if (string.Equals(args[0], "inputs", StringComparison.Ordinal))
+            {
+                return InputsCommand.Run(args.Skip(1).ToArray(), output);
+            }
+
+            if (string.Equals(args[0], "assessment", StringComparison.Ordinal))
+            {
+                return AssessmentCommand.Run(args.Skip(1).ToArray(), output);
+            }
+
+            if (string.Equals(args[0], "report", StringComparison.Ordinal))
+            {
+                return ReportCommand.Run(args.Skip(1).ToArray(), output);
             }
 
             if (!string.Equals(args[0], "package", StringComparison.Ordinal))

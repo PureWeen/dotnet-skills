@@ -1,0 +1,52 @@
+namespace BlazorComponentReadiness.Validator.Contracts;
+
+public sealed record InputPackage(
+    string PackageId,
+    string Version,
+    Sha256Digest NupkgDigest,
+    string NupkgPath);
+
+public sealed record InputSource(
+    string Availability,
+    string? RepositoryUri,
+    string? Commit,
+    string? Mapping,
+    string? Confidence);
+
+public sealed record InputDocument(
+    string Url,
+    string ContentPath,
+    Sha256Digest ContentDigest);
+
+public sealed record InputPackageSource(
+    string Kind,
+    string Locator,
+    string ContentPath,
+    Sha256Digest ContentDigest);
+
+public sealed record OwnerInput(
+    string Basename,
+    string Provenance,
+    Sha256Digest ContentDigest,
+    long Size);
+
+public sealed record InputComponent(
+    string Id,
+    string DisplayName,
+    IReadOnlyList<string> RenderModes);
+
+public sealed record InputExclusion(
+    string Subject,
+    string Rationale);
+
+public sealed record InputManifest(
+    int SchemaVersion,
+    string State,
+    string Acquisition,
+    InputPackage Package,
+    InputSource Source,
+    IReadOnlyList<InputDocument> Documentation,
+    IReadOnlyList<InputPackageSource> PackageSources,
+    IReadOnlyList<OwnerInput> OwnerInputs,
+    IReadOnlyList<InputComponent> Components,
+    IReadOnlyList<InputExclusion> Exclusions);
