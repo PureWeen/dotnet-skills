@@ -14,9 +14,14 @@ public static class CliApplication
 
         Commands:
           package inspect    Inspect the exact identity and digest of a local .nupkg.
+          evidence ledger-build
+                             Build an immutable repository or component source ledger.
+          evidence ledger-validate
+                             Validate canonical source-ledger bytes and identities.
+          evidence bundle    Select evidence into a self-contained assessment bundle.
           help               Show this help.
 
-        Run 'readiness-validator package inspect --help' for command details.
+        Run 'readiness-validator <command> --help' for command details.
         """;
 
     private const string PackageInspectHelp =
@@ -44,6 +49,11 @@ public static class CliApplication
             {
                 output.WriteLine(RootHelp);
                 return ExitCodes.Success;
+            }
+
+            if (string.Equals(args[0], "evidence", StringComparison.Ordinal))
+            {
+                return EvidenceCommand.Run(args.Skip(1).ToArray(), output);
             }
 
             if (!string.Equals(args[0], "package", StringComparison.Ordinal))
@@ -128,5 +138,4 @@ public static class CliApplication
         string.Equals(value, "--help", StringComparison.Ordinal) ||
         string.Equals(value, "-h", StringComparison.Ordinal);
 
-    private sealed class UsageException(string message) : Exception(message);
 }

@@ -436,6 +436,8 @@ internal static class FoundationTests
 
             TestExternalArtifactGuard(validatorDirectory, hostileRoot, environment);
             TestSdkMajorGuard(validatorDirectory, hostileRoot, testRoot);
+            TestReadinessTempParity(validatorDirectory, hostileRoot, testRoot, environment);
+            TestLauncherInvocationParity(validatorDirectory, hostileRoot, testRoot);
         }
         finally
         {
@@ -640,6 +642,10 @@ internal static class FoundationTests
         Assert(
             powershell.StandardError.Contains("requires the repository-selected .NET 11 SDK", StringComparison.Ordinal),
             "PowerShell SDK major guard message");
+        AssertEqual(
+            NormalizeLineEndings(bash.StandardError),
+            NormalizeLineEndings(powershell.StandardError),
+            "launcher SDK mismatch failure parity");
     }
 
     private static void TestExternalArtifactGuard(
@@ -678,7 +684,345 @@ internal static class FoundationTests
         Assert(
             powershell.StandardError.Contains("outside the plugin tree", StringComparison.Ordinal),
             "PowerShell external artifact guard");
+        AssertEqual(
+            NormalizeLineEndings(bash.StandardError),
+            NormalizeLineEndings(powershell.StandardError),
+            "launcher plugin-membership failure parity");
     }
+
+    private static void TestReadinessTempParity(
+        string validatorDirectory,
+        string workingDirectory,
+        string testRoot,
+        IReadOnlyDictionary<string, string> selectedSdkEnvironment)
+    {
+        var missingParent = Path.Combine(testRoot, "missing-parent", "readiness");
+        AssertLauncherFailureParity(
+            validatorDirectory,
+            workingDirectory,
+            selectedSdkEnvironment,
+            missingParent,
+            "the parent of READINESS_TEMP must already exist",
+            "READINESS_TEMP parent");
+
+        var readinessLink = Path.Combine(testRoot, "readiness-link-inside-plugin");
+        if (TryCreateDirectorySymlink(readinessLink, validatorDirectory, "launcher root"))
+        {
+            AssertLauncherFailureParity(
+                validatorDirectory,
+                workingDirectory,
+                selectedSdkEnvironment,
+                readinessLink,
+                "READINESS_TEMP resolves inside the plugin tree",
+                "READINESS_TEMP resolved membership");
+        }
+
+        var linkedArtifacts = Path.Combine(testRoot, "linked-artifact-root");
+        var packageTarget = Path.Combine(testRoot, "linked-package-target");
+        Directory.CreateDirectory(linkedArtifacts);
+        Directory.CreateDirectory(packageTarget);
+        if (TryCreateDirectorySymlink(
+                Path.Combine(linkedArtifacts, "packages"),
+                packageTarget,
+                "launcher artifact"))
+        {
+            AssertLauncherFailureParity(
+                validatorDirectory,
+                workingDirectory,
+                selectedSdkEnvironment,
+                linkedArtifacts,
+                "external artifact directories cannot be symbolic links",
+                "READINESS_TEMP artifact symlink");
+        }
+    }
+
+    private static void AssertLauncherFailureParity(
+        string validatorDirectory,
+        string workingDirectory,
+        IReadOnlyDictionary<string, string> baseEnvironment,
+        string readinessTemp,
+        string expectedMessage,
+        string name)
+    {
+        var environment = new Dictionary<string, string>(
+            baseEnvironment,
+            StringComparer.OrdinalIgnoreCase)
+        {
+            ["READINESS_TEMP"] = readinessTemp
+        };
+        var bash = RunProcess(
+            "bash",
+            [Path.Combine(validatorDirectory, "run-validator.sh"), "--help"],
+            workingDirectory,
+            environment,
+            expectedExitCode: ExitCodes.EnvironmentFailure);
+        var powershell = RunProcess(
+            "pwsh",
+            [
+                "-NoLogo",
+                "-NoProfile",
+                "-File",
+                Path.Combine(validatorDirectory, "run-validator.ps1"),
+                "--help"
+            ],
+            workingDirectory,
+            environment,
+            expectedExitCode: ExitCodes.EnvironmentFailure);
+
+        Assert(
+            bash.StandardError.Contains(expectedMessage, StringComparison.Ordinal),
+            $"Bash {name} message");
+        Assert(
+            powershell.StandardError.Contains(expectedMessage, StringComparison.Ordinal),
+            $"PowerShell {name} message");
+        AssertEqual(
+            NormalizeLineEndings(bash.StandardError),
+            NormalizeLineEndings(powershell.StandardError),
+            $"{name} failure parity");
+    }
+
+    private static void TestLauncherInvocationParity(
+        string validatorDirectory,
+        string workingDirectory,
+        string testRoot)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var fakeBin = Path.Combine(testRoot, "fake-dotnet");
+        Directory.CreateDirectory(fakeBin);
+        var fakeDotnet = Path.Combine(fakeBin, "dotnet");
+        File.WriteAllText(
+            fakeDotnet,
+            """
+            #!/bin/sh
+            : "${READINESS_DOTNET_LOG:?}"
+            {
+              printf 'CALL'
+              for argument in "$@"; do
+                printf '\t%s' "$argument"
+              done
+              printf '\n'
+            } >> "$READINESS_DOTNET_LOG"
+
+            if [ "$#" -eq 1 ] && [ "$1" = "--version" ]; then
+              printf '%s\n' "${FAKE_SDK_VERSION:-11.0.100}"
+              exit "${FAKE_SDK_EXIT:-0}"
+            fi
+
+            if [ "${1:-}" = "msbuild" ]; then
+              target=
+              output=
+              for argument in "$@"; do
+                case "$argument" in
+                  -target:Restore)
+                    target=restore
+                    ;;
+                  '-target:VerifyNoPackageReferences;Build')
+                    target=build
+                    ;;
+                  -property:BaseOutputPath=*)
+                    output="${argument#-property:BaseOutputPath=}"
+                    ;;
+                esac
+              done
+
+              if [ "$target" = "restore" ]; then
+                exit "${FAKE_RESTORE_EXIT:-0}"
+              fi
+              if [ "$target" = "build" ]; then
+                build_exit="${FAKE_BUILD_EXIT:-0}"
+                if [ "$build_exit" -ne 0 ]; then
+                  exit "$build_exit"
+                fi
+                mkdir -p -- "$output/Release/net11.0"
+                : > "$output/Release/net11.0/BlazorComponentReadiness.Validator.dll"
+                exit 0
+              fi
+              exit 97
+            fi
+
+            case "${1:-}" in
+              */BlazorComponentReadiness.Validator.dll)
+                exit "${FAKE_VALIDATOR_EXIT:-0}"
+                ;;
+            esac
+            exit 98
+            """,
+            new UTF8Encoding(false));
+        File.SetUnixFileMode(
+            fakeDotnet,
+            UnixFileMode.UserRead |
+            UnixFileMode.UserWrite |
+            UnixFileMode.UserExecute);
+
+        var bashTemp = Path.Combine(testRoot, "parity-bash");
+        var powershellTemp = Path.Combine(testRoot, "parity-powershell");
+        var bashLog = Path.Combine(testRoot, "parity-bash.log");
+        var powershellLog = Path.Combine(testRoot, "parity-powershell.log");
+        var bash = RunFakeLauncher(
+            "bash",
+            [Path.Combine(validatorDirectory, "run-validator.sh")],
+            workingDirectory,
+            fakeBin,
+            bashTemp,
+            bashLog,
+            validatorExit: 29,
+            restoreExit: 0,
+            buildExit: 0);
+        var powershell = RunFakeLauncher(
+            "pwsh",
+            [
+                "-NoLogo",
+                "-NoProfile",
+                "-File",
+                Path.Combine(validatorDirectory, "run-validator.ps1")
+            ],
+            workingDirectory,
+            fakeBin,
+            powershellTemp,
+            powershellLog,
+            validatorExit: 29,
+            restoreExit: 0,
+            buildExit: 0);
+        AssertEqual(29, bash.ExitCode, "Bash validator exit propagation");
+        AssertEqual(29, powershell.ExitCode, "PowerShell validator exit propagation");
+
+        var bashInvocations = ReadNormalizedInvocations(bashLog, bashTemp);
+        var powershellInvocations = ReadNormalizedInvocations(powershellLog, powershellTemp);
+        Assert(
+            bashInvocations.SequenceEqual(powershellInvocations, StringComparer.Ordinal),
+            "Bash and PowerShell restore/build/validator arguments must be identical.\n" +
+            $"Bash: [{string.Join(" | ", bashInvocations)}]\n" +
+            $"PowerShell: [{string.Join(" | ", powershellInvocations)}]");
+        AssertEqual(4, bashInvocations.Length, "launcher invocation count");
+        AssertEqual("CALL\t--version", bashInvocations[0], "SDK invocation arguments");
+        Assert(
+            bashInvocations[1].Contains(
+                "CALL\tmsbuild\t" +
+                Path.Combine(validatorDirectory, "BlazorComponentReadiness.Validator.csproj") +
+                "\t-target:Restore",
+                StringComparison.Ordinal),
+            "restore invocation arguments");
+        Assert(
+            bashInvocations[2].Contains(
+                "\t-target:VerifyNoPackageReferences;Build",
+                StringComparison.Ordinal),
+            "build invocation arguments");
+        AssertEqual(
+            "CALL\t<TEMP>/bin/Release/net11.0/BlazorComponentReadiness.Validator.dll" +
+            "\t--parity-token\tparity-value",
+            bashInvocations[3],
+            "validator DLL path and argument forwarding");
+
+        AssertFakeLauncherPhaseExit(
+            validatorDirectory,
+            workingDirectory,
+            fakeBin,
+            testRoot,
+            restoreExit: 19,
+            buildExit: 0,
+            phase: "restore");
+        AssertFakeLauncherPhaseExit(
+            validatorDirectory,
+            workingDirectory,
+            fakeBin,
+            testRoot,
+            restoreExit: 0,
+            buildExit: 23,
+            phase: "build");
+    }
+
+    private static ProcessResult RunFakeLauncher(
+        string executable,
+        IReadOnlyList<string> launcherArguments,
+        string workingDirectory,
+        string fakeBin,
+        string readinessTemp,
+        string logPath,
+        int validatorExit,
+        int restoreExit,
+        int buildExit)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(readinessTemp)!);
+        if (Directory.Exists(readinessTemp))
+        {
+            Directory.Delete(readinessTemp, recursive: true);
+        }
+
+        if (File.Exists(logPath))
+        {
+            File.Delete(logPath);
+        }
+
+        var arguments = launcherArguments
+            .Concat(["--parity-token", "parity-value"])
+            .ToArray();
+        var environment = new Dictionary<string, string>
+        {
+            ["PATH"] = fakeBin + Path.PathSeparator + Environment.GetEnvironmentVariable("PATH"),
+            ["READINESS_TEMP"] = readinessTemp,
+            ["READINESS_DOTNET_LOG"] = logPath,
+            ["FAKE_VALIDATOR_EXIT"] = validatorExit.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["FAKE_RESTORE_EXIT"] = restoreExit.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["FAKE_BUILD_EXIT"] = buildExit.ToString(System.Globalization.CultureInfo.InvariantCulture)
+        };
+        return RunProcess(
+            executable,
+            arguments,
+            workingDirectory,
+            environment,
+            expectedExitCode: null);
+    }
+
+    private static void AssertFakeLauncherPhaseExit(
+        string validatorDirectory,
+        string workingDirectory,
+        string fakeBin,
+        string testRoot,
+        int restoreExit,
+        int buildExit,
+        string phase)
+    {
+        var bash = RunFakeLauncher(
+            "bash",
+            [Path.Combine(validatorDirectory, "run-validator.sh")],
+            workingDirectory,
+            fakeBin,
+            Path.Combine(testRoot, $"{phase}-exit-bash"),
+            Path.Combine(testRoot, $"{phase}-exit-bash.log"),
+            validatorExit: 0,
+            restoreExit: restoreExit,
+            buildExit: buildExit);
+        var powershell = RunFakeLauncher(
+            "pwsh",
+            [
+                "-NoLogo",
+                "-NoProfile",
+                "-File",
+                Path.Combine(validatorDirectory, "run-validator.ps1")
+            ],
+            workingDirectory,
+            fakeBin,
+            Path.Combine(testRoot, $"{phase}-exit-powershell"),
+            Path.Combine(testRoot, $"{phase}-exit-powershell.log"),
+            validatorExit: 0,
+            restoreExit: restoreExit,
+            buildExit: buildExit);
+        var expected = restoreExit != 0 ? restoreExit : buildExit;
+        AssertEqual(expected, bash.ExitCode, $"Bash {phase} exit propagation");
+        AssertEqual(expected, powershell.ExitCode, $"PowerShell {phase} exit propagation");
+    }
+
+    private static string[] ReadNormalizedInvocations(string logPath, string readinessTemp) =>
+        File.ReadAllLines(logPath)
+            .Select(line => line.Replace(readinessTemp, "<TEMP>", StringComparison.Ordinal))
+            .ToArray();
+
+    private static string NormalizeLineEndings(string value) =>
+        value.Replace("\r\n", "\n", StringComparison.Ordinal);
 
     private static void WriteHostileAmbientFiles(string root)
     {

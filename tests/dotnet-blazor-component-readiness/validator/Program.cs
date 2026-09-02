@@ -169,8 +169,9 @@ Assert(
     "nested worker tools frontmatter must be present and non-empty");
 
 FoundationTests.Run(root, plugin);
+EvidenceTests.Run(root, plugin);
 
-Console.WriteLine("All Blazor component readiness Commit 1 and Commit 2 foundation tests passed.");
+Console.WriteLine("All Blazor component readiness Commit 1 through Commit 3 tests passed.");
 
 static string FindRepositoryRoot()
 {

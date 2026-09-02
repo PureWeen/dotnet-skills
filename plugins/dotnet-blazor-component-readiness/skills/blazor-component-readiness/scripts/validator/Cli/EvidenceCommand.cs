@@ -1,0 +1,302 @@
+using BlazorComponentReadiness.Validator.Contracts;
+using BlazorComponentReadiness.Validator.Evidence;
+using BlazorComponentReadiness.Validator.IO;
+
+namespace BlazorComponentReadiness.Validator.Cli;
+
+public static class EvidenceCommand
+{
+    public const string Help =
+        """
+        Build and validate public-v1 readiness evidence
+
+        Usage:
+          readiness-validator evidence ledger-build --kind <repository|component> --subject <path> --draft <path> --nupkg <path> --output <path>
+          readiness-validator evidence ledger-validate --ledger <path>
+          readiness-validator evidence bundle --assessment <path> --source-ledger <path>... --ids <EV1-id,...> --output <path>
+
+        Source ledgers are immutable canonical JSON. Bundle selection order is the
+        comma-separated --ids order. At most 32 source-ledger inputs totaling at
+        most 64 MiB may be supplied.
+        """;
+
+    public static int Run(IReadOnlyList<string> args, TextWriter output)
+    {
+        if (args.Count == 0 ||
+            IsHelp(args[0]) ||
+            (args.Count == 2 && IsHelp(args[1])))
+        {
+            output.WriteLine(Help);
+            return ExitCodes.Success;
+        }
+
+        return args[0] switch
+        {
+            "ledger-build" => BuildLedger(args.Skip(1).ToArray(), output),
+            "ledger-validate" => ValidateLedger(args.Skip(1).ToArray(), output),
+            "bundle" => BuildBundle(args.Skip(1).ToArray(), output),
+            _ => throw new UsageException($"Unknown evidence command '{args[0]}'.")
+        };
+    }
+
+    public static void ValidateSupplementalInputs(IReadOnlyList<long> lengths)
+    {
+        ArgumentNullException.ThrowIfNull(lengths);
+        if (lengths.Count > ResourceLimits.SupplementalInputCount)
+        {
+            throw new DeterministicValidationException(
+                $"Evidence bundle accepts at most {ResourceLimits.SupplementalInputCount} " +
+                $"explicit supplemental inputs; observed {lengths.Count}.");
+        }
+
+        long aggregate = 0;
+        foreach (var length in lengths)
+        {
+            if (length < 0)
+            {
+                throw new DeterministicValidationException(
+                    "A supplemental input reported a negative byte length.");
+            }
+
+            if (length > ResourceLimits.SupplementalInputAggregateBytes - aggregate)
+            {
+                throw new ResourceLimitException(
+                    "supplemental evidence inputs",
+                    ResourceLimits.SupplementalInputAggregateBytes,
+                    length > long.MaxValue - aggregate ? long.MaxValue : aggregate + length);
+            }
+
+            aggregate += length;
+        }
+    }
+
+    public static void EnsureSerializedOutput(long length) =>
+        BoundedIO.EnsureLength(
+            length,
+            ResourceLimits.SerializedArtifactBytes,
+            "serialized evidence output");
+
+    private static int BuildLedger(IReadOnlyList<string> args, TextWriter output)
+    {
+        var options = ParseOptions(
+            args,
+            repeatableOptions: Array.Empty<string>(),
+            "--kind",
+            "--subject",
+            "--draft",
+            "--nupkg",
+            "--output");
+        RequireExactly(options, "--kind", "--subject", "--draft", "--nupkg", "--output");
+
+        var kind = options.Single("--kind");
+        var subjectPath = options.Single("--subject");
+        var draftPath = options.Single("--draft");
+        var outputPath = options.Single("--output");
+        var inspected = EvidenceIdentity.FromInspectedPackage(
+            NupkgInspector.Inspect(options.Single("--nupkg")));
+        var draft = CanonicalEvidenceJson.ParseDraftDocument(
+            BoundedIO.ReadAllBytes(
+                draftPath,
+                ResourceLimits.AuthoredLedgerBytes,
+                "evidence draft"));
+
+        EvidenceSourceLedger ledger;
+        switch (kind)
+        {
+            case "repository":
+                var repositorySubject = CanonicalEvidenceJson.ParseRepositorySubject(
+                    BoundedIO.ReadAllBytes(
+                        subjectPath,
+                        ResourceLimits.AuthoredLedgerBytes,
+                        "repository ledger subject"));
+                RequireExactPackage(repositorySubject.Package, inspected);
+                ledger = EvidenceLedgerBuilder.BuildRepositoryLedger(
+                    repositorySubject,
+                    draft.Records);
+                break;
+            case "component":
+                var componentSubject = CanonicalEvidenceJson.ParseAssessment(
+                    BoundedIO.ReadAllBytes(
+                        subjectPath,
+                        ResourceLimits.AuthoredLedgerBytes,
+                        "component ledger subject"));
+                RequireExactPackage(componentSubject.Package, inspected);
+                ledger = EvidenceLedgerBuilder.BuildComponentLedger(
+                    componentSubject,
+                    draft.Records);
+                break;
+            default:
+                throw new UsageException(
+                    $"Unknown evidence ledger kind '{kind}'; expected repository or component.");
+        }
+
+        var bytes = CanonicalEvidenceJson.SerializeSourceLedger(ledger);
+        BoundedIO.EnsureLength(
+            bytes.Length,
+            ResourceLimits.AuthoredLedgerBytes,
+            "authored source ledger");
+        WriteNew(outputPath, bytes);
+        output.WriteLine(
+            $"Evidence ledger built: {ledger.LedgerKind}, {ledger.Records.Count} records, " +
+            $"sha256:{CanonicalEvidenceJson.ComputeSha256(bytes)}.");
+        return ExitCodes.Success;
+    }
+
+    private static int ValidateLedger(IReadOnlyList<string> args, TextWriter output)
+    {
+        var options = ParseOptions(args, repeatableOptions: Array.Empty<string>(), "--ledger");
+        RequireExactly(options, "--ledger");
+        var bytes = BoundedIO.ReadAllBytes(
+            options.Single("--ledger"),
+            ResourceLimits.AuthoredLedgerBytes,
+            "authored source ledger");
+        var ledger = CanonicalEvidenceJson.ParseSourceLedger(bytes);
+        output.WriteLine(
+            $"Evidence ledger valid: {ledger.LedgerKind}, {ledger.Records.Count} records, " +
+            $"sha256:{CanonicalEvidenceJson.ComputeSha256(bytes)}.");
+        return ExitCodes.Success;
+    }
+
+    private static int BuildBundle(IReadOnlyList<string> args, TextWriter output)
+    {
+        var options = ParseOptions(
+            args,
+            repeatableOptions: ["--source-ledger"],
+            "--assessment",
+            "--source-ledger",
+            "--ids",
+            "--output");
+        RequireExactly(options, "--assessment", "--ids", "--output");
+        var sourcePaths = options.All("--source-ledger");
+        if (sourcePaths.Count == 0)
+        {
+            throw new UsageException(
+                "Evidence bundle requires at least one --source-ledger input.");
+        }
+
+        if (sourcePaths.Count > ResourceLimits.SupplementalInputCount)
+        {
+            throw new DeterministicValidationException(
+                $"Evidence bundle accepts at most {ResourceLimits.SupplementalInputCount} " +
+                $"explicit supplemental inputs; observed {sourcePaths.Count}.");
+        }
+
+        var lengths = sourcePaths
+            .Select(path => new FileInfo(path).Length)
+            .ToArray();
+        ValidateSupplementalInputs(lengths);
+
+        var assessment = CanonicalEvidenceJson.ParseAssessment(
+            BoundedIO.ReadAllBytes(
+                options.Single("--assessment"),
+                ResourceLimits.AuthoredLedgerBytes,
+                "assessment identity"));
+        var ledgers = sourcePaths
+            .Select(path => CanonicalEvidenceJson.ParseSourceLedger(
+                BoundedIO.ReadAllBytes(
+                    path,
+                    ResourceLimits.AuthoredLedgerBytes,
+                    "authored source ledger")))
+            .ToArray();
+        var selected = options.Single("--ids").Split(
+            ',',
+            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (selected.Length == 0)
+        {
+            throw new UsageException("--ids must contain at least one EV1 identifier.");
+        }
+
+        var bundle = EvidenceLedgerBuilder.BuildBundle(assessment, ledgers, selected);
+        var bytes = CanonicalEvidenceJson.SerializeBundle(bundle);
+        EnsureSerializedOutput(bytes.Length);
+        WriteNew(options.Single("--output"), bytes);
+        output.WriteLine(
+            $"Evidence bundle built: {bundle.SourceLedgers.Count} source ledgers, " +
+            $"{bundle.Selection.Count} selected records, " +
+            $"sha256:{CanonicalEvidenceJson.ComputeSha256(bytes)}.");
+        return ExitCodes.Success;
+    }
+
+    private static ParsedOptions ParseOptions(
+        IReadOnlyList<string> args,
+        string[] repeatableOptions,
+        params string[] allowedOptions)
+    {
+        var allowed = allowedOptions.ToHashSet(StringComparer.Ordinal);
+        var repeatable = repeatableOptions.ToHashSet(StringComparer.Ordinal);
+        var values = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+        for (var index = 0; index < args.Count; index++)
+        {
+            var option = args[index];
+            if (!allowed.Contains(option))
+            {
+                throw new UsageException($"Unknown evidence option '{option}'.");
+            }
+
+            if (index + 1 >= args.Count || string.IsNullOrWhiteSpace(args[index + 1]))
+            {
+                throw new UsageException($"{option} requires a non-empty value.");
+            }
+
+            if (!values.TryGetValue(option, out var optionValues))
+            {
+                optionValues = [];
+                values.Add(option, optionValues);
+            }
+            else if (!repeatable.Contains(option))
+            {
+                throw new UsageException($"{option} may be supplied only once.");
+            }
+
+            optionValues.Add(args[++index]);
+        }
+
+        return new ParsedOptions(values);
+    }
+
+    private static void RequireExactly(ParsedOptions options, params string[] requiredOptions)
+    {
+        foreach (var option in requiredOptions)
+        {
+            if (options.All(option).Count != 1)
+            {
+                throw new UsageException($"Evidence command requires exactly one {option} value.");
+            }
+        }
+    }
+
+    private static void RequireExactPackage(
+        EvidencePackageIdentity expected,
+        EvidencePackageIdentity actual)
+    {
+        if (expected != actual)
+        {
+            throw new DeterministicValidationException(
+                "EVID006: exact nupkg ID, version, or digest differs from ledger subject.");
+        }
+    }
+
+    private static void WriteNew(string path, byte[] bytes)
+    {
+        var fullPath = Path.GetFullPath(path);
+        var parent = Path.GetDirectoryName(fullPath)
+            ?? throw new IOException("Evidence output requires a parent directory.");
+        AtomicFile.WriteNew(parent, Path.GetFileName(fullPath), bytes);
+    }
+
+    private static bool IsHelp(string value) =>
+        string.Equals(value, "--help", StringComparison.Ordinal) ||
+        string.Equals(value, "-h", StringComparison.Ordinal);
+
+    private sealed class ParsedOptions(
+        IReadOnlyDictionary<string, List<string>> values)
+    {
+        public string Single(string option) =>
+            values.TryGetValue(option, out var optionValues) && optionValues.Count == 1
+                ? optionValues[0]
+                : throw new UsageException($"Evidence command requires exactly one {option} value.");
+
+        public IReadOnlyList<string> All(string option) =>
+            values.TryGetValue(option, out var optionValues) ? optionValues : [];
+    }
+}

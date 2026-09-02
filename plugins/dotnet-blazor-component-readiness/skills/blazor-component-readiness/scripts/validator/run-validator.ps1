@@ -5,8 +5,55 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+function Resolve-PhysicalDirectoryPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string] $Path
+    )
+
+    $fullPath = [IO.Path]::GetFullPath($Path)
+    if (-not [IO.Directory]::Exists($fullPath)) {
+        throw "Directory does not exist: $fullPath"
+    }
+
+    $root = [IO.Path]::GetPathRoot($fullPath)
+    if ([string]::IsNullOrWhiteSpace($root)) {
+        throw "Directory has no filesystem root: $fullPath"
+    }
+
+    $current = $root
+    $relative = [IO.Path]::GetRelativePath($root, $fullPath)
+    if ($relative -eq '.') {
+        return [IO.Path]::GetFullPath($current)
+    }
+
+    $separators = [char[]] @(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar)
+    foreach ($segment in $relative.Split(
+            $separators,
+            [StringSplitOptions]::RemoveEmptyEntries)) {
+        $candidate = Join-Path $current $segment
+        $item = Get-Item -Force -LiteralPath $candidate
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+            $target = $item.ResolveLinkTarget($true)
+            if ($null -eq $target) {
+                throw "Could not resolve symbolic-link directory: $candidate"
+            }
+
+            $current = $target.FullName
+        }
+        else {
+            $current = $item.FullName
+        }
+    }
+
+    return [IO.Path]::GetFullPath($current)
+}
+
 $scriptDir = $PSScriptRoot
-$pluginRoot = (Resolve-Path -LiteralPath (Join-Path $scriptDir '../../../..')).ProviderPath
+$pluginRoot = Resolve-PhysicalDirectoryPath (Join-Path $scriptDir '../../../..')
 $project = Join-Path $scriptDir 'BlazorComponentReadiness.Validator.csproj'
 $restoreConfig = Join-Path $scriptDir 'restore-offline.config'
 
@@ -34,7 +81,19 @@ if ([string]::IsNullOrWhiteSpace($env:READINESS_TEMP)) {
     $cleanup = $true
 }
 else {
-    $readinessTemp = [IO.Path]::GetFullPath($env:READINESS_TEMP)
+    $requestedTemp = [IO.Path]::GetFullPath($env:READINESS_TEMP).TrimEnd(
+        [IO.Path]::DirectorySeparatorChar,
+        [IO.Path]::AltDirectorySeparatorChar)
+    $readinessParent = [IO.Path]::GetDirectoryName($requestedTemp)
+    if ([string]::IsNullOrWhiteSpace($readinessParent) -or
+        -not [IO.Directory]::Exists($readinessParent)) {
+        [Console]::Error.WriteLine(
+            "error: the parent of READINESS_TEMP must already exist: $readinessParent")
+        exit 3
+    }
+
+    $physicalParent = Resolve-PhysicalDirectoryPath $readinessParent
+    $readinessTemp = Join-Path $physicalParent ([IO.Path]::GetFileName($requestedTemp))
 }
 
 $comparison = if ($IsWindows) {
@@ -54,7 +113,7 @@ if (($readinessTemp + [IO.Path]::DirectorySeparatorChar).StartsWith(
 }
 
 [IO.Directory]::CreateDirectory($readinessTemp) | Out-Null
-$readinessTemp = (Resolve-Path -LiteralPath $readinessTemp).ProviderPath
+$readinessTemp = Resolve-PhysicalDirectoryPath $readinessTemp
 if (($readinessTemp + [IO.Path]::DirectorySeparatorChar).StartsWith(
         $pluginPrefix,
         $comparison)) {
