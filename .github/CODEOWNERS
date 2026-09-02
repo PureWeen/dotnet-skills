@@ -81,6 +81,10 @@
 /plugins/dotnet-blazor/ @dotnet/aspnet
 /tests/dotnet-blazor/ @dotnet/aspnet
 
+# dotnet-blazor-component-readiness (Blazor component vendor self-assessment)
+/plugins/dotnet-blazor-component-readiness/ @dotnet/aspnet
+/tests/dotnet-blazor-component-readiness/ @dotnet/aspnet
+
 # dotnet-data (data access, Entity Framework)
 /plugins/dotnet-data/skills/optimizing-ef-core-queries/ @dotnet/efteam @dotnet/skills-data-reviewers
 /tests/dotnet-data/optimizing-ef-core-queries/ @dotnet/efteam @dotnet/skills-data-reviewers
