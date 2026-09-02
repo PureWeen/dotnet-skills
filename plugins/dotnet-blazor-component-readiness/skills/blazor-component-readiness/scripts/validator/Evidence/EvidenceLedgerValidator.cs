@@ -30,6 +30,12 @@ public static class EvidenceLedgerValidator
                         "EVID001: repository ledger subject is not canonical.");
                 }
 
+                if (ledger.RepositorySubject.AssessmentKind == "component")
+                {
+                    throw new DeterministicValidationException(
+                        "EVID007: component assessments cannot use repository-wide source ledgers.");
+                }
+
                 break;
             case "component":
                 if (ledger.RepositorySubject is not null || ledger.ComponentSubject is null)
@@ -39,6 +45,12 @@ public static class EvidenceLedgerValidator
                 }
 
                 EvidenceIdentity.ValidateAssessment(ledger.ComponentSubject);
+                if (ledger.ComponentSubject.AssessmentKind == "package")
+                {
+                    throw new DeterministicValidationException(
+                        "EVID007: package assessments cannot use component source ledgers.");
+                }
+
                 break;
             default:
                 throw new DeterministicValidationException(
@@ -215,10 +227,20 @@ public static class EvidenceLedgerValidator
         switch (ledger.LedgerKind)
         {
             case "repository":
-                if (ledger.RepositorySubject!.Package != assessment.Package)
+                var repositorySubject = ledger.RepositorySubject!;
+                if (!string.Equals(
+                        repositorySubject.AssessmentKind,
+                        assessment.AssessmentKind,
+                        StringComparison.Ordinal) ||
+                    repositorySubject.Package != assessment.Package ||
+                    repositorySubject.InputManifestDigest != assessment.InputManifestDigest ||
+                    !string.Equals(
+                        repositorySubject.ComponentId,
+                        assessment.ComponentId,
+                        StringComparison.Ordinal))
                 {
                     throw new DeterministicValidationException(
-                        "EVID006: exact package identity differs from assessment.");
+                        "EVID006: exact assessment kind, package, input manifest, or component identity differs.");
                 }
 
                 break;

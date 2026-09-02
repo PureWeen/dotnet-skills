@@ -14,6 +14,7 @@ public static partial class EvidenceIdentity
     public const string VendorSourceRepository = "vendor-source-repository";
     public const string ReproducedRuntimeObservation = "reproduced-runtime-observation";
     public const string OwnerSuppliedInternalEvidence = "owner-supplied-internal-evidence";
+    public const string OwnerDeclaredClosedSource = "owner-declared-closed-source";
     public const string OwnerDeclaredUnavailable = "owner-declared-unavailable";
 
     private static readonly UTF8Encoding StrictUtf8 = new(
@@ -22,9 +23,6 @@ public static partial class EvidenceIdentity
 
     [GeneratedRegex("^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$", RegexOptions.CultureInvariant)]
     private static partial Regex PackageIdentifierPattern();
-
-    [GeneratedRegex("^[A-Za-z0-9](?:[A-Za-z0-9._+\\-]{0,254}[A-Za-z0-9])?$", RegexOptions.CultureInvariant)]
-    private static partial Regex PackageVersionPattern();
 
     [GeneratedRegex("^EV1-[0-9a-f]{64}$", RegexOptions.CultureInvariant)]
     private static partial Regex EvidenceIdentifierPattern();
@@ -38,15 +36,29 @@ public static partial class EvidenceIdentity
     public static ExactAssessmentIdentity NormalizeAssessment(ExactAssessmentIdentity assessment)
     {
         ArgumentNullException.ThrowIfNull(assessment);
+        var (assessmentKind, componentId) = NormalizeAssessmentKind(
+            assessment.AssessmentKind,
+            assessment.ComponentId);
+        ValidateDigest(assessment.InputManifestDigest, "input_manifest_sha256");
         return new ExactAssessmentIdentity(
+            assessmentKind,
             NormalizePackage(assessment.Package),
-            NormalizeText(assessment.ComponentId, "component_id", 256));
+            assessment.InputManifestDigest,
+            componentId);
     }
 
     public static RepositoryLedgerSubject NormalizeRepositorySubject(RepositoryLedgerSubject subject)
     {
         ArgumentNullException.ThrowIfNull(subject);
-        return new RepositoryLedgerSubject(NormalizePackage(subject.Package));
+        var (assessmentKind, componentId) = NormalizeAssessmentKind(
+            subject.AssessmentKind,
+            subject.ComponentId);
+        ValidateDigest(subject.InputManifestDigest, "input_manifest_sha256");
+        return new RepositoryLedgerSubject(
+            assessmentKind,
+            NormalizePackage(subject.Package),
+            subject.InputManifestDigest,
+            componentId);
     }
 
     public static EvidenceRecordDraft NormalizeRecordDraft(EvidenceRecordDraft record)
@@ -133,12 +145,8 @@ public static partial class EvidenceIdentity
                 "EVID006: package_id has invalid canonical NuGet ID syntax.");
         }
 
-        var version = NormalizeText(package.Version, "version", 256);
-        if (!PackageVersionPattern().IsMatch(version))
-        {
-            throw new DeterministicValidationException(
-                "EVID006: version has invalid bounded nuspec syntax.");
-        }
+        var version = NuGetVersionNormalizer.Normalize(
+            NormalizeText(package.Version, "version", 256));
 
         return new EvidencePackageIdentity(packageId, version, package.NupkgDigest);
     }
@@ -189,10 +197,11 @@ public static partial class EvidenceIdentity
         return kind switch
         {
             VendorPublicDocumentation => CanonicalizePublicHttps(value, requirePath: false),
-            VendorSourceRepository => CanonicalizePublicHttps(value, requirePath: true),
+            VendorSourceRepository => CanonicalizeSourceLocator(value),
             PackageArtifactMetadata => CanonicalizePackageLocator(value),
             ReproducedRuntimeObservation => CanonicalizeCommandProbe(value),
             OwnerSuppliedInternalEvidence => CanonicalizeOwnerInput(value),
+            OwnerDeclaredClosedSource => CanonicalizeClosedSourceDeclaration(value),
             OwnerDeclaredUnavailable => CanonicalizeUnavailableDeclaration(value),
             _ => throw new DeterministicValidationException(
                 $"EVID005: invalid provenance kind '{kind}'.")
@@ -208,14 +217,36 @@ public static partial class EvidenceIdentity
 
     private static string CanonicalizePackageLocator(string value)
     {
-        const string Prefix = "package:";
+        if (string.Equals(
+                value,
+                NupkgInspector.WholePackageEvidenceLocator,
+                StringComparison.Ordinal))
+        {
+            return value;
+        }
+
+        if (!value.StartsWith(NupkgInspector.PackageEntryEvidencePrefix, StringComparison.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                "EVID005: package artifact locator must identify the whole nupkg or a package entry.");
+        }
+
+        ValidateRelativeLogicalPath(
+            value[NupkgInspector.PackageEntryEvidencePrefix.Length..],
+            "package artifact locator");
+        return value;
+    }
+
+    private static string CanonicalizeSourceLocator(string value)
+    {
+        const string Prefix = "source:";
         if (!value.StartsWith(Prefix, StringComparison.Ordinal))
         {
             throw new DeterministicValidationException(
-                "EVID005: package artifact locator must start with 'package:'.");
+                "EVID005: vendor-source locator must start with 'source:'.");
         }
 
-        ValidateRelativeLogicalPath(value[Prefix.Length..], "package artifact locator");
+        ValidateRelativeLogicalPath(value[Prefix.Length..], "vendor-source locator");
         return value;
     }
 
@@ -246,11 +277,6 @@ public static partial class EvidenceIdentity
 
     private static string CanonicalizeUnavailableDeclaration(string value)
     {
-        if (string.Equals(value, "source", StringComparison.Ordinal))
-        {
-            return value;
-        }
-
         const string Prefix = "artifact:";
         if (!value.StartsWith(Prefix, StringComparison.Ordinal) ||
             value.Length == Prefix.Length ||
@@ -260,10 +286,42 @@ public static partial class EvidenceIdentity
                 character is not '-' and not '_' and not '.'))
         {
             throw new DeterministicValidationException(
-                "EVID005: unavailable locator must be 'source' or 'artifact:<name>'.");
+                "EVID005: unavailable locator must be 'artifact:<name>'.");
         }
 
         return value;
+    }
+
+    private static string CanonicalizeClosedSourceDeclaration(string value)
+    {
+        if (!string.Equals(value, "source", StringComparison.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                "EVID005: closed-source locator must be exactly 'source'.");
+        }
+
+        return value;
+    }
+
+    private static (string AssessmentKind, string? ComponentId) NormalizeAssessmentKind(
+        string assessmentKind,
+        string? componentId)
+    {
+        assessmentKind = NormalizeText(assessmentKind, "assessment_kind", 16);
+        return assessmentKind switch
+        {
+            "package" when componentId is null => ("package", null),
+            "unified" when componentId is not null =>
+                ("unified", NormalizeText(componentId, "component_id", 256)),
+            "component" when componentId is not null =>
+                ("component", NormalizeText(componentId, "component_id", 256)),
+            "package" => throw new DeterministicValidationException(
+                "EVID006: package assessment identity requires component_id null."),
+            "unified" or "component" => throw new DeterministicValidationException(
+                $"EVID006: {assessmentKind} assessment identity requires component_id."),
+            _ => throw new DeterministicValidationException(
+                $"EVID006: invalid assessment_kind '{assessmentKind}'.")
+        };
     }
 
     private static void ValidateRelativeLogicalPath(string value, string name)

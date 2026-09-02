@@ -10,11 +10,16 @@ public sealed record EvidencePackageIdentity(
     Sha256Digest NupkgDigest);
 
 public sealed record ExactAssessmentIdentity(
+    string AssessmentKind,
     EvidencePackageIdentity Package,
-    string ComponentId);
+    Sha256Digest InputManifestDigest,
+    string? ComponentId);
 
 public sealed record RepositoryLedgerSubject(
-    EvidencePackageIdentity Package);
+    string AssessmentKind,
+    EvidencePackageIdentity Package,
+    Sha256Digest InputManifestDigest,
+    string? ComponentId);
 
 public sealed record EvidenceApplicability(
     string Scope,

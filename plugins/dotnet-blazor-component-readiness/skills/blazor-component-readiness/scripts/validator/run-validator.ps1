@@ -5,6 +5,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+trap {
+    [Console]::Error.WriteLine(
+        "error: readiness launcher setup failed: $($_.Exception.Message)")
+    exit 3
+}
 
 function Resolve-PhysicalDirectoryPath {
     param(
@@ -149,12 +154,14 @@ try {
 
     & dotnet msbuild $project -target:Restore @common
     if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+        [Console]::Error.WriteLine('error: readiness validator restore failed.')
+        exit 3
     }
 
     & dotnet msbuild $project '-target:VerifyNoPackageReferences;Build' @common
     if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+        [Console]::Error.WriteLine('error: readiness validator build failed.')
+        exit 3
     }
 
     $validator = Join-Path $readinessTemp (
@@ -167,7 +174,14 @@ try {
     }
 
     & dotnet $validator @ValidatorArguments
-    exit $LASTEXITCODE
+    $validatorExit = $LASTEXITCODE
+    if ($validatorExit -in 0, 1, 2, 3) {
+        exit $validatorExit
+    }
+
+    [Console]::Error.WriteLine(
+        "error: readiness validator returned undocumented exit code $validatorExit.")
+    exit 3
 }
 finally {
     if ($cleanup -and [IO.Directory]::Exists($readinessTemp)) {

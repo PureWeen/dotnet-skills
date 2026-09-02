@@ -253,17 +253,32 @@ public static class CanonicalEvidenceJson
 
     private static ExactAssessmentIdentity ParseAssessment(JsonElement element)
     {
-        RequireObjectProperties(element, "package", "component_id");
+        RequireObjectProperties(
+            element,
+            "assessment_kind",
+            "package",
+            "input_manifest_sha256",
+            "component_id");
         return new ExactAssessmentIdentity(
+            GetRequiredString(element, "assessment_kind"),
             ParsePackage(GetRequiredObject(element, "package")),
-            GetRequiredString(element, "component_id"));
+            ParseDigest(GetRequiredObject(element, "input_manifest_sha256")),
+            GetNullableString(element, "component_id"));
     }
 
     private static RepositoryLedgerSubject ParseRepositorySubject(JsonElement element)
     {
-        RequireObjectProperties(element, "package");
+        RequireObjectProperties(
+            element,
+            "assessment_kind",
+            "package",
+            "input_manifest_sha256",
+            "component_id");
         return new RepositoryLedgerSubject(
-            ParsePackage(GetRequiredObject(element, "package")));
+            GetRequiredString(element, "assessment_kind"),
+            ParsePackage(GetRequiredObject(element, "package")),
+            ParseDigest(GetRequiredObject(element, "input_manifest_sha256")),
+            GetNullableString(element, "component_id"));
     }
 
     private static EvidencePackageIdentity ParsePackage(JsonElement element)
@@ -373,10 +388,22 @@ public static class CanonicalEvidenceJson
         CanonicalJsonTextWriter writer,
         ExactAssessmentIdentity assessment)
     {
-        writer.Raw("{\"package\":");
+        writer.Raw("{\"assessment_kind\":");
+        writer.String(assessment.AssessmentKind);
+        writer.Raw(",\"package\":");
         WritePackage(writer, assessment.Package);
+        writer.Raw(",\"input_manifest_sha256\":");
+        WriteDigest(writer, assessment.InputManifestDigest);
         writer.Raw(",\"component_id\":");
-        writer.String(assessment.ComponentId);
+        if (assessment.ComponentId is null)
+        {
+            writer.Raw("null");
+        }
+        else
+        {
+            writer.String(assessment.ComponentId);
+        }
+
         writer.Raw("}");
     }
 
@@ -384,8 +411,22 @@ public static class CanonicalEvidenceJson
         CanonicalJsonTextWriter writer,
         RepositoryLedgerSubject subject)
     {
-        writer.Raw("{\"package\":");
+        writer.Raw("{\"assessment_kind\":");
+        writer.String(subject.AssessmentKind);
+        writer.Raw(",\"package\":");
         WritePackage(writer, subject.Package);
+        writer.Raw(",\"input_manifest_sha256\":");
+        WriteDigest(writer, subject.InputManifestDigest);
+        writer.Raw(",\"component_id\":");
+        if (subject.ComponentId is null)
+        {
+            writer.Raw("null");
+        }
+        else
+        {
+            writer.String(subject.ComponentId);
+        }
+
         writer.Raw("}");
     }
 

@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-plugin_root="$(cd -- "$script_dir/../../../.." && pwd -P)"
+environment_failure() {
+  printf 'error: %s\n' "$1" >&2
+  exit 3
+}
+
+if ! script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"; then
+  environment_failure 'could not resolve the validator script directory.'
+fi
+if ! plugin_root="$(cd -- "$script_dir/../../../.." && pwd -P)"; then
+  environment_failure 'could not resolve the readiness plugin directory.'
+fi
 project="$script_dir/BlazorComponentReadiness.Validator.csproj"
 restore_config="$script_dir/restore-offline.config"
 
@@ -32,7 +41,9 @@ else
   fi
 
   readiness_temp="$temp_parent/blazor-readiness-validator-$$-$RANDOM"
-  (umask 077 && mkdir -- "$readiness_temp")
+  if ! (umask 077 && mkdir -- "$readiness_temp"); then
+    environment_failure 'could not create the temporary validator directory.'
+  fi
   cleanup=true
 fi
 
@@ -43,8 +54,12 @@ case "$readiness_temp/" in
     ;;
 esac
 
-mkdir -p -- "$readiness_temp"
-readiness_temp="$(cd -- "$readiness_temp" && pwd -P)"
+if ! mkdir -p -- "$readiness_temp"; then
+  environment_failure 'could not create READINESS_TEMP.'
+fi
+if ! readiness_temp="$(cd -- "$readiness_temp" && pwd -P)"; then
+  environment_failure 'could not resolve READINESS_TEMP.'
+fi
 case "$readiness_temp/" in
   "$plugin_root/"*)
     printf 'error: READINESS_TEMP resolves inside the plugin tree.\n' >&2
@@ -52,7 +67,9 @@ case "$readiness_temp/" in
     ;;
 esac
 
-mkdir -p -- "$readiness_temp/packages" "$readiness_temp/bin" "$readiness_temp/obj"
+if ! mkdir -p -- "$readiness_temp/packages" "$readiness_temp/bin" "$readiness_temp/obj"; then
+  environment_failure 'could not create external artifact directories.'
+fi
 for artifact_directory in packages bin obj; do
   if [[ -L "$readiness_temp/$artifact_directory" ]]; then
     printf 'error: external artifact directories cannot be symbolic links: %s\n' \
@@ -78,8 +95,12 @@ common=(
   "-property:BaseIntermediateOutputPath=$readiness_temp/obj/"
 )
 
-dotnet msbuild "$project" -target:Restore "${common[@]}"
-dotnet msbuild "$project" '-target:VerifyNoPackageReferences;Build' "${common[@]}"
+if ! dotnet msbuild "$project" -target:Restore "${common[@]}"; then
+  environment_failure 'readiness validator restore failed.'
+fi
+if ! dotnet msbuild "$project" '-target:VerifyNoPackageReferences;Build' "${common[@]}"; then
+  environment_failure 'readiness validator build failed.'
+fi
 
 validator="$readiness_temp/bin/Release/net11.0/BlazorComponentReadiness.Validator.dll"
 if [[ ! -f "$validator" || -L "$validator" ]]; then
@@ -87,4 +108,17 @@ if [[ ! -f "$validator" || -L "$validator" ]]; then
   exit 3
 fi
 
-dotnet "$validator" "$@"
+if dotnet "$validator" "$@"; then
+  exit 0
+else
+  validator_exit=$?
+  case "$validator_exit" in
+    1|2|3)
+      exit "$validator_exit"
+      ;;
+    *)
+      environment_failure \
+        "readiness validator returned undocumented exit code $validator_exit."
+      ;;
+  esac
+fi

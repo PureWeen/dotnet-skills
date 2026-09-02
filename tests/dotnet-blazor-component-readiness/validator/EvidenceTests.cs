@@ -9,25 +9,135 @@ using BlazorComponentReadiness.Validator.IO;
 internal static class EvidenceTests
 {
     private const string KnownEvidenceId =
-        "EV1-705e25664858608ec40d006cc3b50607ce9fbc9b9b3dcd9d0e316b36b8f3cfab";
+        "EV1-fdcf80cd04ab59269765ea79b7ccb8e9240596c5974f5221e90069fc015555cb";
     private const string KnownLedgerSha256 =
-        "50652df704f93a6a146497681c7f25e73f152573dfa53ccd355568b9be11655a";
+        "7fcada16a9a7cd2e2ac4de7fe73452d4edf98b7c1ac28e88e09c17094852965a";
     private const string KnownAssessmentJson =
-        """{"package":{"package_id":"sample.widgets","version":"1.2.3","nupkg_sha256":{"algorithm":"sha256","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"component_id":"Tree"}""";
+        """{"assessment_kind":"unified","package":{"package_id":"sample.widgets","version":"1.2.3","nupkg_sha256":{"algorithm":"sha256","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"input_manifest_sha256":{"algorithm":"sha256","value":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"component_id":"Tree"}""";
     private const string KnownLedgerJson =
-        """{"schema_version":1,"ledger_kind":"repository","repository_subject":{"package":{"package_id":"sample.widgets","version":"1.2.3","nupkg_sha256":{"algorithm":"sha256","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}},"component_subject":null,"records":[{"stable_id":"EV1-705e25664858608ec40d006cc3b50607ce9fbc9b9b3dcd9d0e316b36b8f3cfab","claim":"Vendor documentation states keyboard support.","applicability":{"scope":"repository-wide","component_id":null},"provenance":{"kind":"vendor-public-documentation","locator":"https://docs.example.com/widgets","method":"Captured official documentation.","captured_at_utc":"2026-09-02T20:00:00Z","content_sha256":{"algorithm":"sha256","value":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"retention":"commitment-only"},"supersedes":[]}]}""";
+        """{"schema_version":1,"ledger_kind":"repository","repository_subject":{"assessment_kind":"unified","package":{"package_id":"sample.widgets","version":"1.2.3","nupkg_sha256":{"algorithm":"sha256","value":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"input_manifest_sha256":{"algorithm":"sha256","value":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"},"component_id":"Tree"},"component_subject":null,"records":[{"stable_id":"EV1-fdcf80cd04ab59269765ea79b7ccb8e9240596c5974f5221e90069fc015555cb","claim":"Vendor documentation states keyboard support.","applicability":{"scope":"repository-wide","component_id":null},"provenance":{"kind":"vendor-public-documentation","locator":"https://docs.example.com/widgets","method":"Captured official documentation.","captured_at_utc":"2026-09-02T20:00:00Z","content_sha256":{"algorithm":"sha256","value":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},"retention":"commitment-only"},"supersedes":[]}]}""";
 
     public static void Run(string repositoryRoot, string pluginRoot)
     {
         TestKnownAnswersAndCanonicalBytes();
         TestCliCommandSurface();
+        TestAssessmentKindsAndManifestBinding();
+        TestNuGetVersionNormalization(repositoryRoot);
         TestPublicProvenanceKinds();
         TestScopeAndExactIdentity();
         TestHostNeutralSourceMapping();
         TestBundleSelectionAndAmbiguity();
         TestSupersession();
+        TestPackageArtifactVerification(repositoryRoot);
         TestResourceCeilings();
         TestCliSubprocesses(repositoryRoot, pluginRoot);
+    }
+
+    private static void TestAssessmentKindsAndManifestBinding()
+    {
+        var unified = KnownAssessment();
+        var package = unified with
+        {
+            AssessmentKind = "package",
+            ComponentId = null
+        };
+        var component = unified with
+        {
+            AssessmentKind = "component"
+        };
+        EvidenceIdentity.ValidateAssessment(unified);
+        EvidenceIdentity.ValidateAssessment(package);
+        EvidenceIdentity.ValidateAssessment(component);
+
+        ExpectValidation(
+            () => EvidenceIdentity.ValidateAssessment(
+                package with { ComponentId = "Tree" }),
+            "package assessment component ID");
+        ExpectValidation(
+            () => EvidenceIdentity.ValidateAssessment(
+                unified with { ComponentId = null }),
+            "unified assessment missing component ID");
+        ExpectValidation(
+            () => EvidenceIdentity.ValidateAssessment(
+                component with { ComponentId = null }),
+            "component assessment missing component ID");
+
+        var unifiedSubject = KnownRepositorySubject();
+        var packageSubject = new RepositoryLedgerSubject(
+            "package",
+            package.Package,
+            package.InputManifestDigest,
+            null);
+        var draft = RepositoryDraft(
+            EvidenceIdentity.VendorPublicDocumentation,
+            "https://docs.example.com/identity",
+            "Assessment identity is bound.");
+        var unifiedId = EvidenceLedgerBuilder.BuildRepositoryLedger(
+            unifiedSubject,
+            [draft]).Records.Single().StableId;
+        var packageId = EvidenceLedgerBuilder.BuildRepositoryLedger(
+            packageSubject,
+            [draft]).Records.Single().StableId;
+        var changedManifestId = EvidenceLedgerBuilder.BuildRepositoryLedger(
+            unifiedSubject with
+            {
+                InputManifestDigest = new Sha256Digest("sha256", new string('d', 64))
+            },
+            [draft]).Records.Single().StableId;
+        Assert(unifiedId != packageId, "assessment_kind participates in stable ID preimage");
+        Assert(unifiedId != changedManifestId, "input manifest digest participates in stable ID preimage");
+        var packageLedger = EvidenceLedgerBuilder.BuildRepositoryLedger(
+            packageSubject,
+            [draft]);
+        AssertEqual(
+            packageId,
+            EvidenceLedgerBuilder.BuildBundle(
+                package,
+                [packageLedger],
+                [packageId]).Selection.Single().EvidenceId,
+            "package assessment has no component ID");
+        ExpectValidation(
+            () => EvidenceLedgerBuilder.BuildComponentLedger(
+                package,
+                [ComponentDraft("Tree")]),
+            "package assessment component ledger");
+        ExpectValidation(
+            () => EvidenceLedgerBuilder.BuildRepositoryLedger(
+                new RepositoryLedgerSubject(
+                    "component",
+                    component.Package,
+                    component.InputManifestDigest,
+                    component.ComponentId),
+                [draft]),
+            "component assessment repository ledger");
+
+        var repositoryLedger = EvidenceLedgerBuilder.BuildRepositoryLedger(
+            unifiedSubject,
+            [draft]);
+        ExpectValidation(
+            () => EvidenceLedgerBuilder.BuildBundle(
+                unified with
+                {
+                    InputManifestDigest = new Sha256Digest("sha256", new string('d', 64))
+                },
+                [repositoryLedger],
+                [repositoryLedger.Records[0].StableId]),
+            "input manifest compatibility mismatch");
+        ExpectValidation(
+            () => EvidenceLedgerBuilder.BuildBundle(
+                component,
+                [repositoryLedger],
+                [repositoryLedger.Records[0].StableId]),
+            "assessment kind compatibility mismatch");
+
+        var noncanonicalPackageBytes = Encoding.UTF8.GetBytes(
+            KnownAssessmentJson.Replace(
+                "\"version\":\"1.2.3\"",
+                "\"version\":\"01.02.003\"",
+                StringComparison.Ordinal));
+        ExpectValidation(
+            () => CanonicalEvidenceJson.ParseAssessment(noncanonicalPackageBytes),
+            "noncanonical subject package version");
     }
 
     private static void TestCliCommandSurface()
@@ -49,6 +159,76 @@ internal static class EvidenceTests
             Assert(
                 output.ToString().Contains($"evidence {command}", StringComparison.Ordinal),
                 $"{command} help contains exact grouped command");
+        }
+    }
+
+    private static void TestNuGetVersionNormalization(string repositoryRoot)
+    {
+        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-version-tests");
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, recursive: true);
+        }
+
+        Directory.CreateDirectory(root);
+        try
+        {
+            var cases = new[]
+            {
+                ("01.002", "1.2.0"),
+                ("1.2", "1.2.0"),
+                ("1.2.3", "1.2.3"),
+                ("1.2.3.0", "1.2.3"),
+                ("1.2.3.4", "1.2.3.4"),
+                ("1.02.003-BETA.0002+BUILD.0007", "1.2.3-beta.2+build.7")
+            };
+            for (var index = 0; index < cases.Length; index++)
+            {
+                var packagePath = Path.Combine(root, $"Version.{index}.nupkg");
+                CreatePackage(packagePath, "Version.Test", cases[index].Item1);
+                AssertEqual(
+                    cases[index].Item2,
+                    NupkgInspector.Inspect(packagePath).Version,
+                    $"canonical nupkg version {cases[index].Item1}");
+            }
+
+            foreach (var invalid in new[] { "1..2", "1.2.2147483648", "1.2.3-", "1.2.3+" })
+            {
+                var packagePath = Path.Combine(
+                    root,
+                    $"Invalid.{Convert.ToHexString(Encoding.UTF8.GetBytes(invalid))}.nupkg");
+                CreatePackage(packagePath, "Version.Invalid", invalid);
+                ExpectValidation(
+                    () => NupkgInspector.Inspect(packagePath),
+                    $"invalid nupkg version {invalid}");
+            }
+
+            var cliPackage = Path.Combine(root, "Cli.Version.nupkg");
+            CreatePackage(cliPackage, "Version.Cli", "02.004.000-BETA.0001+BUILD.0009");
+            var output = new StringWriter();
+            var error = new StringWriter();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    ["package", "inspect", "--nupkg", cliPackage],
+                    output,
+                    error),
+                "canonical package inspect CLI");
+            using var result = StrictJson.Parse(
+                Encoding.UTF8.GetBytes(output.ToString().TrimEnd()),
+                4096,
+                "canonical package inspect output");
+            AssertEqual(
+                "2.4.0-beta.1+build.9",
+                result.RootElement.GetProperty("package_version").GetString(),
+                "package inspect emits canonical version");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
         }
     }
 
@@ -114,11 +294,11 @@ internal static class EvidenceTests
         var cases = new[]
         {
             (EvidenceIdentity.VendorPublicDocumentation, "https://docs.example.com/widgets"),
-            (EvidenceIdentity.PackageArtifactMetadata, "package:Sample.Widgets.nuspec"),
-            (EvidenceIdentity.VendorSourceRepository, "https://code.example.com/Vendor/Widgets/src/Tree.cs"),
+            (EvidenceIdentity.PackageArtifactMetadata, "package:entry/Sample.Widgets.nuspec"),
+            (EvidenceIdentity.VendorSourceRepository, "source:src/Tree.cs"),
             (EvidenceIdentity.ReproducedRuntimeObservation, "dotnet test Tree.Keyboard"),
             (EvidenceIdentity.OwnerSuppliedInternalEvidence, "accessibility-audit.pdf"),
-            (EvidenceIdentity.OwnerDeclaredUnavailable, "source"),
+            (EvidenceIdentity.OwnerDeclaredClosedSource, "source"),
             (EvidenceIdentity.OwnerDeclaredUnavailable, "artifact:private-sbom")
         };
 
@@ -139,10 +319,18 @@ internal static class EvidenceTests
             () => EvidenceLedgerBuilder.BuildRepositoryLedger(
                 KnownRepositorySubject(),
                 [RepositoryDraft(
-                    EvidenceIdentity.OwnerDeclaredUnavailable,
+                    EvidenceIdentity.VendorSourceRepository,
                     "https://missing.example.com/source",
-                    "A failed lookup is not an owner declaration.")]),
-            "unavailable source must be an explicit owner declaration");
+                    "A failed lookup does not imply closed source.")]),
+            "retrieval failure cannot become closed-source provenance");
+        ExpectValidation(
+            () => EvidenceLedgerBuilder.BuildRepositoryLedger(
+                KnownRepositorySubject(),
+                [RepositoryDraft(
+                    EvidenceIdentity.OwnerDeclaredUnavailable,
+                    "source",
+                    "Generic unavailability is distinct from closed source.")]),
+            "generic unavailable cannot declare closed source");
     }
 
     private static void TestScopeAndExactIdentity()
@@ -150,7 +338,7 @@ internal static class EvidenceTests
         var assessment = KnownAssessment();
         var repositoryDraft = RepositoryDraft(
             EvidenceIdentity.PackageArtifactMetadata,
-            "package:Sample.Widgets.nuspec",
+            "package:entry/Sample.Widgets.nuspec",
             "Package metadata declares the license.");
         var componentDraft = ComponentDraft("Tree");
 
@@ -224,9 +412,9 @@ internal static class EvidenceTests
     {
         var locators = new[]
         {
-            "https://github.com/Vendor/Widgets.git/src/Tree.cs",
-            "https://gitlab.example.com/Vendor/Widgets/src/Tree.cs",
-            "https://dev.azure.com/Vendor/Widgets/_git/Components/src/Tree.cs"
+            "source:src/Tree.cs",
+            "source:components/Grid.razor",
+            "source:eng/release/provenance.json"
         };
 
         foreach (var locator in locators)
@@ -239,12 +427,21 @@ internal static class EvidenceTests
                     "Captured vendor source at an exact revision.")]);
             var canonical = ledger.Records.Single().Provenance.Locator;
             Assert(
-                canonical.Contains("/Vendor/Widgets", StringComparison.Ordinal),
-                "source mapping preserves host-neutral path case");
+                canonical.StartsWith("source:", StringComparison.Ordinal),
+                "source mapping is manifest-relative");
             Assert(
-                canonical.StartsWith("https://", StringComparison.Ordinal),
-                "source mapping uses canonical HTTPS");
+                !canonical.Contains("://", StringComparison.Ordinal),
+                "source mapping does not duplicate a repository host");
         }
+
+        ExpectValidation(
+            () => EvidenceLedgerBuilder.BuildRepositoryLedger(
+                KnownRepositorySubject(),
+                [RepositoryDraft(
+                    EvidenceIdentity.VendorSourceRepository,
+                    "source:../Tree.cs",
+                    "Unsafe source mapping.")]),
+            "source mapping path traversal");
     }
 
     private static void TestBundleSelectionAndAmbiguity()
@@ -325,7 +522,7 @@ internal static class EvidenceTests
     {
         var originalDraft = RepositoryDraft(
             EvidenceIdentity.PackageArtifactMetadata,
-            "package:Sample.Widgets.nuspec",
+            "package:entry/Sample.Widgets.nuspec",
             "Original package declaration.");
         var original = EvidenceLedgerBuilder.BuildRepositoryLedger(
             KnownRepositorySubject(),
@@ -389,6 +586,154 @@ internal static class EvidenceTests
             "supersession cycle is diagnosed before forged IDs");
     }
 
+    private static void TestPackageArtifactVerification(string repositoryRoot)
+    {
+        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-package-evidence-tests");
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, recursive: true);
+        }
+
+        Directory.CreateDirectory(root);
+        try
+        {
+            var packagePath = Path.Combine(root, "Artifact.Test.1.0.0.nupkg");
+            CreatePackage(
+                packagePath,
+                "Artifact.Test",
+                "1.0",
+                new Dictionary<string, byte[]>
+                {
+                    ["README.md"] = Encoding.UTF8.GetBytes("# Artifact Test\n")
+                });
+            var inspected = NupkgInspector.Inspect(packagePath);
+            var package = EvidenceIdentity.FromInspectedPackage(inspected);
+            var manifestDigest = new Sha256Digest("sha256", new string('9', 64));
+            var subject = new RepositoryLedgerSubject(
+                "unified",
+                package,
+                manifestDigest,
+                "Tree");
+            var subjectPath = Path.Combine(root, "subject.json");
+            File.WriteAllBytes(
+                subjectPath,
+                CanonicalEvidenceJson.SerializeRepositorySubject(subject));
+
+            var cases = new[]
+            {
+                (
+                    NupkgInspector.WholePackageEvidenceLocator,
+                    inspected.NupkgSha256,
+                    "whole-nupkg"),
+                (
+                    NupkgInspector.PackageEntryEvidencePrefix + inspected.NuspecEntry,
+                    NupkgInspector.ComputeEvidenceContentSha256(
+                        packagePath,
+                        NupkgInspector.PackageEntryEvidencePrefix + inspected.NuspecEntry),
+                    "nuspec"),
+                (
+                    NupkgInspector.PackageEntryEvidencePrefix + "README.md",
+                    Convert.ToHexStringLower(
+                        System.Security.Cryptography.SHA256.HashData(
+                            Encoding.UTF8.GetBytes("# Artifact Test\n"))),
+                    "readme")
+            };
+            foreach (var (locator, digest, name) in cases)
+            {
+                var draftPath = Path.Combine(root, $"{name}.draft.json");
+                File.WriteAllText(
+                    draftPath,
+                    DraftJson(PackageArtifactDraft(locator, digest)),
+                    new UTF8Encoding(false));
+                var output = new StringWriter();
+                var error = new StringWriter();
+                AssertEqual(
+                    ExitCodes.Success,
+                    CliApplication.Run(
+                        [
+                            "evidence",
+                            "ledger-build",
+                            "--kind",
+                            "repository",
+                            "--subject",
+                            subjectPath,
+                            "--draft",
+                            draftPath,
+                            "--nupkg",
+                            packagePath,
+                            "--output",
+                            Path.Combine(root, $"{name}.ledger.json")
+                        ],
+                        output,
+                        error),
+                    $"verified package evidence {name}");
+            }
+
+            var missingDraft = Path.Combine(root, "missing.draft.json");
+            File.WriteAllText(
+                missingDraft,
+                DraftJson(PackageArtifactDraft(
+                    NupkgInspector.PackageEntryEvidencePrefix + "missing.txt",
+                    new string('0', 64))),
+                new UTF8Encoding(false));
+            AssertCliValidationFailure(
+                [
+                    "evidence",
+                    "ledger-build",
+                    "--kind",
+                    "repository",
+                    "--subject",
+                    subjectPath,
+                    "--draft",
+                    missingDraft,
+                    "--nupkg",
+                    packagePath,
+                    "--output",
+                    Path.Combine(root, "missing.ledger.json")
+                ],
+                "resolves to 0 entries",
+                "missing package evidence entry");
+
+            var wrongDigestDraft = Path.Combine(root, "wrong-digest.draft.json");
+            File.WriteAllText(
+                wrongDigestDraft,
+                DraftJson(PackageArtifactDraft(
+                    NupkgInspector.PackageEntryEvidencePrefix + "README.md",
+                    new string('0', 64))),
+                new UTF8Encoding(false));
+            AssertCliValidationFailure(
+                [
+                    "evidence",
+                    "ledger-build",
+                    "--kind",
+                    "repository",
+                    "--subject",
+                    subjectPath,
+                    "--draft",
+                    wrongDigestDraft,
+                    "--nupkg",
+                    packagePath,
+                    "--output",
+                    Path.Combine(root, "wrong-digest.ledger.json")
+                ],
+                "differs from the exact nupkg content",
+                "wrong package evidence digest");
+
+            ExpectValidation(
+                () => EvidenceLedgerBuilder.BuildRepositoryLedger(
+                    subject,
+                    [PackageArtifactDraft("package:entry/../escape", new string('0', 64))]),
+                "unsafe package evidence entry locator");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
     private static void TestResourceCeilings()
     {
         EvidenceCommand.ValidateSupplementalInputs(
@@ -435,8 +780,17 @@ internal static class EvidenceTests
             CreatePackage(packagePath, "Sample.Widgets", "1.2.3");
             var inspected = EvidenceIdentity.FromInspectedPackage(
                 NupkgInspector.Inspect(packagePath));
-            var subject = new RepositoryLedgerSubject(inspected);
-            var assessment = new ExactAssessmentIdentity(inspected, "Tree");
+            var inputManifestDigest = new Sha256Digest("sha256", new string('7', 64));
+            var subject = new RepositoryLedgerSubject(
+                "unified",
+                inspected,
+                inputManifestDigest,
+                "Tree");
+            var assessment = new ExactAssessmentIdentity(
+                "unified",
+                inspected,
+                inputManifestDigest,
+                "Tree");
             var subjectPath = Path.Combine(root, "repository-subject.json");
             var assessmentPath = Path.Combine(root, "assessment.json");
             var repositoryDraftPath = Path.Combine(root, "repository-draft.json");
@@ -454,9 +808,9 @@ internal static class EvidenceTests
             File.WriteAllText(
                 repositoryDraftPath,
                 DraftJson(RepositoryDraft(
-                    EvidenceIdentity.OwnerDeclaredUnavailable,
+                    EvidenceIdentity.OwnerDeclaredClosedSource,
                     "source",
-                    "The package owner declared source unavailable.")),
+                    "The package owner declared the package closed source.")),
                 new UTF8Encoding(false));
             File.WriteAllText(
                 componentDraftPath,
@@ -574,6 +928,137 @@ internal static class EvidenceTests
                 bundle.SourceLedgers.Select(source => source.SourceLedgerSha256),
                 "CLI source-ledger digest ordering");
 
+            var supplementalPaths = new List<string>();
+            var supplementalIds = new List<string>();
+            for (var index = 0; index < ResourceLimits.SupplementalInputCount + 1; index++)
+            {
+                var digest = Convert.ToHexStringLower(
+                    System.Security.Cryptography.SHA256.HashData(
+                        Encoding.UTF8.GetBytes($"supplemental-{index}")));
+                var supplemental = EvidenceLedgerBuilder.BuildRepositoryLedger(
+                    subject,
+                    [
+                        RepositoryDraft(
+                            EvidenceIdentity.OwnerSuppliedInternalEvidence,
+                            $"supplemental-{index}.txt",
+                            $"Supplemental evidence record {index}.") with
+                        {
+                            Provenance = RepositoryDraft(
+                                EvidenceIdentity.OwnerSuppliedInternalEvidence,
+                                $"supplemental-{index}.txt",
+                                $"Supplemental evidence record {index}.").Provenance with
+                            {
+                                ContentDigest = new Sha256Digest("sha256", digest)
+                            }
+                        }
+                    ]);
+                var path = Path.Combine(root, $"supplemental-{index}.ledger.json");
+                File.WriteAllBytes(
+                    path,
+                    CanonicalEvidenceJson.SerializeSourceLedger(supplemental));
+                supplementalPaths.Add(path);
+                supplementalIds.Add(supplemental.Records[0].StableId);
+            }
+
+            var thirtyTwoBundle = BuildBundleArguments(
+                validatorDll,
+                assessmentPath,
+                supplementalPaths.Take(ResourceLimits.SupplementalInputCount),
+                supplementalIds[0],
+                Path.Combine(root, "thirty-two.bundle.json"));
+            RunProcess(
+                "dotnet",
+                thirtyTwoBundle,
+                repositoryRoot,
+                environment,
+                expectedExitCode: ExitCodes.Success);
+
+            var thirtyThree = RunProcess(
+                "dotnet",
+                BuildBundleArguments(
+                    validatorDll,
+                    assessmentPath,
+                    supplementalPaths,
+                    supplementalIds[0],
+                    Path.Combine(root, "thirty-three.bundle.json")),
+                repositoryRoot,
+                environment,
+                expectedExitCode: ExitCodes.ValidationFailure);
+            Assert(
+                thirtyThree.StandardError.Contains(
+                    "at most 32 explicit supplemental inputs",
+                    StringComparison.Ordinal),
+                "33 source-ledger CLI limit");
+
+            var aggregatePaths = new List<string>();
+            for (var index = 0; index < ResourceLimits.SupplementalInputCount; index++)
+            {
+                var path = Path.Combine(root, $"aggregate-{index}.ledger.json");
+                SetFileLength(path, 2L * 1024 * 1024);
+                aggregatePaths.Add(path);
+            }
+
+            var aggregateExact = RunProcess(
+                "dotnet",
+                BuildBundleArguments(
+                    validatorDll,
+                    assessmentPath,
+                    aggregatePaths,
+                    supplementalIds[0],
+                    Path.Combine(root, "aggregate-exact.bundle.json")),
+                repositoryRoot,
+                environment,
+                expectedExitCode: ExitCodes.ValidationFailure);
+            Assert(
+                !aggregateExact.StandardError.Contains(
+                    "supplemental evidence inputs exceeds",
+                    StringComparison.Ordinal),
+                "exact 64 MiB aggregate passes the aggregate resource gate");
+            SetFileLength(aggregatePaths[0], (2L * 1024 * 1024) + 1);
+            var aggregateOver = RunProcess(
+                "dotnet",
+                BuildBundleArguments(
+                    validatorDll,
+                    assessmentPath,
+                    aggregatePaths,
+                    supplementalIds[0],
+                    Path.Combine(root, "aggregate-over.bundle.json")),
+                repositoryRoot,
+                environment,
+                expectedExitCode: ExitCodes.ValidationFailure);
+            Assert(
+                aggregateOver.StandardError.Contains(
+                    "supplemental evidence inputs exceeds",
+                    StringComparison.Ordinal),
+                "64 MiB aggregate plus one byte fails the CLI resource gate");
+
+            var exactLedgerLimit = Path.Combine(root, "ledger-exact-limit.json");
+            var overLedgerLimit = Path.Combine(root, "ledger-over-limit.json");
+            SetFileLength(exactLedgerLimit, ResourceLimits.AuthoredLedgerBytes);
+            SetFileLength(overLedgerLimit, ResourceLimits.AuthoredLedgerBytes + 1);
+            var exactLedgerResult = RunProcess(
+                "dotnet",
+                [validatorDll, "evidence", "ledger-validate", "--ledger", exactLedgerLimit],
+                repositoryRoot,
+                environment,
+                expectedExitCode: ExitCodes.ValidationFailure);
+            Assert(
+                !exactLedgerResult.StandardError.Contains(
+                    "authored source ledger exceeds",
+                    StringComparison.Ordinal),
+                "exact 4 MiB ledger reaches canonical validation");
+            var overLedgerResult = RunProcess(
+                "dotnet",
+                [validatorDll, "evidence", "ledger-validate", "--ledger", overLedgerLimit],
+                repositoryRoot,
+                environment,
+                expectedExitCode: ExitCodes.ValidationFailure);
+            Assert(
+                overLedgerResult.StandardError.Contains(
+                    "authored source ledger exceeds",
+                    StringComparison.Ordinal),
+                "4 MiB ledger plus one byte fails the CLI resource gate");
+
             var mismatchedSubjects = new[]
             {
                 subject with
@@ -648,7 +1133,11 @@ internal static class EvidenceTests
         CanonicalEvidenceJson.ParseAssessment(Encoding.UTF8.GetBytes(KnownAssessmentJson));
 
     private static RepositoryLedgerSubject KnownRepositorySubject() =>
-        new(KnownAssessment().Package);
+        new(
+            KnownAssessment().AssessmentKind,
+            KnownAssessment().Package,
+            KnownAssessment().InputManifestDigest,
+            KnownAssessment().ComponentId);
 
     private static EvidenceRecordDraft RepositoryDraft(
         string kind,
@@ -679,6 +1168,21 @@ internal static class EvidenceTests
                 "commitment-only"),
             []);
 
+    private static EvidenceRecordDraft PackageArtifactDraft(
+        string locator,
+        string digest) =>
+        new(
+            "The exact package artifact contains the retained metadata.",
+            new EvidenceApplicability("repository-wide", null),
+            new EvidenceProvenance(
+                EvidenceIdentity.PackageArtifactMetadata,
+                locator,
+                "Read the exact package archive entry.",
+                "2026-09-02T20:00:00Z",
+                new Sha256Digest("sha256", digest),
+                "commitment-only"),
+            []);
+
     private static EvidenceRecordDraft ToDraft(EvidenceRecord record) =>
         new(
             record.Claim,
@@ -702,14 +1206,46 @@ internal static class EvidenceTests
             $$"""{"schema_version":1,"records":[{"claim":"{{Escape(draft.Claim)}}","applicability":{"scope":"{{draft.Applicability.Scope}}","component_id":{{componentId}}},"provenance":{"kind":"{{draft.Provenance.Kind}}","locator":"{{Escape(draft.Provenance.Locator)}}","method":"{{Escape(draft.Provenance.Method)}}","captured_at_utc":"{{draft.Provenance.CapturedAtUtc}}","content_sha256":{"algorithm":"sha256","value":"{{draft.Provenance.ContentDigest.Value}}"},"retention":"commitment-only"},"supersedes":[{{supersedes}}]}]}""";
     }
 
-    private static void CreatePackage(string path, string id, string version)
+    private static void CreatePackage(
+        string path,
+        string id,
+        string version,
+        IReadOnlyDictionary<string, byte[]>? additionalEntries = null)
     {
         using var stream = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
         var entry = archive.CreateEntry($"{id}.nuspec", CompressionLevel.NoCompression);
-        using var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false));
-        writer.Write(
-            $"<package><metadata><id>{id}</id><version>{version}</version></metadata></package>");
+        using (var writer = new StreamWriter(entry.Open(), new UTF8Encoding(false)))
+        {
+            writer.Write(
+                $"<package><metadata><id>{id}</id><version>{version}</version></metadata></package>");
+        }
+
+        if (additionalEntries is not null)
+        {
+            foreach (var pair in additionalEntries)
+            {
+                var additional = archive.CreateEntry(pair.Key, CompressionLevel.NoCompression);
+                using var output = additional.Open();
+                output.Write(pair.Value);
+            }
+        }
+    }
+
+    private static void AssertCliValidationFailure(
+        IReadOnlyList<string> arguments,
+        string expectedMessage,
+        string name)
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(arguments, output, error),
+            $"{name} exit");
+        Assert(
+            error.ToString().Contains(expectedMessage, StringComparison.Ordinal),
+            $"{name} message: {error}");
     }
 
     private static ProcessResult RunProcess(
@@ -746,6 +1282,40 @@ internal static class EvidenceTests
             result.ExitCode == expectedExitCode,
             $"{executable} exit code: expected {expectedExitCode}, actual {result.ExitCode}.\n{result}");
         return result;
+    }
+
+    private static string[] BuildBundleArguments(
+        string validatorDll,
+        string assessmentPath,
+        IEnumerable<string> sourceLedgers,
+        string evidenceId,
+        string outputPath)
+    {
+        var arguments = new List<string>
+        {
+            validatorDll,
+            "evidence",
+            "bundle",
+            "--assessment",
+            assessmentPath
+        };
+        foreach (var sourceLedger in sourceLedgers)
+        {
+            arguments.Add("--source-ledger");
+            arguments.Add(sourceLedger);
+        }
+
+        arguments.Add("--ids");
+        arguments.Add(evidenceId);
+        arguments.Add("--output");
+        arguments.Add(outputPath);
+        return arguments.ToArray();
+    }
+
+    private static void SetFileLength(string path, long length)
+    {
+        using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+        stream.SetLength(length);
     }
 
     private static void ExpectValidation(Action action, string name)

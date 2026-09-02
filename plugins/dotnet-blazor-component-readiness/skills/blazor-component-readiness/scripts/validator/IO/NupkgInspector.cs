@@ -14,9 +14,8 @@ public static class NupkgInspector
     private static readonly Regex PackageIdPattern = new(
         @"^[A-Za-z0-9_]+(?:[.-][A-Za-z0-9_]+)*$",
         RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
-    private static readonly Regex PackageVersionPattern = new(
-        @"^[0-9]+(?:\.[0-9]+){0,3}(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$",
-        RegexOptions.CultureInvariant | RegexOptions.NonBacktracking);
+    public const string WholePackageEvidenceLocator = "package:whole-nupkg";
+    public const string PackageEntryEvidencePrefix = "package:entry/";
 
     public static PackageIdentity Inspect(string path)
     {
@@ -28,10 +27,7 @@ public static class NupkgInspector
         {
             using var packageStream = new MemoryStream(bytes, writable: false);
             using var archive = new ZipArchive(packageStream, ZipArchiveMode.Read, leaveOpen: false);
-            foreach (var entry in archive.Entries)
-            {
-                SafePath.ValidateArchiveEntry(entry.FullName, IsSymbolicLink(entry));
-            }
+            ValidateArchiveEntries(archive);
 
             var nuspecEntries = archive.Entries
                 .Where(entry =>
@@ -57,6 +53,73 @@ public static class NupkgInspector
         }
     }
 
+    public static string ComputeEvidenceContentSha256(string path, string locator)
+    {
+        SafePath.EnsureRegularFile(path);
+        var bytes = BoundedIO.ReadAllBytes(path, ResourceLimits.NupkgBytes, "nupkg");
+        if (string.Equals(locator, WholePackageEvidenceLocator, StringComparison.Ordinal))
+        {
+            return Convert.ToHexStringLower(SHA256.HashData(bytes));
+        }
+
+        if (!locator.StartsWith(PackageEntryEvidencePrefix, StringComparison.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                "A package evidence locator must identify the whole nupkg or one package entry.");
+        }
+
+        var entryName = locator[PackageEntryEvidencePrefix.Length..];
+        SafePath.ValidateArchiveEntry(entryName, isSymbolicLink: false);
+        try
+        {
+            using var packageStream = new MemoryStream(bytes, writable: false);
+            using var archive = new ZipArchive(packageStream, ZipArchiveMode.Read, leaveOpen: false);
+            ValidateArchiveEntries(archive);
+            var matches = archive.Entries
+                .Where(entry =>
+                    !entry.FullName.EndsWith('/') &&
+                    string.Equals(entry.FullName, entryName, StringComparison.Ordinal))
+                .ToArray();
+            if (matches.Length != 1)
+            {
+                throw new DeterministicValidationException(
+                    $"Package evidence entry '{entryName}' resolves to {matches.Length} entries; expected exactly one.");
+            }
+
+            BoundedIO.EnsureLength(
+                matches[0].Length,
+                ResourceLimits.NupkgBytes,
+                "expanded package evidence entry");
+            using var entryStream = matches[0].Open();
+            using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+            var buffer = new byte[64 * 1024];
+            long total = 0;
+            while (true)
+            {
+                var read = entryStream.Read(buffer, 0, buffer.Length);
+                if (read == 0)
+                {
+                    break;
+                }
+
+                total = checked(total + read);
+                BoundedIO.EnsureLength(
+                    total,
+                    ResourceLimits.NupkgBytes,
+                    "expanded package evidence entry");
+                hash.AppendData(buffer, 0, read);
+            }
+
+            return Convert.ToHexStringLower(hash.GetHashAndReset());
+        }
+        catch (InvalidDataException exception)
+        {
+            throw new DeterministicValidationException(
+                "The nupkg is not a valid ZIP package.",
+                exception);
+        }
+    }
+
     private static (string Id, string Version) ReadIdentity(byte[] nuspecBytes)
     {
         try
@@ -78,10 +141,10 @@ public static class NupkgInspector
             }
 
             var metadata = SingleChild(root, "metadata");
-            var id = SingleChild(metadata, "id").Value.Trim();
-            var version = SingleChild(metadata, "version").Value.Trim();
+            var id = SingleChild(metadata, "id").Value.Trim().ToLowerInvariant();
+            var version = NuGetVersionNormalizer.Normalize(
+                SingleChild(metadata, "version").Value.Trim());
             ValidateIdentityValue(id, "package ID", PackageIdPattern, maximumLength: 100);
-            ValidateIdentityValue(version, "package version", PackageVersionPattern, maximumLength: 256);
             return (id, version);
         }
         catch (XmlException exception)
@@ -112,4 +175,12 @@ public static class NupkgInspector
 
     private static bool IsSymbolicLink(ZipArchiveEntry entry) =>
         ((entry.ExternalAttributes >> 16) & UnixFileTypeMask) == UnixSymbolicLink;
+
+    private static void ValidateArchiveEntries(ZipArchive archive)
+    {
+        foreach (var entry in archive.Entries)
+        {
+            SafePath.ValidateArchiveEntry(entry.FullName, IsSymbolicLink(entry));
+        }
+    }
 }

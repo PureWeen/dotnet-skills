@@ -92,13 +92,15 @@ public static class EvidenceCommand
         var subjectPath = options.Single("--subject");
         var draftPath = options.Single("--draft");
         var outputPath = options.Single("--output");
+        var nupkgPath = options.Single("--nupkg");
         var inspected = EvidenceIdentity.FromInspectedPackage(
-            NupkgInspector.Inspect(options.Single("--nupkg")));
+            NupkgInspector.Inspect(nupkgPath));
         var draft = CanonicalEvidenceJson.ParseDraftDocument(
             BoundedIO.ReadAllBytes(
                 draftPath,
                 ResourceLimits.AuthoredLedgerBytes,
                 "evidence draft"));
+        VerifyPackageArtifactEvidence(nupkgPath, draft.Records);
 
         EvidenceSourceLedger ledger;
         switch (kind)
@@ -273,6 +275,31 @@ public static class EvidenceCommand
         {
             throw new DeterministicValidationException(
                 "EVID006: exact nupkg ID, version, or digest differs from ledger subject.");
+        }
+    }
+
+    private static void VerifyPackageArtifactEvidence(
+        string nupkgPath,
+        IReadOnlyList<EvidenceRecordDraft> records)
+    {
+        foreach (var record in records.Where(record =>
+                     string.Equals(
+                         record.Provenance.Kind,
+                         EvidenceIdentity.PackageArtifactMetadata,
+                         StringComparison.Ordinal)))
+        {
+            var actual = NupkgInspector.ComputeEvidenceContentSha256(
+                nupkgPath,
+                record.Provenance.Locator);
+            if (!string.Equals(
+                    actual,
+                    record.Provenance.ContentDigest.Value,
+                    StringComparison.Ordinal))
+            {
+                throw new DeterministicValidationException(
+                    $"EVID006: package evidence digest for '{record.Provenance.Locator}' " +
+                    "differs from the exact nupkg content.");
+            }
         }
     }
 

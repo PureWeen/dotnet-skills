@@ -171,6 +171,10 @@ internal static class FoundationTests
             () => BoundedIO.EnsureFileLength(overNupkg, ResourceLimits.NupkgBytes, "nupkg"),
             ResourceLimits.NupkgBytes + 1,
             "nupkg one-byte-over");
+        ExpectLimit(
+            () => NupkgInspector.Inspect(overNupkg),
+            ResourceLimits.NupkgBytes + 1,
+            "NupkgInspector nupkg one-byte-over");
 
         var exactLedger = new byte[ResourceLimits.AuthoredLedgerBytes];
         AssertEqual(
@@ -191,7 +195,7 @@ internal static class FoundationTests
         var package = Path.Combine(testRoot, "Exact.Identity.2.4.6.nupkg");
         CreatePackage(package, "Exact.Identity", "2.4.6-beta.1+build.7");
         var identity = NupkgInspector.Inspect(package);
-        AssertEqual("Exact.Identity", identity.Id, "nupkg ID");
+        AssertEqual("exact.identity", identity.Id, "nupkg ID");
         AssertEqual("2.4.6-beta.1+build.7", identity.Version, "nupkg version");
         AssertEqual("Exact.Identity.nuspec", identity.NuspecEntry, "nuspec entry");
         AssertEqual(new FileInfo(package).Length, identity.NupkgSize, "nupkg byte size");
@@ -199,7 +203,7 @@ internal static class FoundationTests
 
         var exactNuspec = Path.Combine(testRoot, "nuspec-exact.nupkg");
         CreatePackage(exactNuspec, "Limit.Exact", "1.0.0", ResourceLimits.NuspecBytes);
-        AssertEqual("Limit.Exact", NupkgInspector.Inspect(exactNuspec).Id, "exact 1 MiB nuspec");
+        AssertEqual("limit.exact", NupkgInspector.Inspect(exactNuspec).Id, "exact 1 MiB nuspec");
 
         var overNuspec = Path.Combine(testRoot, "nuspec-over.nupkg");
         CreatePackage(overNuspec, "Limit.Over", "1.0.0", ResourceLimits.NuspecBytes + 1);
@@ -243,7 +247,7 @@ internal static class FoundationTests
         if (TryCreateDirectorySymlink(aliasPackageDirectory, realPackageDirectory, "package directory"))
         {
             AssertEqual(
-                "Aliased",
+                "aliased",
                 NupkgInspector.Inspect(Path.Combine(aliasPackageDirectory, "Aliased.1.0.0.nupkg")).Id,
                 "nupkg beneath a resolved directory alias");
         }
@@ -355,7 +359,7 @@ internal static class FoundationTests
                    4096,
                    "CLI output"))
         {
-            AssertEqual("Exact.Identity", result.RootElement.GetProperty("package_id").GetString(), "CLI package ID");
+            AssertEqual("exact.identity", result.RootElement.GetProperty("package_id").GetString(), "CLI package ID");
             AssertEqual(
                 "2.4.6-beta.1+build.7",
                 result.RootElement.GetProperty("package_version").GetString(),
@@ -477,7 +481,7 @@ internal static class FoundationTests
             .LastOrDefault(line => line.StartsWith('{') && line.EndsWith('}'))
             ?? throw new InvalidOperationException($"{name} launcher did not emit package JSON.\n{result}");
         using var json = StrictJson.Parse(Encoding.UTF8.GetBytes(jsonLine), 4096, $"{name} launcher JSON");
-        AssertEqual("Exact.Identity", json.RootElement.GetProperty("package_id").GetString(), $"{name} launcher package ID");
+        AssertEqual("exact.identity", json.RootElement.GetProperty("package_id").GetString(), $"{name} launcher package ID");
 
         var dll = Path.Combine(
             externalArtifacts,
@@ -869,7 +873,7 @@ internal static class FoundationTests
             fakeBin,
             bashTemp,
             bashLog,
-            validatorExit: 29,
+            validatorExit: ExitCodes.InvalidUsage,
             restoreExit: 0,
             buildExit: 0);
         var powershell = RunFakeLauncher(
@@ -884,11 +888,17 @@ internal static class FoundationTests
             fakeBin,
             powershellTemp,
             powershellLog,
-            validatorExit: 29,
+            validatorExit: ExitCodes.InvalidUsage,
             restoreExit: 0,
             buildExit: 0);
-        AssertEqual(29, bash.ExitCode, "Bash validator exit propagation");
-        AssertEqual(29, powershell.ExitCode, "PowerShell validator exit propagation");
+        AssertEqual(
+            ExitCodes.InvalidUsage,
+            bash.ExitCode,
+            "Bash documented validator exit propagation");
+        AssertEqual(
+            ExitCodes.InvalidUsage,
+            powershell.ExitCode,
+            "PowerShell documented validator exit propagation");
 
         var bashInvocations = ReadNormalizedInvocations(bashLog, bashTemp);
         var powershellInvocations = ReadNormalizedInvocations(powershellLog, powershellTemp);
@@ -933,6 +943,59 @@ internal static class FoundationTests
             restoreExit: 0,
             buildExit: 23,
             phase: "build");
+        AssertDocumentedValidatorExit(
+            validatorDirectory,
+            workingDirectory,
+            fakeBin,
+            testRoot,
+            ExitCodes.ValidationFailure);
+        AssertDocumentedValidatorExit(
+            validatorDirectory,
+            workingDirectory,
+            fakeBin,
+            testRoot,
+            ExitCodes.EnvironmentFailure);
+        AssertUndocumentedValidatorExit(
+            validatorDirectory,
+            workingDirectory,
+            fakeBin,
+            testRoot);
+    }
+
+    private static void AssertDocumentedValidatorExit(
+        string validatorDirectory,
+        string workingDirectory,
+        string fakeBin,
+        string testRoot,
+        int validatorExit)
+    {
+        var bash = RunFakeLauncher(
+            "bash",
+            [Path.Combine(validatorDirectory, "run-validator.sh")],
+            workingDirectory,
+            fakeBin,
+            Path.Combine(testRoot, $"validator-{validatorExit}-bash"),
+            Path.Combine(testRoot, $"validator-{validatorExit}-bash.log"),
+            validatorExit,
+            restoreExit: 0,
+            buildExit: 0);
+        var powershell = RunFakeLauncher(
+            "pwsh",
+            [
+                "-NoLogo",
+                "-NoProfile",
+                "-File",
+                Path.Combine(validatorDirectory, "run-validator.ps1")
+            ],
+            workingDirectory,
+            fakeBin,
+            Path.Combine(testRoot, $"validator-{validatorExit}-powershell"),
+            Path.Combine(testRoot, $"validator-{validatorExit}-powershell.log"),
+            validatorExit,
+            restoreExit: 0,
+            buildExit: 0);
+        AssertEqual(validatorExit, bash.ExitCode, $"Bash validator exit {validatorExit}");
+        AssertEqual(validatorExit, powershell.ExitCode, $"PowerShell validator exit {validatorExit}");
     }
 
     private static ProcessResult RunFakeLauncher(
@@ -1011,9 +1074,73 @@ internal static class FoundationTests
             validatorExit: 0,
             restoreExit: restoreExit,
             buildExit: buildExit);
-        var expected = restoreExit != 0 ? restoreExit : buildExit;
-        AssertEqual(expected, bash.ExitCode, $"Bash {phase} exit propagation");
-        AssertEqual(expected, powershell.ExitCode, $"PowerShell {phase} exit propagation");
+        AssertEqual(
+            ExitCodes.EnvironmentFailure,
+            bash.ExitCode,
+            $"Bash {phase} failure mapping");
+        AssertEqual(
+            ExitCodes.EnvironmentFailure,
+            powershell.ExitCode,
+            $"PowerShell {phase} failure mapping");
+        Assert(
+            bash.StandardError.Contains(
+                $"readiness validator {phase} failed",
+                StringComparison.Ordinal),
+            $"Bash {phase} failure message");
+        AssertEqual(
+            NormalizeLineEndings(bash.StandardError),
+            NormalizeLineEndings(powershell.StandardError),
+            $"{phase} failure parity");
+    }
+
+    private static void AssertUndocumentedValidatorExit(
+        string validatorDirectory,
+        string workingDirectory,
+        string fakeBin,
+        string testRoot)
+    {
+        var bash = RunFakeLauncher(
+            "bash",
+            [Path.Combine(validatorDirectory, "run-validator.sh")],
+            workingDirectory,
+            fakeBin,
+            Path.Combine(testRoot, "validator-exit-bash"),
+            Path.Combine(testRoot, "validator-exit-bash.log"),
+            validatorExit: 29,
+            restoreExit: 0,
+            buildExit: 0);
+        var powershell = RunFakeLauncher(
+            "pwsh",
+            [
+                "-NoLogo",
+                "-NoProfile",
+                "-File",
+                Path.Combine(validatorDirectory, "run-validator.ps1")
+            ],
+            workingDirectory,
+            fakeBin,
+            Path.Combine(testRoot, "validator-exit-powershell"),
+            Path.Combine(testRoot, "validator-exit-powershell.log"),
+            validatorExit: 29,
+            restoreExit: 0,
+            buildExit: 0);
+        AssertEqual(
+            ExitCodes.EnvironmentFailure,
+            bash.ExitCode,
+            "Bash undocumented validator exit mapping");
+        AssertEqual(
+            ExitCodes.EnvironmentFailure,
+            powershell.ExitCode,
+            "PowerShell undocumented validator exit mapping");
+        Assert(
+            bash.StandardError.Contains(
+                "readiness validator returned undocumented exit code 29",
+                StringComparison.Ordinal),
+            "Bash undocumented validator exit message");
+        AssertEqual(
+            NormalizeLineEndings(bash.StandardError),
+            NormalizeLineEndings(powershell.StandardError),
+            "undocumented validator exit parity");
     }
 
     private static string[] ReadNormalizedInvocations(string logPath, string readinessTemp) =>
