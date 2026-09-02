@@ -321,6 +321,14 @@ public static class AssessmentService
                 throw new DeterministicValidationException(
                     "Component assessment requires an exact package reference.");
             }
+
+            if (assessment.CompletionState == "complete" &&
+                (assessment.PackageReference.AssessmentDigest is null ||
+                 assessment.PackageReference.ReportDigest is null))
+            {
+                throw new DeterministicValidationException(
+                    "A complete component assessment requires package assessment and report digests.");
+            }
         }
         else if (assessment.PackageReference is not null)
         {

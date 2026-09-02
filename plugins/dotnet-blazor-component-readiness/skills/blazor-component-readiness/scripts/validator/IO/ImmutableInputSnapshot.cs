@@ -6,16 +6,19 @@ public sealed record ImmutableInputSnapshot(
     byte[] Bytes)
 {
     public static ImmutableInputSnapshot Capture(string path, string resource) =>
+        Capture(path, ResourceLimits.SerializedArtifactBytes, resource);
+
+    public static ImmutableInputSnapshot Capture(string path, long maximumBytes, string resource) =>
         new(
             System.IO.Path.GetFullPath(path),
             resource,
-            BoundedIO.ReadAllBytes(path, ResourceLimits.SerializedArtifactBytes, resource));
+            BoundedIO.ReadAllBytes(path, maximumBytes, resource));
 
     public void EnsureUnchanged()
     {
         var actual = BoundedIO.ReadAllBytes(
             Path,
-            ResourceLimits.SerializedArtifactBytes,
+            Math.Max(Bytes.LongLength, 1),
             Resource);
         if (!actual.AsSpan().SequenceEqual(Bytes))
         {

@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using BlazorComponentReadiness.Validator.Cli;
 using BlazorComponentReadiness.Validator.IO;
+using BlazorComponentReadiness.Validator.Validation;
 
 internal static class FoundationTests
 {
@@ -78,6 +79,9 @@ internal static class FoundationTests
 
         Assert(project.Contains("<TargetFramework>net11.0</TargetFramework>", StringComparison.Ordinal), "net11 target");
         Assert(project.Contains("<LangVersion>13.0</LangVersion>", StringComparison.Ordinal), "C# 13 language version");
+        Assert(
+            project.Contains($"<Version>{ContractVersions.ValidatorVersion}</Version>", StringComparison.Ordinal),
+            "validator assembly version matches the authoritative production project");
         Assert(!project.Contains("<PackageReference", StringComparison.Ordinal), "production project has no PackageReference");
         Assert(project.Contains("VerifyNoPackageReferences", StringComparison.Ordinal), "zero-package verification target");
 
@@ -151,6 +155,7 @@ internal static class FoundationTests
         AssertEqual(1L * 1024 * 1024, ResourceLimits.NuspecBytes, "nuspec limit");
         AssertEqual(32, ResourceLimits.SupplementalInputCount, "supplemental input count");
         AssertEqual(64L * 1024 * 1024, ResourceLimits.SupplementalInputAggregateBytes, "supplemental aggregate limit");
+        AssertEqual(64, ResourceLimits.RetrievalAttemptCount, "retrieval attempt count");
 
         var exactSerialized = Path.Combine(testRoot, "serialized-exact.bin");
         var overSerialized = Path.Combine(testRoot, "serialized-over.bin");

@@ -1,4 +1,5 @@
 using BlazorComponentReadiness.Validator.Assessment;
+using BlazorComponentReadiness.Validator.Contracts;
 using BlazorComponentReadiness.Validator.Evidence;
 using BlazorComponentReadiness.Validator.Inputs;
 using BlazorComponentReadiness.Validator.IO;
@@ -8,6 +9,8 @@ namespace BlazorComponentReadiness.Validator.Cli;
 
 public static class ReportCommand
 {
+    internal static Action? BeforePublishForTests { get; set; }
+
     private const string Help =
         """
         Deterministic readiness reports
@@ -66,6 +69,8 @@ public static class ReportCommand
         var evidenceBytes = evidenceSnapshot.Bytes;
         var input = InputManifestService.Parse(inputBytes);
         InputManifestService.Validate(input, root, requireConfirmed: true);
+        var referencedSnapshots = CaptureReferencedInputs(input, root);
+        InputManifestService.Validate(input, root, requireConfirmed: true);
         var assessment = AssessmentService.Parse(assessmentBytes);
         var evidence = CanonicalEvidenceJson.ParseBundle(evidenceBytes);
         AssessmentService.Validate(assessment, assessmentBytes, input, inputBytes, evidence);
@@ -87,10 +92,15 @@ public static class ReportCommand
             File.WriteAllBytes(Path.Combine(staging, $"{assessment.AssessmentKind}.evidence.json"), evidenceBytes);
             File.WriteAllBytes(Path.Combine(staging, $"{assessment.AssessmentKind}.report.md"), reportBytes);
             File.WriteAllBytes(Path.Combine(staging, $"{assessment.AssessmentKind}.validation.json"), manifestBytes);
+            BeforePublishForTests?.Invoke();
             InputManifestService.Validate(input, root, requireConfirmed: true);
             inputSnapshot.EnsureUnchanged();
             assessmentSnapshot.EnsureUnchanged();
             evidenceSnapshot.EnsureUnchanged();
+            foreach (var snapshot in referencedSnapshots)
+            {
+                snapshot.EnsureUnchanged();
+            }
         });
         return ExitCodes.Success;
     }
@@ -150,6 +160,54 @@ public static class ReportCommand
 
     private static byte[] Read(string path, string resource) =>
         BoundedIO.ReadAllBytes(path, ResourceLimits.SerializedArtifactBytes, resource);
+
+    private static IReadOnlyList<ImmutableInputSnapshot> CaptureReferencedInputs(
+        InputManifest input,
+        string root)
+    {
+        var snapshots = new List<ImmutableInputSnapshot>
+        {
+            ImmutableInputSnapshot.Capture(
+                SafePath.ResolveUnderRoot(
+                    root,
+                    input.Package.NupkgPath,
+                    requireExisting: true,
+                    requireFile: true),
+                ResourceLimits.NupkgBytes,
+                "referenced nupkg")
+        };
+        snapshots.AddRange(input.Documentation.Select(document =>
+            ImmutableInputSnapshot.Capture(
+                SafePath.ResolveUnderRoot(
+                    root,
+                    document.ContentPath,
+                    requireExisting: true,
+                    requireFile: true),
+                ResourceLimits.SupplementalInputAggregateBytes,
+                $"referenced documentation '{document.ContentPath}'")));
+        snapshots.AddRange(input.PackageSources.Select(source =>
+            ImmutableInputSnapshot.Capture(
+                SafePath.ResolveUnderRoot(
+                    root,
+                    source.ContentPath,
+                    requireExisting: true,
+                    requireFile: true),
+                ResourceLimits.SupplementalInputAggregateBytes,
+                $"referenced package source '{source.ContentPath}'")));
+        snapshots.AddRange(input.OwnerInputs.Select(owner =>
+            ImmutableInputSnapshot.Capture(
+                SafePath.ResolveUnderRoot(
+                    root,
+                    owner.Basename,
+                    requireExisting: true,
+                    requireFile: true),
+                ResourceLimits.SupplementalInputAggregateBytes,
+                $"referenced owner input '{owner.Basename}'")));
+        return snapshots
+            .GroupBy(snapshot => snapshot.Path, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .ToArray();
+    }
 
     private static bool IsHelp(string value) => value is "--help" or "-h";
 }

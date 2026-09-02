@@ -24,7 +24,9 @@ public static class InputManifestService
             candidate,
             "schema_version",
             "acquisition",
+            "package_origin",
             "source",
+            "retrieval_attempts",
             "documentation",
             "package_sources",
             "owner_inputs",
@@ -42,7 +44,13 @@ public static class InputManifestService
                 "acquisition must be 'published' or 'release-candidate'.");
         }
 
+        var packageOrigin = ParseCandidatePackageOrigin(ContractJson.Object(candidate, "package_origin"));
         var source = ParseCandidateSource(ContractJson.Object(candidate, "source"));
+        var retrievalAttempts = ContractJson.Array(candidate, "retrieval_attempts")
+            .EnumerateArray()
+            .Select(ParseCandidateRetrievalAttempt)
+            .OrderBy(AttemptKey, StringComparer.Ordinal)
+            .ToArray();
         var documentation = ContractJson.Array(candidate, "documentation")
             .EnumerateArray()
             .Select(item => CreateDocument(root, item))
@@ -80,8 +88,11 @@ public static class InputManifestService
                 Canonicalization.PackageId(inspected.Id),
                 NuGetVersionNormalizer.Normalize(inspected.Version),
                 new Sha256Digest("sha256", inspected.NupkgSha256),
-                packageRelativePath),
+                packageRelativePath,
+                packageOrigin.Locator,
+                packageOrigin.RetrievalMethod),
             source,
+            RequireUnique(retrievalAttempts, AttemptKey, "retrieval attempt"),
             RequireUnique(documentation, item => item.Url, "documentation URL"),
             RequireUnique(packageSources, item => $"{item.Kind}\0{item.Locator}", "package source"),
             RequireUnique(ownerInputs, item => item.Basename, "owner input basename"),
@@ -124,14 +135,17 @@ public static class InputManifestService
             Canonicalization.PackageId(inspected.Id),
             NuGetVersionNormalizer.Normalize(inspected.Version),
             new Sha256Digest("sha256", inspected.NupkgSha256),
-            Canonicalization.RelativePath(manifest.Package.NupkgPath, "nupkg_path"));
-        if (manifest.Package != expectedPackage)
+            Canonicalization.RelativePath(manifest.Package.NupkgPath, "nupkg_path"),
+            CanonicalLocator(manifest.Package.OriginLocator, manifest.Package.RetrievalMethod),
+            CanonicalRetrievalMethod(manifest.Package.RetrievalMethod));
+        if (manifest.Package != expectedPackage || manifest.Package.RetrievalMethod == "repository-fetch")
         {
             throw new DeterministicValidationException(
                 "Input manifest package identity or digest does not match the exact inspected nupkg.");
         }
 
         ValidateSource(manifest.Source);
+        ValidateRetrievalAttempts(manifest);
         ValidateUniqueAndSorted(manifest.Documentation, item => item.Url, "documentation");
         foreach (var document in manifest.Documentation)
         {
@@ -239,6 +253,8 @@ public static class InputManifestService
             writer.WriteString("version", manifest.Package.Version);
             ContractJson.WriteDigest(writer, "nupkg_sha256", manifest.Package.NupkgDigest);
             writer.WriteString("nupkg_path", manifest.Package.NupkgPath);
+            writer.WriteString("origin_locator", manifest.Package.OriginLocator);
+            writer.WriteString("retrieval_method", manifest.Package.RetrievalMethod);
             writer.WriteEndObject();
             writer.WritePropertyName("source");
             writer.WriteStartObject();
@@ -248,6 +264,20 @@ public static class InputManifestService
             WriteNullable(writer, "mapping", manifest.Source.Mapping);
             WriteNullable(writer, "confidence", manifest.Source.Confidence);
             writer.WriteEndObject();
+            writer.WritePropertyName("retrieval_attempts");
+            writer.WriteStartArray();
+            foreach (var attempt in manifest.RetrievalAttempts)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("subject", attempt.Subject);
+                writer.WriteString("locator", attempt.Locator);
+                writer.WriteString("retrieval_method", attempt.RetrievalMethod);
+                writer.WriteString("result", attempt.Result);
+                WriteNullable(writer, "detail", attempt.Detail);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
             writer.WritePropertyName("documentation");
             writer.WriteStartArray();
             foreach (var document in manifest.Documentation)
@@ -333,6 +363,7 @@ public static class InputManifestService
             "acquisition",
             "package",
             "source",
+            "retrieval_attempts",
             "documentation",
             "package_sources",
             "owner_inputs",
@@ -344,12 +375,116 @@ public static class InputManifestService
             ContractJson.String(root, "acquisition"),
             ParsePackage(ContractJson.Object(root, "package")),
             ParseSource(ContractJson.Object(root, "source")),
+            ContractJson.Array(root, "retrieval_attempts").EnumerateArray().Select(ParseRetrievalAttempt).ToArray(),
             ContractJson.Array(root, "documentation").EnumerateArray().Select(ParseDocument).ToArray(),
             ContractJson.Array(root, "package_sources").EnumerateArray().Select(ParsePackageSource).ToArray(),
             ContractJson.Array(root, "owner_inputs").EnumerateArray().Select(ParseOwnerInput).ToArray(),
             ContractJson.Array(root, "components").EnumerateArray().Select(ParseComponent).ToArray(),
             ContractJson.Array(root, "exclusions").EnumerateArray().Select(ParseExclusion).ToArray());
         ContractJson.RequireCanonical(bytes.Span, Serialize(manifest), "input manifest");
+        return manifest;
+    }
+
+    public static InputManifest ParseDraft(ReadOnlyMemory<byte> bytes, string root)
+    {
+        using var document = StrictJson.Parse(bytes, ResourceLimits.SerializedArtifactBytes, "draft input manifest");
+        var value = document.RootElement;
+        ContractJson.RequirePropertiesUnordered(
+            value,
+            "schema_version",
+            "state",
+            "acquisition",
+            "package",
+            "source",
+            "retrieval_attempts",
+            "documentation",
+            "package_sources",
+            "owner_inputs",
+            "components",
+            "exclusions");
+        if (ContractJson.Int32(value, "schema_version") != SchemaVersion ||
+            !string.Equals(ContractJson.String(value, "state").Trim(), "draft", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new DeterministicValidationException("Draft input manifest schema or state is invalid.");
+        }
+
+        var packageElement = ContractJson.Object(value, "package");
+        ContractJson.RequirePropertiesUnordered(
+            packageElement,
+            "package_id",
+            "version",
+            "nupkg_sha256",
+            "nupkg_path",
+            "origin_locator",
+            "retrieval_method");
+        _ = ContractJson.String(packageElement, "package_id");
+        _ = ContractJson.String(packageElement, "version");
+        _ = ContractJson.Digest(ContractJson.Object(packageElement, "nupkg_sha256"));
+        var nupkgPath = Canonicalization.RelativePath(
+            EditableText(ContractJson.String(packageElement, "nupkg_path")),
+            "nupkg_path");
+        var inspected = NupkgInspector.Inspect(
+            SafePath.ResolveUnderRoot(root, nupkgPath, requireExisting: true, requireFile: true));
+        var retrievalMethod = CanonicalRetrievalMethod(
+            EditableText(ContractJson.String(packageElement, "retrieval_method")).ToLowerInvariant());
+        if (retrievalMethod == "repository-fetch")
+        {
+            throw new DeterministicValidationException(
+                "Package origin retrieval_method cannot be repository-fetch.");
+        }
+        var package = new InputPackage(
+            Canonicalization.PackageId(inspected.Id),
+            NuGetVersionNormalizer.Normalize(inspected.Version),
+            new Sha256Digest("sha256", inspected.NupkgSha256),
+            nupkgPath,
+            CanonicalLocator(ContractJson.String(packageElement, "origin_locator"), retrievalMethod),
+            retrievalMethod);
+        var source = ParseDraftSource(ContractJson.Object(value, "source"));
+        var attempts = ContractJson.Array(value, "retrieval_attempts")
+            .EnumerateArray()
+            .Select(ParseDraftRetrievalAttempt)
+            .OrderBy(AttemptKey, StringComparer.Ordinal)
+            .ToArray();
+        var documentation = ContractJson.Array(value, "documentation")
+            .EnumerateArray()
+            .Select(item => CreateDraftDocument(root, item))
+            .OrderBy(item => item.Url, StringComparer.Ordinal)
+            .ToArray();
+        var packageSources = ContractJson.Array(value, "package_sources")
+            .EnumerateArray()
+            .Select(item => CreateDraftPackageSource(root, item))
+            .OrderBy(item => item.Kind, StringComparer.Ordinal)
+            .ThenBy(item => item.Locator, StringComparer.Ordinal)
+            .ToArray();
+        var ownerInputs = ContractJson.Array(value, "owner_inputs")
+            .EnumerateArray()
+            .Select(item => CreateDraftOwnerInput(root, item))
+            .OrderBy(item => item.Basename, StringComparer.Ordinal)
+            .ToArray();
+        var components = ContractJson.Array(value, "components")
+            .EnumerateArray()
+            .Select(ParseDraftComponent)
+            .OrderBy(item => item.Id, StringComparer.Ordinal)
+            .ToArray();
+        var exclusions = ContractJson.Array(value, "exclusions")
+            .EnumerateArray()
+            .Select(ParseDraftExclusion)
+            .OrderBy(item => item.Subject, StringComparer.Ordinal)
+            .ThenBy(item => item.Rationale, StringComparer.Ordinal)
+            .ToArray();
+        var manifest = new InputManifest(
+            SchemaVersion,
+            "draft",
+            EditableText(ContractJson.String(value, "acquisition")).ToLowerInvariant(),
+            package,
+            source,
+            RequireUnique(attempts, AttemptKey, "retrieval attempt"),
+            RequireUnique(documentation, item => item.Url, "documentation URL"),
+            RequireUnique(packageSources, item => $"{item.Kind}\0{item.Locator}", "package source"),
+            RequireUnique(ownerInputs, item => item.Basename, "owner input basename"),
+            RequireUnique(components, item => item.Id, "component ID"),
+            exclusions);
+        Validate(manifest, root, requireConfirmed: false);
         return manifest;
     }
 
@@ -365,19 +500,106 @@ public static class InputManifestService
             "commit",
             "mapping",
             "confidence");
-        var availability = ContractJson.String(element, "availability");
+        var availability = EditableText(ContractJson.String(element, "availability")).ToLowerInvariant();
         var repositoryUri = ContractJson.NullableString(element, "repository_uri");
         var commit = ContractJson.NullableString(element, "commit");
         var mapping = ContractJson.NullableString(element, "mapping");
         var confidence = ContractJson.NullableString(element, "confidence");
         var source = new InputSource(
             availability,
-            repositoryUri is null ? null : Canonicalization.HttpsUri(repositoryUri, requirePath: true),
-            commit is null ? null : Canonicalization.Commit(commit),
-            mapping is null ? null : ContractJson.NormalizeText(mapping, "source mapping", 1024),
-            confidence?.ToLowerInvariant());
+            repositoryUri is null ? null : Canonicalization.HttpsUri(EditableText(repositoryUri), requirePath: true),
+            commit is null ? null : Canonicalization.Commit(EditableText(commit)),
+            mapping is null ? null : ContractJson.NormalizeText(EditableText(mapping), "source mapping", 1024),
+            confidence is null ? null : EditableText(confidence).ToLowerInvariant());
         ValidateSource(source);
         return source;
+    }
+
+    private static (string Locator, string RetrievalMethod) ParseCandidatePackageOrigin(JsonElement element)
+    {
+        ContractJson.RequireProperties(element, "locator", "retrieval_method");
+        var method = CanonicalRetrievalMethod(
+            EditableText(ContractJson.String(element, "retrieval_method")).ToLowerInvariant());
+        if (method == "repository-fetch")
+        {
+            throw new DeterministicValidationException(
+                "Package origin retrieval_method cannot be repository-fetch.");
+        }
+
+        return (CanonicalLocator(ContractJson.String(element, "locator"), method), method);
+    }
+
+    private static InputRetrievalAttempt ParseCandidateRetrievalAttempt(JsonElement element)
+    {
+        ContractJson.RequireProperties(element, "subject", "locator", "retrieval_method", "result", "detail");
+        return CanonicalRetrievalAttempt(element);
+    }
+
+    private static InputRetrievalAttempt CanonicalRetrievalAttempt(JsonElement element)
+    {
+        var method = CanonicalRetrievalMethod(
+            EditableText(ContractJson.String(element, "retrieval_method")).ToLowerInvariant());
+        var subject = EditableText(ContractJson.String(element, "subject")).ToLowerInvariant();
+        if (subject is not ("package" or "documentation" or "source"))
+        {
+            throw new DeterministicValidationException($"Unknown retrieval subject '{subject}'.");
+        }
+
+        var result = EditableText(ContractJson.String(element, "result")).ToLowerInvariant();
+        if (result is not ("succeeded" or "not-found" or "access-denied" or "unavailable" or
+            "invalid-content" or "network-failure"))
+        {
+            throw new DeterministicValidationException($"Unknown retrieval result '{result}'.");
+        }
+
+        var detail = ContractJson.NullableString(element, "detail");
+        return new InputRetrievalAttempt(
+            subject,
+            CanonicalLocator(ContractJson.String(element, "locator"), method),
+            method,
+            result,
+            detail is null ? null : EditableText(detail));
+    }
+
+    private static void ValidateRetrievalAttempts(InputManifest manifest)
+    {
+        if (manifest.RetrievalAttempts.Count == 0 ||
+            manifest.RetrievalAttempts.Count > ResourceLimits.RetrievalAttemptCount)
+        {
+            throw new DeterministicValidationException(
+                $"Retrieval attempts require between 1 and {ResourceLimits.RetrievalAttemptCount} entries.");
+        }
+
+        ValidateUniqueAndSorted(manifest.RetrievalAttempts, AttemptKey, "retrieval attempts");
+        foreach (var attempt in manifest.RetrievalAttempts)
+        {
+            var canonical = new InputRetrievalAttempt(
+                attempt.Subject,
+                CanonicalLocator(attempt.Locator, attempt.RetrievalMethod),
+                CanonicalRetrievalMethod(attempt.RetrievalMethod),
+                attempt.Result,
+                attempt.Detail is null ? null : ContractJson.NormalizeText(
+                    attempt.Detail,
+                    "retrieval attempt detail",
+                    1024));
+            if (canonical != attempt ||
+                attempt.Subject is not ("package" or "documentation" or "source") ||
+                attempt.Result is not ("succeeded" or "not-found" or "access-denied" or "unavailable" or
+                    "invalid-content" or "network-failure"))
+            {
+                throw new DeterministicValidationException("Retrieval attempt is not canonical.");
+            }
+        }
+
+        if (!manifest.RetrievalAttempts.Any(attempt =>
+                attempt.Subject == "package" &&
+                attempt.Locator == manifest.Package.OriginLocator &&
+                attempt.RetrievalMethod == manifest.Package.RetrievalMethod &&
+                attempt.Result == "succeeded"))
+        {
+            throw new DeterministicValidationException(
+                "Retrieval attempts must record successful acquisition of the exact package origin.");
+        }
     }
 
     private static void ValidateSource(InputSource source)
@@ -424,10 +646,10 @@ public static class InputManifestService
     {
         ContractJson.RequireProperties(element, "url", "content_path");
         var path = Canonicalization.RelativePath(
-            ContractJson.String(element, "content_path"),
+            EditableText(ContractJson.String(element, "content_path")),
             "documentation content_path");
         return new InputDocument(
-            Canonicalization.HttpsUri(ContractJson.String(element, "url"), requirePath: false),
+            Canonicalization.HttpsUri(EditableText(ContractJson.String(element, "url")), requirePath: false),
             path,
             LocalDigest(root, path, "documentation content"));
     }
@@ -442,11 +664,14 @@ public static class InputManifestService
         }
 
         var path = Canonicalization.RelativePath(
-            ContractJson.String(element, "content_path"),
+            EditableText(ContractJson.String(element, "content_path")),
             "package source content_path");
         return new InputPackageSource(
             kind,
-            ContractJson.NormalizeText(ContractJson.String(element, "locator"), "package source locator", 512),
+            ContractJson.NormalizeText(
+                EditableText(ContractJson.String(element, "locator")),
+                "package source locator",
+                512),
             path,
             LocalDigest(root, path, "package source content"));
     }
@@ -454,8 +679,10 @@ public static class InputManifestService
     private static OwnerInput CreateOwnerInput(string root, JsonElement element)
     {
         ContractJson.RequireProperties(element, "path", "provenance");
-        var basename = Canonicalization.Basename(ContractJson.String(element, "path"), "owner input path");
-        var provenance = ContractJson.String(element, "provenance");
+        var basename = Canonicalization.Basename(
+            EditableText(ContractJson.String(element, "path")),
+            "owner input path");
+        var provenance = EditableText(ContractJson.String(element, "provenance")).ToLowerInvariant();
         if (provenance is not ("owner-supplied-internal-evidence" or "owner-supplied-public-evidence"))
         {
             throw new DeterministicValidationException($"Unknown owner input provenance '{provenance}'.");
@@ -477,7 +704,7 @@ public static class InputManifestService
     {
         ContractJson.RequireProperties(element, "id", "display_name", "render_modes");
         var modes = ContractJson.StringArray(element, "render_modes")
-            .Select(Canonicalization.RenderMode)
+            .Select(value => Canonicalization.RenderMode(EditableText(value)))
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -488,7 +715,10 @@ public static class InputManifestService
 
         return new InputComponent(
             Canonicalization.ComponentId(ContractJson.String(element, "id")),
-            ContractJson.NormalizeText(ContractJson.String(element, "display_name"), "component display name", 256),
+            ContractJson.NormalizeText(
+                EditableText(ContractJson.String(element, "display_name")),
+                "component display name",
+                256),
             modes);
     }
 
@@ -496,18 +726,33 @@ public static class InputManifestService
     {
         ContractJson.RequireProperties(element, "subject", "rationale");
         return new InputExclusion(
-            ContractJson.NormalizeText(ContractJson.String(element, "subject"), "exclusion subject", 256),
-            ContractJson.NormalizeText(ContractJson.String(element, "rationale"), "exclusion rationale", 2048));
+            ContractJson.NormalizeText(
+                EditableText(ContractJson.String(element, "subject")),
+                "exclusion subject",
+                256),
+            ContractJson.NormalizeText(
+                EditableText(ContractJson.String(element, "rationale")),
+                "exclusion rationale",
+                2048));
     }
 
     private static InputPackage ParsePackage(JsonElement element)
     {
-        ContractJson.RequireProperties(element, "package_id", "version", "nupkg_sha256", "nupkg_path");
+        ContractJson.RequireProperties(
+            element,
+            "package_id",
+            "version",
+            "nupkg_sha256",
+            "nupkg_path",
+            "origin_locator",
+            "retrieval_method");
         return new InputPackage(
             ContractJson.String(element, "package_id"),
             ContractJson.String(element, "version"),
             ContractJson.Digest(ContractJson.Object(element, "nupkg_sha256")),
-            ContractJson.String(element, "nupkg_path"));
+            ContractJson.String(element, "nupkg_path"),
+            ContractJson.String(element, "origin_locator"),
+            ContractJson.String(element, "retrieval_method"));
     }
 
     private static InputSource ParseSource(JsonElement element)
@@ -534,6 +779,17 @@ public static class InputManifestService
             ContractJson.String(element, "url"),
             ContractJson.String(element, "content_path"),
             ContractJson.Digest(ContractJson.Object(element, "content_sha256")));
+    }
+
+    private static InputRetrievalAttempt ParseRetrievalAttempt(JsonElement element)
+    {
+        ContractJson.RequireProperties(element, "subject", "locator", "retrieval_method", "result", "detail");
+        return new InputRetrievalAttempt(
+            ContractJson.String(element, "subject"),
+            ContractJson.String(element, "locator"),
+            ContractJson.String(element, "retrieval_method"),
+            ContractJson.String(element, "result"),
+            ContractJson.NullableString(element, "detail"));
     }
 
     private static InputPackageSource ParsePackageSource(JsonElement element)
@@ -564,6 +820,177 @@ public static class InputManifestService
             ContractJson.String(element, "display_name"),
             ContractJson.StringArray(element, "render_modes"));
     }
+
+    private static InputSource ParseDraftSource(JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(
+            element,
+            "availability",
+            "repository_uri",
+            "commit",
+            "mapping",
+            "confidence");
+        return ParseCandidateSourceInAnyOrder(element);
+    }
+
+    private static InputSource ParseCandidateSourceInAnyOrder(JsonElement element)
+    {
+        var availability = EditableText(ContractJson.String(element, "availability")).ToLowerInvariant();
+        var repositoryUri = ContractJson.NullableString(element, "repository_uri");
+        var commit = ContractJson.NullableString(element, "commit");
+        var mapping = ContractJson.NullableString(element, "mapping");
+        var confidence = ContractJson.NullableString(element, "confidence");
+        var source = new InputSource(
+            availability,
+            repositoryUri is null ? null : Canonicalization.HttpsUri(EditableText(repositoryUri), requirePath: true),
+            commit is null ? null : Canonicalization.Commit(EditableText(commit)),
+            mapping is null ? null : ContractJson.NormalizeText(EditableText(mapping), "source mapping", 1024),
+            confidence is null ? null : EditableText(confidence).ToLowerInvariant());
+        ValidateSource(source);
+        return source;
+    }
+
+    private static InputRetrievalAttempt ParseDraftRetrievalAttempt(JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(
+            element,
+            "subject",
+            "locator",
+            "retrieval_method",
+            "result",
+            "detail");
+        return CanonicalRetrievalAttempt(element);
+    }
+
+    private static InputDocument CreateDraftDocument(string root, JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(element, "url", "content_path", "content_sha256");
+        _ = ContractJson.Digest(ContractJson.Object(element, "content_sha256"));
+        return CreateDocumentFromConfirmedShape(root, element);
+    }
+
+    private static InputDocument CreateDocumentFromConfirmedShape(string root, JsonElement element)
+    {
+        var path = Canonicalization.RelativePath(
+            EditableText(ContractJson.String(element, "content_path")),
+            "documentation content_path");
+        return new InputDocument(
+            Canonicalization.HttpsUri(EditableText(ContractJson.String(element, "url")), requirePath: false),
+            path,
+            LocalDigest(root, path, "documentation content"));
+    }
+
+    private static InputPackageSource CreateDraftPackageSource(string root, JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(element, "kind", "locator", "content_path", "content_sha256");
+        _ = ContractJson.Digest(ContractJson.Object(element, "content_sha256"));
+        var kind = EditableText(ContractJson.String(element, "kind")).ToLowerInvariant();
+        if (kind is not ("package-readme" or "package-metadata"))
+        {
+            throw new DeterministicValidationException($"Unknown package source kind '{kind}'.");
+        }
+
+        var path = Canonicalization.RelativePath(
+            EditableText(ContractJson.String(element, "content_path")),
+            "package source content_path");
+        return new InputPackageSource(
+            kind,
+            ContractJson.NormalizeText(
+                EditableText(ContractJson.String(element, "locator")),
+                "package source locator",
+                512),
+            path,
+            LocalDigest(root, path, "package source content"));
+    }
+
+    private static OwnerInput CreateDraftOwnerInput(string root, JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(element, "basename", "provenance", "content_sha256", "size");
+        _ = ContractJson.Digest(ContractJson.Object(element, "content_sha256"));
+        _ = ContractJson.Int64(element, "size");
+        var basename = Canonicalization.Basename(
+            EditableText(ContractJson.String(element, "basename")),
+            "owner input basename");
+        var provenance = EditableText(ContractJson.String(element, "provenance")).ToLowerInvariant();
+        if (provenance is not ("owner-supplied-internal-evidence" or "owner-supplied-public-evidence"))
+        {
+            throw new DeterministicValidationException($"Unknown owner input provenance '{provenance}'.");
+        }
+
+        var path = SafePath.ResolveUnderRoot(root, basename, requireExisting: true, requireFile: true);
+        BoundedIO.EnsureFileLength(path, ResourceLimits.SupplementalInputAggregateBytes, "owner input");
+        var content = BoundedIO.ReadAllBytes(
+            path,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "owner input");
+        return new OwnerInput(
+            basename,
+            provenance,
+            ContractJson.RawDigest(content),
+            content.LongLength);
+    }
+
+    private static InputComponent ParseDraftComponent(JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(element, "id", "display_name", "render_modes");
+        var modes = ContractJson.StringArray(element, "render_modes")
+            .Select(value => Canonicalization.RenderMode(EditableText(value)))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (modes.Length == 0)
+        {
+            throw new DeterministicValidationException("A component requires at least one claimed render mode.");
+        }
+
+        return new InputComponent(
+            Canonicalization.ComponentId(ContractJson.String(element, "id")),
+            ContractJson.NormalizeText(
+                EditableText(ContractJson.String(element, "display_name")),
+                "component display name",
+                256),
+            modes);
+    }
+
+    private static InputExclusion ParseDraftExclusion(JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(element, "subject", "rationale");
+        return new InputExclusion(
+            ContractJson.NormalizeText(
+                EditableText(ContractJson.String(element, "subject")),
+                "exclusion subject",
+                256),
+            ContractJson.NormalizeText(
+                EditableText(ContractJson.String(element, "rationale")),
+                "exclusion rationale",
+                2048));
+    }
+
+    private static string CanonicalRetrievalMethod(string value)
+    {
+        value = EditableText(value).ToLowerInvariant();
+        if (value is not ("package-feed" or "direct-download" or "repository-fetch" or
+            "local-file" or "owner-supplied"))
+        {
+            throw new DeterministicValidationException($"Unknown retrieval method '{value}'.");
+        }
+
+        return value;
+    }
+
+    private static string CanonicalLocator(string value, string retrievalMethod)
+    {
+        retrievalMethod = CanonicalRetrievalMethod(retrievalMethod);
+        return retrievalMethod is "local-file" or "owner-supplied"
+            ? Canonicalization.RelativePath(EditableText(value), "retrieval locator")
+            : Canonicalization.HttpsUri(EditableText(value), requirePath: false);
+    }
+
+    private static string AttemptKey(InputRetrievalAttempt attempt) =>
+        $"{attempt.Subject}\0{attempt.Locator}\0{attempt.RetrievalMethod}\0{attempt.Result}\0{attempt.Detail}";
+
+    private static string EditableText(string value) =>
+        value.Trim().Normalize(System.Text.NormalizationForm.FormC);
 
     private static string GetRelativePath(string root, string path, string resource)
     {

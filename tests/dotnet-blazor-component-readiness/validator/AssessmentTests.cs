@@ -1,6 +1,8 @@
 using System.IO.Compression;
 using System.Diagnostics;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using BlazorComponentReadiness.Validator.Assessment;
 using BlazorComponentReadiness.Validator.Cli;
 using BlazorComponentReadiness.Validator.Contracts;
@@ -34,6 +36,7 @@ internal static class AssessmentTests
             TestCliAndRendering(fixture);
             TestCliSubprocess(fixture, pluginRoot);
             TestSnapshotMutation(root);
+            TestReportInputMutationRaces(fixture);
         }
         finally
         {
@@ -59,6 +62,10 @@ internal static class AssessmentTests
             {
               "schema_version": 1,
               "acquisition": "release-candidate",
+              "package_origin": {
+                "locator": "Sample.Widgets.01.002.000.nupkg",
+                "retrieval_method": "local-file"
+              },
               "source": {
                 "availability": "source-available",
                 "repository_uri": "HTTPS://GitHub.Example.COM/Vendor/Widgets/",
@@ -66,6 +73,29 @@ internal static class AssessmentTests
                 "mapping": "Package metadata and source tag map to this commit.",
                 "confidence": "HIGH"
               },
+              "retrieval_attempts": [
+                {
+                  "subject": "source",
+                  "locator": "https://source.example.test/widgets",
+                  "retrieval_method": "repository-fetch",
+                  "result": "succeeded",
+                  "detail": "The exact source commit was acquired."
+                },
+                {
+                  "subject": "documentation",
+                  "locator": "https://docs.example.test/widgets",
+                  "retrieval_method": "direct-download",
+                  "result": "network-failure",
+                  "detail": "The first bounded request failed."
+                },
+                {
+                  "subject": "package",
+                  "locator": "Sample.Widgets.01.002.000.nupkg",
+                  "retrieval_method": "local-file",
+                  "result": "succeeded",
+                  "detail": null
+                }
+              ],
               "documentation": [
                 {"url": "HTTPS://Docs.Example.COM/Widgets/", "content_path": "docs.html"}
               ],
@@ -128,6 +158,55 @@ internal static class AssessmentTests
         AssertEqual("confirmed", fixture.Confirmed.State, "confirmed state");
         AssertEqual("sample.widgets", fixture.Confirmed.Package.PackageId, "canonical package ID");
         AssertEqual("1.2.0", fixture.Confirmed.Package.Version, "canonical package version");
+        AssertEqual(
+            "Sample.Widgets.01.002.000.nupkg",
+            fixture.Confirmed.Package.OriginLocator,
+            "package origin locator");
+        AssertEqual("local-file", fixture.Confirmed.Package.RetrievalMethod, "package retrieval method");
+        AssertEqual(3, fixture.Confirmed.RetrievalAttempts.Count, "bounded retrieval attempt records");
+        Assert(
+            fixture.Confirmed.RetrievalAttempts.Any(attempt => attempt.Result == "network-failure"),
+            "acquisition failure remains an explicit input result");
+        var boundedAttempts = Enumerable.Range(0, ResourceLimits.RetrievalAttemptCount - 1)
+            .Select(index => new InputRetrievalAttempt(
+                "documentation",
+                $"https://docs-{index:00}.example.test/widgets",
+                "direct-download",
+                "not-found",
+                "The bounded retrieval attempt did not locate the document."))
+            .Append(new InputRetrievalAttempt(
+                "package",
+                fixture.Confirmed.Package.OriginLocator,
+                fixture.Confirmed.Package.RetrievalMethod,
+                "succeeded",
+                null))
+            .OrderBy(
+                attempt =>
+                    $"{attempt.Subject}\0{attempt.Locator}\0{attempt.RetrievalMethod}\0{attempt.Result}\0{attempt.Detail}",
+                StringComparer.Ordinal)
+            .ToArray();
+        InputManifestService.Validate(
+            fixture.Confirmed with { RetrievalAttempts = boundedAttempts },
+            fixture.Root,
+            requireConfirmed: true);
+        ExpectValidation(
+            () => InputManifestService.Validate(
+                fixture.Confirmed with
+                {
+                    RetrievalAttempts =
+                    [
+                        .. boundedAttempts,
+                        new InputRetrievalAttempt(
+                            "source",
+                            "https://source-over-limit.example.test/widgets",
+                            "repository-fetch",
+                            "not-found",
+                            null)
+                    ]
+                },
+                fixture.Root,
+                requireConfirmed: true),
+            "retrieval attempt count ceiling");
         AssertEqual("fancy-tree", fixture.Confirmed.Components.Single().Id, "canonical component ID");
         AssertSequence(
             ["interactive-server", "interactive-webassembly", "static-ssr"],
@@ -141,6 +220,7 @@ internal static class AssessmentTests
             "https://docs.example.com/Widgets",
             fixture.Confirmed.Documentation.Single().Url,
             "official documentation URI");
+        TestVendorEditedDraft(fixture);
         InputManifestService.Validate(fixture.Confirmed, fixture.Root, requireConfirmed: true);
         ExpectValidation(
             () => AssessmentService.Initialize(
@@ -295,6 +375,30 @@ internal static class AssessmentTests
         Validate(fixture, Complete(package, packageEvidence, "gap"), packageEvidence);
         var completedComponent = Complete(component, componentEvidence, "gap");
         Validate(fixture, completedComponent, componentEvidence);
+        ExpectValidation(
+            () => Validate(
+                fixture,
+                completedComponent with
+                {
+                    PackageReference = completedComponent.PackageReference! with
+                    {
+                        AssessmentDigest = null
+                    }
+                },
+                componentEvidence),
+            "complete component package assessment digest");
+        ExpectValidation(
+            () => Validate(
+                fixture,
+                completedComponent with
+                {
+                    PackageReference = completedComponent.PackageReference! with
+                    {
+                        ReportDigest = null
+                    }
+                },
+                componentEvidence),
+            "complete component package report digest");
         var componentBytes = AssessmentService.Serialize(completedComponent);
         var componentEvidenceBytes = CanonicalEvidenceJson.SerializeBundle(componentEvidence);
         var componentReport = ReportService.RenderMarkdown(
@@ -620,12 +724,14 @@ internal static class AssessmentTests
         var firstMarkdown = ReportService.RenderMarkdown(goldenAssessment, goldenInput, goldenEvidence);
         var secondMarkdown = ReportService.RenderMarkdown(goldenAssessment, goldenInput, goldenEvidence);
         AssertEqual(
-            "55f915b0e0aededab7e2f71f3b6e8e2f4b394e7652f6bc12f817d147f9751534",
+            "a5c891963f099ae3b4daa953ab6fffa3ad55b79bc1aa46e8d42ca119f185aecf",
             ContractJson.RawDigest(firstMarkdown).Value,
             "deterministic report golden digest");
         AssertBytes(firstMarkdown, secondMarkdown, "same inputs byte-identical Markdown");
         var markdown = Encoding.UTF8.GetString(firstMarkdown);
         Assert(markdown.Contains("## Assessment inputs", StringComparison.Ordinal), "readable inputs section");
+        Assert(markdown.Contains("Package retrieval method", StringComparison.Ordinal), "package origin rendered");
+        Assert(markdown.Contains("network-failure", StringComparison.Ordinal), "retrieval failure rendered");
         Assert(markdown.Contains("`gap`: 1", StringComparison.Ordinal), "factual unranked status counts");
         Assert(markdown.Contains("[vendor-public-documentation]", StringComparison.Ordinal), "provenance labels");
         Assert(!markdown.Contains("verdict", StringComparison.OrdinalIgnoreCase), "no default verdict");
@@ -659,6 +765,26 @@ internal static class AssessmentTests
         Assert(File.Exists(Path.Combine(revision, "unified.validation.json")), "validation manifest");
         var renderedManifest = ReportService.ParseManifest(
             File.ReadAllBytes(Path.Combine(revision, "unified.validation.json")));
+        using (var pluginManifest = JsonDocument.Parse(File.ReadAllBytes(
+                   Path.Combine(
+                       Environment.GetEnvironmentVariable("READINESS_SKILL_ROOT")!,
+                       "..",
+                       "..",
+                       "plugin.json"))))
+        {
+            AssertEqual(
+                pluginManifest.RootElement.GetProperty("version").GetString(),
+                renderedManifest.PluginVersion,
+                "manifest plugin version comes from installed plugin.json");
+        }
+        AssertEqual(
+            ContractVersions.ValidatorVersion,
+            renderedManifest.ValidatorVersion,
+            "manifest validator version comes from assembly");
+        AssertEqual(
+            RendererContract.Version,
+            renderedManifest.RendererVersion,
+            "manifest renderer version comes from renderer contract");
         AssertEqual(
             ContractJson.RawDigest(fixture.ConfirmedBytes),
             renderedManifest.InputManifestDigest,
@@ -671,6 +797,28 @@ internal static class AssessmentTests
             evidence.Selection.Select(item => item.EvidenceId),
             renderedManifest.SelectedEvidenceIds,
             "manifest selected evidence binding");
+        Assert(renderedManifest.PredecessorManifestDigest is null, "0001 predecessor is null");
+        Assert(renderedManifest.FeedbackDigest is null, "0001 feedback digest is null");
+        AssertEqual(0, renderedManifest.DeclaredChangedIds.Count, "0001 changed IDs are empty");
+        var forwardManifest = renderedManifest with
+        {
+            PredecessorManifestDigest = new Sha256Digest("sha256", new string('d', 64)),
+            FeedbackDigest = new Sha256Digest("sha256", new string('e', 64)),
+            DeclaredChangedIds = ["A11Y-01", "SEC-01"]
+        };
+        var forwardRoundTrip = ReportService.ParseManifest(ReportService.SerializeManifest(forwardManifest));
+        AssertEqual(
+            forwardManifest.PredecessorManifestDigest,
+            forwardRoundTrip.PredecessorManifestDigest,
+            "predecessor digest round-trips");
+        AssertEqual(
+            forwardManifest.FeedbackDigest,
+            forwardRoundTrip.FeedbackDigest,
+            "feedback digest round-trips");
+        AssertSequence(
+            forwardManifest.DeclaredChangedIds,
+            forwardRoundTrip.DeclaredChangedIds,
+            "declared changed IDs round-trip");
         AssertEqual(
             ExitCodes.ValidationFailure,
             CliApplication.Run(
@@ -754,6 +902,157 @@ internal static class AssessmentTests
         Assert(!Directory.Exists(Path.Combine(invalidOutput, "0001")), "no report output on validation failure");
     }
 
+    private static void TestVendorEditedDraft(Fixture fixture)
+    {
+        var draft = JsonNode.Parse(File.ReadAllBytes(fixture.DraftPath))!.AsObject();
+        var package = draft["package"]!.AsObject();
+        package["package_id"] = "vendor-edited-value";
+        package["version"] = "99.0.0";
+        package["nupkg_path"] = $" {Path.GetFileName(fixture.NupkgPath)} ";
+        package["origin_locator"] = $" {Path.GetFileName(fixture.NupkgPath)} ";
+        package["retrieval_method"] = "LOCAL-FILE";
+        package["nupkg_sha256"]!["value"] = new string('f', 64);
+        var source = draft["source"]!.AsObject();
+        source["repository_uri"] = " HTTPS://GitHub.Example.COM/Vendor/Widgets/ ";
+        source["mapping"] = " Updated source mapping supplied by the vendor. ";
+        source["confidence"] = "MEDIUM";
+        var documentation = draft["documentation"]!.AsArray()[0]!.AsObject();
+        documentation["url"] = " HTTPS://Docs.Example.COM/Widgets/ ";
+        documentation["content_path"] = " docs.html ";
+        documentation["content_sha256"]!["value"] = new string('f', 64);
+        var packageSource = draft["package_sources"]!.AsArray()[0]!.AsObject();
+        packageSource["content_path"] = " package-readme.md ";
+        packageSource["content_sha256"]!["value"] = new string('f', 64);
+        var owner = draft["owner_inputs"]!.AsArray()[0]!.AsObject();
+        owner["basename"] = " owner-audit.txt ";
+        owner["content_sha256"]!["value"] = new string('f', 64);
+        owner["size"] = 1;
+        var component = draft["components"]!.AsArray()[0]!.AsObject();
+        component["id"] = " Fancy Tree ";
+        component["render_modes"] = new JsonArray("WASM", "Server", "STATIC SSR", "WASM");
+        draft["exclusions"] = new JsonArray(
+            new JsonObject
+            {
+                ["subject"] = " Zeta exclusion ",
+                ["rationale"] = " A bounded reason for the second exclusion. "
+            },
+            new JsonObject
+            {
+                ["subject"] = " Alpha exclusion ",
+                ["rationale"] = " A bounded reason for the first exclusion. "
+            });
+        var attempts = draft["retrieval_attempts"]!.AsArray();
+        draft["retrieval_attempts"] = new JsonArray(
+            attempts.Reverse().Select(item => item!.DeepClone()).ToArray());
+        var acquisition = draft["acquisition"]!.DeepClone();
+        draft.Remove("acquisition");
+        draft.Add("acquisition", acquisition);
+
+        var ownerPath = Path.Combine(fixture.Root, "owner-audit.txt");
+        var originalOwner = File.ReadAllBytes(ownerPath);
+        File.AppendAllText(ownerPath, " Vendor update.", new UTF8Encoding(false));
+        try
+        {
+            var editedBytes = Encoding.UTF8.GetBytes(
+                draft.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+            var canonicalDraft = InputManifestService.ParseDraft(editedBytes, fixture.Root);
+            var confirmed = InputManifestService.Confirm(canonicalDraft, fixture.Root);
+            AssertEqual("sample.widgets", confirmed.Package.PackageId, "confirm reinspects package ID");
+            AssertEqual("1.2.0", confirmed.Package.Version, "confirm reinspects package version");
+            AssertEqual(
+                new Sha256Digest("sha256", NupkgInspector.Inspect(fixture.NupkgPath).NupkgSha256),
+                confirmed.Package.NupkgDigest,
+                "confirm reinspects package digest");
+            AssertEqual("docs.html", confirmed.Documentation.Single().ContentPath, "confirm canonicalizes document path");
+            AssertEqual(
+                ContractJson.RawDigest(File.ReadAllBytes(Path.Combine(fixture.Root, "docs.html"))),
+                confirmed.Documentation.Single().ContentDigest,
+                "confirm recomputes documentation digest");
+            AssertEqual(
+                ContractJson.RawDigest(File.ReadAllBytes(Path.Combine(fixture.Root, "package-readme.md"))),
+                confirmed.PackageSources.Single().ContentDigest,
+                "confirm recomputes package source digest");
+            AssertEqual(
+                ContractJson.RawDigest(File.ReadAllBytes(ownerPath)),
+                confirmed.OwnerInputs.Single().ContentDigest,
+                "confirm recomputes owner digest");
+            AssertEqual(
+                new FileInfo(ownerPath).Length,
+                confirmed.OwnerInputs.Single().Size,
+                "confirm recomputes owner size");
+            AssertEqual("medium", confirmed.Source.Confidence, "confirm canonicalizes confidence");
+            AssertEqual(
+                "Updated source mapping supplied by the vendor.",
+                confirmed.Source.Mapping,
+                "confirm canonicalizes mapping");
+            AssertSequence(
+                ["interactive-server", "interactive-webassembly", "static-ssr"],
+                confirmed.Components.Single().RenderModes,
+                "confirm canonicalizes render modes");
+            AssertSequence(
+                ["Alpha exclusion", "Zeta exclusion"],
+                confirmed.Exclusions.Select(item => item.Subject),
+                "confirm canonicalizes collection order");
+        }
+        finally
+        {
+            File.WriteAllBytes(ownerPath, originalOwner);
+        }
+
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var draftText = File.ReadAllText(fixture.DraftPath);
+        var unknownPath = Path.Combine(fixture.Root, "draft-unknown.json");
+        File.WriteAllText(
+            unknownPath,
+            draftText.Replace("{\"schema_version\":1,", "{\"schema_version\":1,\"unknown\":true,", StringComparison.Ordinal),
+            new UTF8Encoding(false));
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                [
+                    "inputs", "confirm",
+                    "--root", fixture.Root,
+                    "--draft", unknownPath,
+                    "--output", Path.Combine(fixture.Root, "unknown-confirmed.json")
+                ],
+                output,
+                error),
+            "draft parser rejects unknown properties");
+
+        var duplicatePath = Path.Combine(fixture.Root, "draft-duplicate.json");
+        File.WriteAllText(
+            duplicatePath,
+            draftText.Replace("{\"schema_version\":1,", "{\"schema_version\":1,\"schema_version\":1,", StringComparison.Ordinal),
+            new UTF8Encoding(false));
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                [
+                    "inputs", "confirm",
+                    "--root", fixture.Root,
+                    "--draft", duplicatePath,
+                    "--output", Path.Combine(fixture.Root, "duplicate-confirmed.json")
+                ],
+                output,
+                error),
+            "draft parser rejects duplicate properties");
+
+        var noncanonicalConfirmed = Path.Combine(fixture.Root, "noncanonical-confirmed.json");
+        File.WriteAllText(
+            noncanonicalConfirmed,
+            JsonNode.Parse(fixture.ConfirmedBytes)!.ToJsonString(
+                new JsonSerializerOptions { WriteIndented = true }),
+            new UTF8Encoding(false));
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                ["inputs", "validate", "--root", fixture.Root, "--manifest", noncanonicalConfirmed],
+                output,
+                error),
+            "inputs validate requires exact canonical confirmed bytes");
+    }
+
     private static void TestSnapshotMutation(string root)
     {
         var path = Path.Combine(root, "snapshot.txt");
@@ -761,6 +1060,72 @@ internal static class AssessmentTests
         var snapshot = ImmutableInputSnapshot.Capture(path, "snapshot");
         File.WriteAllText(path, "after", new UTF8Encoding(false));
         ExpectValidation(snapshot.EnsureUnchanged, "input mutation race");
+    }
+
+    private static void TestReportInputMutationRaces(Fixture fixture)
+    {
+        var initialized = AssessmentService.Initialize(
+            "unified",
+            fixture.Root,
+            fixture.Confirmed,
+            fixture.ConfirmedBytes,
+            "fancy-tree",
+            []);
+        var evidence = BuildEvidence(initialized.Identity);
+        var assessment = Complete(initialized, evidence, "gap");
+        var paths = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["input"] = fixture.ConfirmedPath,
+            ["assessment"] = Path.Combine(fixture.Root, "race.assessment.json"),
+            ["evidence"] = Path.Combine(fixture.Root, "race.evidence.json"),
+            ["nupkg"] = fixture.NupkgPath,
+            ["documentation"] = Path.Combine(fixture.Root, "docs.html"),
+            ["package-source"] = Path.Combine(fixture.Root, "package-readme.md"),
+            ["owner-input"] = Path.Combine(fixture.Root, "owner-audit.txt")
+        };
+        File.WriteAllBytes(paths["assessment"], AssessmentService.Serialize(assessment));
+        File.WriteAllBytes(paths["evidence"], CanonicalEvidenceJson.SerializeBundle(evidence));
+        var originals = paths.ToDictionary(
+            pair => pair.Key,
+            pair => File.ReadAllBytes(pair.Value),
+            StringComparer.Ordinal);
+        foreach (var pair in paths)
+        {
+            var outputRoot = Path.Combine(fixture.Root, $"race-{pair.Key}");
+            var output = new StringWriter();
+            var error = new StringWriter();
+            ReportCommand.BeforePublishForTests = () =>
+                File.AppendAllText(pair.Value, "mutation", new UTF8Encoding(false));
+            try
+            {
+                AssertEqual(
+                    ExitCodes.ValidationFailure,
+                    CliApplication.Run(
+                        [
+                            "report", "render",
+                            "--root", fixture.Root,
+                            "--input", paths["input"],
+                            "--assessment", paths["assessment"],
+                            "--evidence", paths["evidence"],
+                            "--output", outputRoot
+                        ],
+                        output,
+                        error),
+                    $"{pair.Key} report transaction mutation");
+                Assert(
+                    !Directory.Exists(Path.Combine(outputRoot, "0001")),
+                    $"{pair.Key} mutation creates no 0001");
+                Assert(
+                    !Directory.Exists(outputRoot) ||
+                    !Directory.EnumerateDirectories(outputRoot, "*.staging", SearchOption.TopDirectoryOnly).Any(),
+                    $"{pair.Key} mutation cleans staging directory");
+            }
+            finally
+            {
+                ReportCommand.BeforePublishForTests = null;
+                File.WriteAllBytes(pair.Value, originals[pair.Key]);
+            }
+        }
     }
 
     private static void TestCliSubprocess(Fixture fixture, string pluginRoot)
@@ -874,7 +1239,20 @@ internal static class AssessmentTests
                 _ => throw new InvalidOperationException()
             };
         }).ToArray();
-        return initialized with { Rows = rows, CompletionState = "complete" };
+        var completed = initialized with { Rows = rows, CompletionState = "complete" };
+        if (completed.AssessmentKind == "component")
+        {
+            completed = completed with
+            {
+                PackageReference = completed.PackageReference! with
+                {
+                    AssessmentDigest = new Sha256Digest("sha256", new string('d', 64)),
+                    ReportDigest = new Sha256Digest("sha256", new string('e', 64))
+                }
+            };
+        }
+
+        return completed;
     }
 
     private static EvidenceBundle BuildEvidence(ExactAssessmentIdentity identity)

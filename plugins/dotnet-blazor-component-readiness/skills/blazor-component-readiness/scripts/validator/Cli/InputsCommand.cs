@@ -65,7 +65,7 @@ public static class InputsCommand
             options.Single("--draft"),
             ResourceLimits.SerializedArtifactBytes,
             "draft input manifest");
-        var confirmed = InputManifestService.Confirm(InputManifestService.Parse(bytes), root);
+        var confirmed = InputManifestService.Confirm(InputManifestService.ParseDraft(bytes, root), root);
         WriteNew(options.Single("--output"), InputManifestService.Serialize(confirmed));
         return ExitCodes.Success;
     }

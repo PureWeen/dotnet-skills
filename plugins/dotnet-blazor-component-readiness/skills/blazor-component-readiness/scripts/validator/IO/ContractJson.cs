@@ -21,6 +21,23 @@ public static class ContractJson
         }
     }
 
+    public static void RequirePropertiesUnordered(JsonElement element, params string[] names)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            throw new DeterministicValidationException("JSON contract value must be an object.");
+        }
+
+        var actual = element.EnumerateObject().Select(property => property.Name).ToArray();
+        if (actual.Length != names.Length ||
+            actual.Except(names, StringComparer.Ordinal).Any() ||
+            names.Except(actual, StringComparer.Ordinal).Any())
+        {
+            throw new DeterministicValidationException(
+                $"JSON properties must be exactly [{string.Join(", ", names)}].");
+        }
+    }
+
     public static string String(JsonElement element, string name)
     {
         if (!element.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)

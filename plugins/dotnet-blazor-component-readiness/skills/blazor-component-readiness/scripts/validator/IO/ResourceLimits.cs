@@ -8,4 +8,5 @@ public static class ResourceLimits
     public const long NuspecBytes = 1L * 1024 * 1024;
     public const int SupplementalInputCount = 32;
     public const long SupplementalInputAggregateBytes = 64L * 1024 * 1024;
+    public const int RetrievalAttemptCount = 64;
 }

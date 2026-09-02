@@ -94,4 +94,6 @@ public sealed record ValidationManifest(
     string AssessmentKind,
     string CompletionState,
     Sha256Digest? PredecessorManifestDigest,
+    Sha256Digest? FeedbackDigest,
+    IReadOnlyList<string> DeclaredChangedIds,
     IReadOnlyList<string> Limitations);

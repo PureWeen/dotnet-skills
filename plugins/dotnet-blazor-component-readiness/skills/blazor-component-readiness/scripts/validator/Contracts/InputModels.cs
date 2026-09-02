@@ -4,7 +4,9 @@ public sealed record InputPackage(
     string PackageId,
     string Version,
     Sha256Digest NupkgDigest,
-    string NupkgPath);
+    string NupkgPath,
+    string OriginLocator,
+    string RetrievalMethod);
 
 public sealed record InputSource(
     string Availability,
@@ -39,12 +41,20 @@ public sealed record InputExclusion(
     string Subject,
     string Rationale);
 
+public sealed record InputRetrievalAttempt(
+    string Subject,
+    string Locator,
+    string RetrievalMethod,
+    string Result,
+    string? Detail);
+
 public sealed record InputManifest(
     int SchemaVersion,
     string State,
     string Acquisition,
     InputPackage Package,
     InputSource Source,
+    IReadOnlyList<InputRetrievalAttempt> RetrievalAttempts,
     IReadOnlyList<InputDocument> Documentation,
     IReadOnlyList<InputPackageSource> PackageSources,
     IReadOnlyList<OwnerInput> OwnerInputs,

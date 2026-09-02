@@ -11,9 +11,6 @@ namespace BlazorComponentReadiness.Validator.Rendering;
 
 public static class ReportService
 {
-    public const string PluginVersion = "0.1.0";
-    public const string ValidatorVersion = "1.0.0";
-    public const string RendererVersion = "1.0.0";
     public static readonly IReadOnlyList<string> Limitations =
     [
         "This report is a structural self-assessment against a versioned public baseline; it is not certification or a Microsoft acceptance requirement.",
@@ -42,6 +39,8 @@ public static class ReportService
             "## Assessment inputs",
             "",
             $" - Acquisition: `{input.Acquisition}`",
+            $" - Package origin: {Escape(input.Package.OriginLocator)}",
+            $" - Package retrieval method: `{input.Package.RetrievalMethod}`",
             $" - Exact nupkg SHA-256: `{input.Package.NupkgDigest.Value}`",
             $" - Source availability: `{input.Source.Availability}`"
         };
@@ -56,6 +55,10 @@ public static class ReportService
             lines.Add($" - Source-to-package mapping: {Escape(input.Source.Mapping!)} (`{input.Source.Confidence}` confidence)");
         }
 
+        lines.Add(" - Retrieval attempts:");
+        lines.AddRange(input.RetrievalAttempts.Select(attempt =>
+            $"   - `{attempt.Subject}` via `{attempt.RetrievalMethod}` from {Escape(attempt.Locator)}: " +
+            $"`{attempt.Result}`{(attempt.Detail is null ? "" : $" ({Escape(attempt.Detail)})")}"));
         lines.Add(" - Official vendor documentation:");
         lines.AddRange(input.Documentation.Count == 0
             ? ["   - None recorded."]
@@ -150,13 +153,16 @@ public static class ReportService
         ReadOnlySpan<byte> inputBytes,
         EvidenceBundle evidence,
         ReadOnlySpan<byte> evidenceBytes,
-        ReadOnlySpan<byte> reportBytes)
+        ReadOnlySpan<byte> reportBytes,
+        Sha256Digest? predecessorManifestDigest = null,
+        Sha256Digest? feedbackDigest = null,
+        IReadOnlyList<string>? declaredChangedIds = null)
     {
         return new ValidationManifest(
             1,
-            PluginVersion,
-            ValidatorVersion,
-            RendererVersion,
+            ContractVersions.PluginVersion,
+            ContractVersions.ValidatorVersion,
+            RendererContract.Version,
             assessment.RubricVersion,
             assessment.ScopeSchemaVersion,
             assessment.RubricDigest,
@@ -170,12 +176,15 @@ public static class ReportService
             ContractJson.RawDigest(reportBytes),
             assessment.AssessmentKind,
             assessment.CompletionState,
-            null,
+            predecessorManifestDigest,
+            feedbackDigest,
+            (declaredChangedIds ?? []).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray(),
             Limitations);
     }
 
     public static byte[] SerializeManifest(ValidationManifest manifest)
     {
+        ValidateDeclaredChangedIds(manifest);
         var bytes = StrictJson.SerializeCanonical(writer =>
         {
             writer.WriteStartObject();
@@ -209,7 +218,10 @@ public static class ReportService
             ContractJson.WriteDigest(writer, "report_sha256", manifest.ReportDigest);
             writer.WriteString("assessment_kind", manifest.AssessmentKind);
             writer.WriteString("completion_state", manifest.CompletionState);
-            writer.WriteNull("predecessor_manifest_sha256");
+            WriteNullableDigest(writer, "predecessor_manifest_sha256", manifest.PredecessorManifestDigest);
+            WriteNullableDigest(writer, "feedback_sha256", manifest.FeedbackDigest);
+            writer.WritePropertyName("declared_changed_ids");
+            WriteStrings(writer, manifest.DeclaredChangedIds);
             writer.WritePropertyName("limitations");
             WriteStrings(writer, manifest.Limitations);
             writer.WriteEndObject();
@@ -242,8 +254,11 @@ public static class ReportService
             "assessment_kind",
             "completion_state",
             "predecessor_manifest_sha256",
+            "feedback_sha256",
+            "declared_changed_ids",
             "limitations");
         var predecessor = ContractJson.NullableObject(root, "predecessor_manifest_sha256");
+        var feedback = ContractJson.NullableObject(root, "feedback_sha256");
         var manifest = new ValidationManifest(
             ContractJson.Int32(root, "schema_version"),
             ContractJson.String(root, "plugin_version"),
@@ -263,6 +278,8 @@ public static class ReportService
             ContractJson.String(root, "assessment_kind"),
             ContractJson.String(root, "completion_state"),
             predecessor is null ? null : ContractJson.Digest(predecessor.Value),
+            feedback is null ? null : ContractJson.Digest(feedback.Value),
+            ContractJson.StringArray(root, "declared_changed_ids"),
             ContractJson.StringArray(root, "limitations"));
         ContractJson.RequireCanonical(bytes.Span, SerializeManifest(manifest), "validation manifest");
         return manifest;
@@ -272,7 +289,7 @@ public static class ReportService
     {
         if (!SerializeManifest(actual).AsSpan().SequenceEqual(SerializeManifest(expected)) ||
             actual.SchemaVersion != 1 ||
-            actual.PredecessorManifestDigest is not null ||
+            actual.PredecessorManifestDigest is null && actual.DeclaredChangedIds.Count != 0 ||
             !actual.Limitations.SequenceEqual(Limitations, StringComparer.Ordinal))
         {
             throw new DeterministicValidationException(
@@ -366,6 +383,20 @@ public static class ReportService
         else
         {
             ContractJson.WriteDigest(writer, property, digest);
+        }
+    }
+
+    private static void ValidateDeclaredChangedIds(ValidationManifest manifest)
+    {
+        var canonical = manifest.DeclaredChangedIds
+            .Select(id => ContractJson.NormalizeText(id, "declared changed ID", 64))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (!canonical.SequenceEqual(manifest.DeclaredChangedIds, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                "declared_changed_ids must be unique and canonically sorted.");
         }
     }
 }

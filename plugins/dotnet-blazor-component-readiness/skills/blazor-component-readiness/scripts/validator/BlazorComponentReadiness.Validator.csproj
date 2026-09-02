@@ -16,6 +16,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AssemblyName>BlazorComponentReadiness.Validator</AssemblyName>
     <RootNamespace>BlazorComponentReadiness.Validator</RootNamespace>
+    <Version>1.0.0</Version>
   </PropertyGroup>
 
   <Import Project="$(MSBuildSDKsPath)/Microsoft.NET.Sdk/Sdk/Sdk.targets" />
