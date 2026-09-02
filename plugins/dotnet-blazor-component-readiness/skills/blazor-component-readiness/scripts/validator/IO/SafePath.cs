@@ -60,20 +60,14 @@ public static class SafePath
             throw new FileNotFoundException("The input file does not exist.", fullPath);
         }
 
-        for (FileSystemInfo? current = new FileInfo(fullPath); current is not null; current = current switch
-             {
-                 FileInfo file => file.Directory,
-                 DirectoryInfo directory => directory.Parent,
-                 _ => null
-             })
+        var attributes = File.GetAttributes(fullPath);
+        if ((attributes & FileAttributes.ReparsePoint) != 0)
         {
-            if (current.Exists)
-            {
-                RejectReparsePoint(current.FullName);
-            }
+            throw new DeterministicValidationException(
+                $"Symbolic-link input files are not allowed: {fullPath}");
         }
 
-        if ((File.GetAttributes(fullPath) & FileAttributes.Directory) != 0)
+        if ((attributes & FileAttributes.Directory) != 0)
         {
             throw new DeterministicValidationException("The input path is not a regular file.");
         }

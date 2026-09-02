@@ -235,6 +235,19 @@ internal static class FoundationTests
             ExpectValidation(() => NupkgInspector.Inspect(packageLink), "nupkg input symlink");
         }
 
+        var realPackageDirectory = Path.Combine(testRoot, "real-package-directory");
+        var aliasPackageDirectory = Path.Combine(testRoot, "alias-package-directory");
+        Directory.CreateDirectory(realPackageDirectory);
+        var aliasedPackage = Path.Combine(realPackageDirectory, "Aliased.1.0.0.nupkg");
+        CreatePackage(aliasedPackage, "Aliased", "1.0.0");
+        if (TryCreateDirectorySymlink(aliasPackageDirectory, realPackageDirectory, "package directory"))
+        {
+            AssertEqual(
+                "Aliased",
+                NupkgInspector.Inspect(Path.Combine(aliasPackageDirectory, "Aliased.1.0.0.nupkg")).Id,
+                "nupkg beneath a resolved directory alias");
+        }
+
         return package;
     }
 
