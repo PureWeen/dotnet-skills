@@ -168,22 +168,36 @@ Assert(
     Regex.IsMatch(worker, @"(?m)^tools:\s*\[(?!\s*\])"),
     "nested worker tools frontmatter must be present and non-empty");
 
-Console.WriteLine("All Blazor component readiness Commit 1 contract tests passed.");
+FoundationTests.Run(root, plugin);
+
+Console.WriteLine("All Blazor component readiness Commit 1 and Commit 2 foundation tests passed.");
 
 static string FindRepositoryRoot()
 {
-    for (var directory = new DirectoryInfo(AppContext.BaseDirectory); directory is not null; directory = directory.Parent)
+    var configuredRoot = Environment.GetEnvironmentVariable("READINESS_REPOSITORY_ROOT");
+    if (!string.IsNullOrWhiteSpace(configuredRoot) && IsRepositoryRoot(configuredRoot))
     {
-        if (File.Exists(Path.Combine(directory.FullName, "README.md")) &&
-            Directory.Exists(Path.Combine(directory.FullName, "plugins")) &&
-            Directory.Exists(Path.Combine(directory.FullName, "tests")))
+        return Path.GetFullPath(configuredRoot);
+    }
+
+    foreach (var start in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
+    {
+        for (var directory = new DirectoryInfo(start); directory is not null; directory = directory.Parent)
         {
-            return directory.FullName;
+            if (IsRepositoryRoot(directory.FullName))
+            {
+                return directory.FullName;
+            }
         }
     }
 
     throw new InvalidOperationException("Could not locate the repository root.");
 }
+
+static bool IsRepositoryRoot(string path) =>
+    File.Exists(Path.Combine(path, "README.md")) &&
+    Directory.Exists(Path.Combine(path, "plugins")) &&
+    Directory.Exists(Path.Combine(path, "tests"));
 
 static string[] Expand(params (string Prefix, int Count)[] groups) =>
     groups.SelectMany(group => Enumerable.Range(1, group.Count).Select(number => $"{group.Prefix}-{number:00}")).ToArray();
