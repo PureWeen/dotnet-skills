@@ -7,12 +7,15 @@
     "nupkg_input_id": "package",
     "nupkg_sha256": {"algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
   },
-  "source": {
-    "availability": "source-available",
-    "repository_uri": "https://code.example.test/synthetic/readiness",
-    "commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    "archive_input_id": "source"
-  },
+  "sources": [
+    {
+      "id": "release-source",
+      "availability": "source-available",
+      "repository_uri": "https://code.example.test/synthetic/readiness",
+      "commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "archive_input_id": "source"
+    }
+  ],
   "allowed_inputs": [
     {"id": "package", "kind": "nupkg", "path": "package.nupkg"},
     {"id": "retrieval", "kind": "retrieval-record", "path": "retrieval.bin"},

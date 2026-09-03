@@ -14,6 +14,7 @@ public sealed record ComparisonPackageIdentity(
     Sha256Digest NupkgDigest);
 
 public sealed record ComparisonSourceIdentity(
+    string Id,
     string Availability,
     string? RepositoryUri,
     string? Commit,
@@ -41,7 +42,7 @@ public sealed record ComparisonInputManifest(
     int SchemaVersion,
     string State,
     ComparisonPackageIdentity Package,
-    ComparisonSourceIdentity Source,
+    IReadOnlyList<ComparisonSourceIdentity> Sources,
     IReadOnlyList<ComparisonAllowedInput> AllowedInputs,
     IReadOnlyList<ComparisonExecutionIdentity> Toolchains,
     IReadOnlyList<ComparisonExecutionIdentity> Browsers,

@@ -1014,12 +1014,15 @@ internal static class EnforcementTests
             "nupkg_input_id": "package",
             "nupkg_sha256": {"algorithm":"sha256","value":"{{package.NupkgSha256}}"}
           },
-          "source": {
-            "availability": "source-available",
-            "repository_uri": "https://code.example.test/synthetic/source",
-            "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "archive_input_id": "source"
-          },
+          "sources": [
+            {
+              "id": "release-source",
+              "availability": "source-available",
+              "repository_uri": "https://code.example.test/synthetic/source",
+              "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "archive_input_id": "source"
+            }
+          ],
           "allowed_inputs": [
             {"id":"browser-version","kind":"browser-identity","path":"browser.bin"},
             {"id":"package","kind":"nupkg","path":"package.bin"},

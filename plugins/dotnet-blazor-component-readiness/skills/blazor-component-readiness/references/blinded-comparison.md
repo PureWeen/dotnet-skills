@@ -8,7 +8,8 @@ explicitly requests a blinded accuracy, replay, or oracle comparison.
 Create a conclusion-free draft that contains:
 
 - exact package ID/version and the allowed nupkg input;
-- exact source availability, repository, commit, and source archive input when source is available;
+- every exact source snapshot identity, including availability, repository, commit, and source
+  archive input when source is available;
 - the complete allowed-input set with neutral IDs, kinds, relative paths, sizes, and CLI-computed
   digests;
 - every raw package/document/source retrieval record;

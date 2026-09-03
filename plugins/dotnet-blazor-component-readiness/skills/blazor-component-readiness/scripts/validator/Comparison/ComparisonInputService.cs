@@ -44,7 +44,7 @@ public static partial class ComparisonInputService
             "schema_version",
             "state",
             "package",
-            "source",
+            "sources",
             "allowed_inputs",
             "toolchains",
             "browsers",
@@ -66,7 +66,11 @@ public static partial class ComparisonInputService
             .OrderBy(item => item.Id, StringComparer.Ordinal)
             .ToArray();
         var package = ParsePackage(ContractJson.Object(value, "package"));
-        var source = ParseSource(ContractJson.Object(value, "source"));
+        var sources = ContractJson.Array(value, "sources")
+            .EnumerateArray()
+            .Select(ParseSource)
+            .OrderBy(item => item.Id, StringComparer.Ordinal)
+            .ToArray();
         var toolchains = ContractJson.Array(value, "toolchains")
             .EnumerateArray()
             .Select(ParseExecutionIdentity)
@@ -91,7 +95,7 @@ public static partial class ComparisonInputService
             SchemaVersion,
             "confirmed",
             package,
-            source,
+            sources,
             allowed,
             toolchains,
             browsers,
@@ -162,7 +166,11 @@ public static partial class ComparisonInputService
                 "Comparison package identity does not match the exact allowed nupkg.");
         }
 
-        ValidateSource(manifest.Source, byId);
+        RequireUniqueSorted(manifest.Sources, item => item.Id, "source identities");
+        foreach (var source in manifest.Sources)
+        {
+            ValidateSource(source, byId);
+        }
         ValidateExecutionIdentities(manifest.Toolchains, byId, "toolchain");
         ValidateExecutionIdentities(manifest.Browsers, byId, "browser");
         ValidateRawRecords(
@@ -193,9 +201,10 @@ public static partial class ComparisonInputService
         {
             manifest.Package.NupkgInputId
         };
-        if (manifest.Source.ArchiveInputId is not null)
+        foreach (var source in manifest.Sources.Where(source =>
+                     source.ArchiveInputId is not null))
         {
-            referenced.Add(manifest.Source.ArchiveInputId);
+            referenced.Add(source.ArchiveInputId!);
         }
 
         foreach (var id in manifest.Toolchains.SelectMany(item => item.InputIds)
@@ -227,13 +236,20 @@ public static partial class ComparisonInputService
             writer.WriteString("nupkg_input_id", manifest.Package.NupkgInputId);
             ContractJson.WriteDigest(writer, "nupkg_sha256", manifest.Package.NupkgDigest);
             writer.WriteEndObject();
-            writer.WritePropertyName("source");
-            writer.WriteStartObject();
-            writer.WriteString("availability", manifest.Source.Availability);
-            WriteNullable(writer, "repository_uri", manifest.Source.RepositoryUri);
-            WriteNullable(writer, "commit", manifest.Source.Commit);
-            WriteNullable(writer, "archive_input_id", manifest.Source.ArchiveInputId);
-            writer.WriteEndObject();
+            writer.WritePropertyName("sources");
+            writer.WriteStartArray();
+            foreach (var source in manifest.Sources)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("id", source.Id);
+                writer.WriteString("availability", source.Availability);
+                WriteNullable(writer, "repository_uri", source.RepositoryUri);
+                WriteNullable(writer, "commit", source.Commit);
+                WriteNullable(writer, "archive_input_id", source.ArchiveInputId);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
             WriteAllowedInputs(writer, manifest.AllowedInputs);
             WriteExecutionIdentities(writer, "toolchains", manifest.Toolchains);
             WriteExecutionIdentities(writer, "browsers", manifest.Browsers);
@@ -260,7 +276,7 @@ public static partial class ComparisonInputService
             "schema_version",
             "state",
             "package",
-            "source",
+            "sources",
             "allowed_inputs",
             "toolchains",
             "browsers",
@@ -270,7 +286,10 @@ public static partial class ComparisonInputService
             ContractJson.Int32(root, "schema_version"),
             ContractJson.String(root, "state"),
             ParsePackage(ContractJson.Object(root, "package")),
-            ParseSource(ContractJson.Object(root, "source")),
+            ContractJson.Array(root, "sources")
+                .EnumerateArray()
+                .Select(ParseSource)
+                .ToArray(),
             ContractJson.Array(root, "allowed_inputs")
                 .EnumerateArray()
                 .Select(ParseAllowedInput)
@@ -352,11 +371,13 @@ public static partial class ComparisonInputService
     {
         ContractJson.RequirePropertiesUnordered(
             element,
+            "id",
             "availability",
             "repository_uri",
             "commit",
             "archive_input_id");
         return new ComparisonSourceIdentity(
+            CanonicalId(ContractJson.String(element, "id"), "source identity ID"),
             ContractJson.String(element, "availability").Trim().ToLowerInvariant(),
             ContractJson.NullableString(element, "repository_uri"),
             ContractJson.NullableString(element, "commit"),
