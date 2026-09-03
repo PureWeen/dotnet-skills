@@ -346,15 +346,31 @@ stimuli:
   - name: Stay dormant for ordinary component authoring
     prompt: Create a reusable Blazor date-range picker with keyboard navigation and form validation.
     expect_activation: false
+    rubric:
+      - Did not attempt a package readiness assessment and responds as an ordinary Blazor component-authoring task
+      - Does not request package evidence, create readiness artifacts, or claim certification
+      - Provides implementation guidance appropriate to the requested date-range picker
 
   - name: Stay dormant for application debugging
     prompt: My Blazor page throws after navigation when a scoped service is disposed. Help me debug it.
     expect_activation: false
+    rubric:
+      - Did not attempt a vendor readiness workflow and diagnoses the application lifetime or disposal problem
+      - Does not request package inventory, evidence ledgers, or readiness output paths
+      - Provides a bounded debugging direction for the scoped-service failure
 
   - name: Stay dormant for framework pull request review
     prompt: Review this ASP.NET Core framework pull request for regressions in interactive server rendering.
     expect_activation: false
+    rubric:
+      - Did not attempt vendor package self-assessment and treats the request as first-party framework review
+      - Does not create readiness reports, evidence ledgers, or package inventory
+      - Keeps the response focused on interactive-server regression risk
 
   - name: Stay dormant for generic package creation
     prompt: Help me pack a class library with symbols, Source Link, and deterministic builds.
     expect_activation: false
+    rubric:
+      - Did not attempt a Blazor readiness assessment and answers the generic packaging request
+      - Does not request component inventories, render-mode probes, or readiness evidence
+      - Gives relevant symbols, Source Link, and deterministic-build guidance
