@@ -214,6 +214,14 @@ internal static class WorkflowTests
         AssertContains(coordinator, "disable-model-invocation: true", "coordinator ambient routing");
         AssertContains(coordinator, "  - blazor-component-readiness-worker", "worker registration");
         AssertContains(coordinator, "ask_user", "confirmation tool");
+        AssertContains(
+            coordinator,
+            "Inspect every supplied local artifact before asking for missing information",
+            "local discovery before clarification");
+        AssertContains(
+            coordinator,
+            "explicitly requests isolated delegation",
+            "explicit single-unit worker override");
         foreach (var tool in new[]
         {
             "\"agent\"", "\"skill\"", "\"read\"", "\"search\"", "\"edit\"", "\"execute\"",

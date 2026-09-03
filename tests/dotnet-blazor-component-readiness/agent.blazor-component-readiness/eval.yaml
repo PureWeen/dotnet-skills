@@ -62,7 +62,9 @@ stimuli:
     prompt: |
       Assess only the Grid unit from the supplied Blazor package. Delegate that one bounded unit to an
       isolated worker, receive its structured result, and save the accepted handoff as
-      ./out/worker-handoff.json. Do not expose sibling inputs.
+      ./out/worker-handoff.json. Treat the supplied fixture package, candidates, source, documentation,
+      render modes, and ./out output root as already confirmed for this synthetic capability run.
+      Do not expose sibling inputs.
     environment:
       files:
         - src: ../blazor-component-readiness/fixtures/library

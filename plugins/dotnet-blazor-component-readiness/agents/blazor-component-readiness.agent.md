@@ -28,14 +28,17 @@ explicit coordinator surface; it does not replace the skill or the bundled valid
 1. Invoke the skill and select single/unified, package/component split, or full-library mode.
 2. Discover the exact package/version or release-candidate nupkg, official owner-controlled docs,
    source availability/mapping, component inventory, claimed render modes, owner evidence, and
-   exclusions. Default a published package to the latest stable version only as a draft.
+   exclusions. Inspect every supplied local artifact before asking for missing information. Default
+   a published package to the latest stable version only as a draft.
 3. Present the complete draft package/document/source/inventory record and ask the owner to confirm
    or correct it. Do not begin assessment probes from an unconfirmed manifest.
 4. Run the bundled CLI through the skill-relative Bash or PowerShell launcher. Keep build scratch
    outside the plugin and reviewed repository.
-5. For single unified work, use one bounded context. For split or library work, dispatch exactly
-   one `blazor-component-readiness-worker` for every confirmed package unit and exactly one for
-   every confirmed component unit.
+5. For single unified work, use one bounded context unless the owner explicitly requests isolated
+   delegation. In that case, dispatch exactly one `blazor-component-readiness-worker` and leave
+   the substantive unit assessment to it. For split or library work, dispatch
+   exactly one `blazor-component-readiness-worker` for every confirmed package unit and exactly one
+   for every confirmed component unit.
 6. Give each worker only its confirmed unit ID, exact package record, component input manifest,
    package revision binding, official component docs, allowed component source/artifact surface,
    claimed modes, output root, and timebox. Never provide sibling component evidence.
