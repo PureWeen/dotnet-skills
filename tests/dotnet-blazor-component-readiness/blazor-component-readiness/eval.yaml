@@ -491,11 +491,23 @@ stimuli:
     prompt: Review this ASP.NET Core framework pull request for regressions in interactive server rendering.
     expect_activation: false
     graders:
-      - type: prompt
+      - type: output-matches
+        config:
+          pattern: (?i)(provide|share|need|which).*(pull request|PR|URL|diff)
+      - type: file-not-exists
+        config:
+          path: '**/input.confirmed.json'
+      - type: file-not-exists
+        config:
+          path: '**/revisions/**'
+      - type: file-not-exists
+        config:
+          path: '**/library-index.*'
+      - type: exit-success
     rubric:
-      - Did not attempt vendor package self-assessment and treats the request as first-party framework review
-      - Does not create readiness reports, evidence ledgers, or package inventory
-      - Keeps the response focused on interactive-server regression risk
+      - Stays outside the package-readiness workflow
+      - Requests the missing pull request or diff needed to perform the first-party review
+      - Does not create readiness artifacts
 
   - name: Stay dormant for generic package creation
     prompt: Help me pack a class library with symbols, Source Link, and deterministic builds.

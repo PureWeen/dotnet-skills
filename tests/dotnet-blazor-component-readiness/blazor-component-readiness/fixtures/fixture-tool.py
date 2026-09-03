@@ -261,15 +261,32 @@ def verify_dynamic(args):
     print("VALID dynamic lifecycle 10")
 
 
-def verify_blind_blocked(args):
+def verify_blind_gate(args):
     root = Path(args.root)
-    blocker = json.loads((root / "comparison-blocker.json").read_text(encoding="utf-8"))
-    assert blocker["stage"] == "comparison-input-freeze"
-    assert blocker["disposition"] == "blocked"
-    assert blocker["missing_input"] == "missing-trim.bin"
+    fixture = Path(args.fixture)
+    draft_path = fixture / "comparison-inputs.draft.json"
+    draft = json.loads(draft_path.read_text(encoding="utf-8"))
+    missing_paths = [
+        item["path"]
+        for item in draft["allowed_inputs"]
+        if not (fixture / item["path"]).is_file()
+    ]
+    assert len(missing_paths) == 1
+
+    preflight = root / "preflight"
+    command = (preflight / "command.txt").read_text(encoding="utf-8").strip()
+    exit_code = int((preflight / "exit-code.txt").read_text(encoding="utf-8").strip())
+    stdout = (preflight / "stdout.txt").read_text(encoding="utf-8")
+    stderr = (preflight / "stderr.txt").read_text(encoding="utf-8")
+    assert "comparison inputs-freeze" in command or "comparison inputs-validate" in command
+    assert "comparison-inputs.draft.json" in command
+    assert exit_code != 0
+    assert "validation error:" in stderr.lower()
+    assert missing_paths[0] in stdout + stderr
+    assert not (root / "comparison-inputs.confirmed.json").exists()
     assert not (root / "worker-handoff.json").exists()
     assert not (root / "revisions").exists()
-    print("VALID blind gate blocked")
+    print(f"VALID blind gate rejected {missing_paths[0]}")
 
 
 def inventory_candidates(args):
@@ -371,9 +388,10 @@ def main():
     command.add_argument("--root", required=True)
     command.set_defaults(func=verify_dynamic)
 
-    command = sub.add_parser("verify-blind-blocked")
+    command = sub.add_parser("verify-blind-gate")
     command.add_argument("--root", required=True)
-    command.set_defaults(func=verify_blind_blocked)
+    command.add_argument("--fixture", required=True)
+    command.set_defaults(func=verify_blind_gate)
 
     command = sub.add_parser("inventory-candidates")
     command.add_argument("--root", required=True)

@@ -178,22 +178,36 @@ stimuli:
   - name: Fail closed before a blind worker starts
     prompt: |
       Prepare the supplied raw package, source, retrieval, and toolchain files for an isolated blinded
-      accuracy run. Freeze the exact allowed-input manifest before launching any worker. One referenced
-      trim log is absent. Do not repair or infer it, do not start the worker, and write
-      ./out/comparison-blocker.json with stage "comparison-input-freeze", disposition "blocked", and
-      missing_input "missing-trim.bin".
+      accuracy run. Use the supplied draft and local validator to freeze the exact allowed-input
+      manifest before launching any worker. Capture the exact validator command, exit code, stdout,
+      and stderr under ./out/preflight. If validation rejects the draft, do not repair, replace, or
+      infer any input, and do not start a worker.
     environment:
       files:
         - src: fixtures/blind-input-gate
           dest: fixture
         - src: ../blazor-component-readiness/fixtures/fixture-tool.py
           dest: fixture/fixture-tool.py
+        - src: ../../../plugins/dotnet-blazor-component-readiness/skills/blazor-component-readiness/scripts/validator
+          dest: fixture/validator
       commands:
         - python3 fixture/fixture-tool.py decode fixture/package.nupkg.b64 fixture/package.nupkg
     graders:
       - type: file-exists
         config:
-          path: out/comparison-blocker.json
+          path: out/preflight/command.txt
+      - type: file-exists
+        config:
+          path: out/preflight/exit-code.txt
+      - type: file-exists
+        config:
+          path: out/preflight/stdout.txt
+      - type: file-exists
+        config:
+          path: out/preflight/stderr.txt
+      - type: file-not-exists
+        config:
+          path: out/comparison-inputs.confirmed.json
       - type: file-not-exists
         config:
           path: out/worker-handoff.json
@@ -202,14 +216,14 @@ stimuli:
           path: out/revisions/**
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-blind-blocked --root out
+          command: python3 fixture/fixture-tool.py verify-blind-gate --root out --fixture fixture
           expected_exit_code: 0
       - type: exit-success
       - type: prompt
     rubric:
-      - Validates the conclusion-free exact-input gate before delegation
-      - Fails closed on the missing raw probe input without launching a worker
-      - Reports the exact missing input rather than converting it into a product conclusion
+      - Runs and captures the real conclusion-free exact-input gate before delegation
+      - Derives the invalid or missing input from the supplied draft and validator result
+      - Fails closed without launching a worker or converting missing evidence into a product conclusion
 
   - name: Keep coordination local and factual
     prompt: |

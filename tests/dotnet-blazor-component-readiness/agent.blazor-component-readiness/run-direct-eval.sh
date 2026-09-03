@@ -144,11 +144,53 @@ fi
 
 validator_dll="$repo/artifacts/bin/SkillValidator/debug/skill-validator.dll"
 if [ -f "$validator_dll" ]; then
+  set +e
   dotnet "$validator_dll" "${args[@]}"
+  evaluate_status=$?
+  set -e
 else
+  set +e
   dotnet run \
     --project "$repo/eng/skill-validator/src/SkillValidator.csproj" \
     --no-restore \
     -p:CopilotCliBinaryPath="${COPILOT_CLI:-/opt/homebrew/bin/copilot}" \
     -- "${args[@]}"
+  evaluate_status=$?
+  set -e
 fi
+
+RESULTS_ROOT="$results" python3 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+results_root = Path(os.environ["RESULTS_ROOT"])
+result_files = sorted(results_root.glob("*/results.json"))
+if not result_files:
+    raise SystemExit("direct evaluation did not produce results.json")
+
+payload = json.loads(result_files[-1].read_text(encoding="utf-8"))
+scenarios = [
+    scenario
+    for verdict in payload["verdicts"]
+    for scenario in verdict["scenarios"]
+    if scenario["scenarioName"] == "Fail closed before a blind worker starts"
+]
+for scenario in scenarios:
+    for arm in ("subagentActivationIsolated", "subagentActivationPlugin"):
+        invoked = scenario.get(arm, {}).get("invokedAgents", [])
+        worker_count = sum(
+            name.casefold() == "blazor-component-readiness-worker"
+            for name in invoked
+        )
+        if worker_count != 0:
+            raise SystemExit(
+                f"{scenario['scenarioName']} {arm} invoked the readiness worker "
+                f"{worker_count} time(s)"
+            )
+
+if scenarios:
+    print("Blind input gate invoked the readiness worker 0 times in isolated and plugin arms.")
+PY
+
+exit "$evaluate_status"
