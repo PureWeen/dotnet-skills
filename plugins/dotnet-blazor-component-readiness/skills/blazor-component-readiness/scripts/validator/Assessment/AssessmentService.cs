@@ -18,7 +18,8 @@ public static class AssessmentService
         InputManifest input,
         ReadOnlySpan<byte> inputBytes,
         string? componentId,
-        IReadOnlyList<string> overlayIds)
+        IReadOnlyList<string> overlayIds,
+        PackageRevisionBinding? packageBinding = null)
     {
         InputManifestService.Validate(input, root, requireConfirmed: true);
         kind = kind.ToLowerInvariant();
@@ -42,6 +43,24 @@ public static class AssessmentService
             throw new DeterministicValidationException("Assessment kind must be unified, package, or component.");
         }
 
+        if (kind == "component" && packageBinding is null)
+        {
+            throw new DeterministicValidationException(
+                "Component assessment requires an exact validated package revision.");
+        }
+
+        if (kind != "component" && packageBinding is not null)
+        {
+            throw new DeterministicValidationException(
+                "Only component assessments may bind a package revision.");
+        }
+
+        if (kind is "package" or "component" && overlayIds.Count != 0)
+        {
+            throw new DeterministicValidationException(
+                "Split package/component assessments contain exactly the 46/64 core rows and cannot add overlay rows.");
+        }
+
         var rubric = RubricLoader.Load();
         var requirements = RubricLoader.Select(rubric, kind, overlayIds);
         var overlays = rubric.Overlays
@@ -57,7 +76,7 @@ public static class AssessmentService
             package,
             InputManifestService.Digest(inputBytes),
             canonicalComponent);
-        return new ReadinessAssessment(
+        var assessment = new ReadinessAssessment(
             SchemaVersion,
             kind,
             identity,
@@ -67,9 +86,7 @@ public static class AssessmentService
             rubric.ScopeMapDigest,
             overlays,
             requirements.Select(requirement => requirement.Id).ToArray(),
-            kind == "component"
-                ? new PackageAssessmentReference(package, null, null)
-                : null,
+            packageBinding?.Reference,
             requirements.Select(requirement => new AssessmentRow(
                 requirement.Id,
                 requirement.Requirement,
@@ -84,6 +101,12 @@ public static class AssessmentService
             [],
             [],
             "incomplete");
+        if (packageBinding is not null)
+        {
+            ValidatePackageBinding(assessment, input, packageBinding);
+        }
+
+        return assessment;
     }
 
     public static void Validate(
@@ -91,7 +114,8 @@ public static class AssessmentService
         ReadOnlySpan<byte> assessmentBytes,
         InputManifest input,
         ReadOnlySpan<byte> inputBytes,
-        EvidenceBundle evidence)
+        EvidenceBundle evidence,
+        PackageRevisionBinding? packageBinding = null)
     {
         if (assessment.SchemaVersion != SchemaVersion ||
             assessment.AssessmentKind is not ("unified" or "package" or "component") ||
@@ -134,9 +158,16 @@ public static class AssessmentService
             throw new DeterministicValidationException("Package assessments cannot identify a component.");
         }
 
-        ValidatePackageReference(assessment, expectedPackage);
+        ValidatePackageReference(assessment, expectedPackage, input, packageBinding);
         var rubric = RubricLoader.Load();
         var selectedOverlayIds = assessment.Overlays.Select(overlay => overlay.Id).ToArray();
+        if (assessment.AssessmentKind is "package" or "component" &&
+            selectedOverlayIds.Length != 0)
+        {
+            throw new DeterministicValidationException(
+                "Split package/component assessments cannot contain overlay rows.");
+        }
+
         var expectedRequirements = RubricLoader.Select(rubric, assessment.AssessmentKind, selectedOverlayIds);
         var expectedOverlays = rubric.Overlays
             .Where(overlay => selectedOverlayIds.Contains(overlay.Id, StringComparer.Ordinal))
@@ -189,8 +220,18 @@ public static class AssessmentService
             usedEvidence.UnionWith(row.EvidenceIds);
         }
 
-        ValidateFindings(assessment.Findings, assessment.SelectedIds, selectedSet, usedEvidence);
-        ValidateSummaryGroups(assessment.SummaryGroups, assessment.SelectedIds, selectedSet, usedEvidence);
+        ValidateFindings(
+            assessment.Findings,
+            assessment.Rows,
+            assessment.SelectedIds,
+            selectedSet,
+            usedEvidence);
+        ValidateSummaryGroups(
+            assessment,
+            assessment.SummaryGroups,
+            assessment.SelectedIds,
+            selectedSet,
+            usedEvidence);
         if (!usedEvidence.SetEquals(selectedSet))
         {
             throw new DeterministicValidationException(
@@ -271,6 +312,9 @@ public static class AssessmentService
         return bytes;
     }
 
+    public static byte[] SerializeRow(AssessmentRow row) =>
+        StrictJson.SerializeCanonical(writer => WriteRow(writer, row));
+
     public static ReadinessAssessment Parse(ReadOnlyMemory<byte> bytes)
     {
         using var document = StrictJson.Parse(bytes, ResourceLimits.SerializedArtifactBytes, "assessment");
@@ -312,14 +356,18 @@ public static class AssessmentService
 
     private static void ValidatePackageReference(
         ReadinessAssessment assessment,
-        EvidencePackageIdentity package)
+        EvidencePackageIdentity package,
+        InputManifest input,
+        PackageRevisionBinding? packageBinding)
     {
         if (assessment.AssessmentKind == "component")
         {
-            if (assessment.PackageReference is null || assessment.PackageReference.Package != package)
+            if (assessment.PackageReference is null ||
+                assessment.PackageReference.Package != package ||
+                packageBinding is null)
             {
                 throw new DeterministicValidationException(
-                    "Component assessment requires an exact package reference.");
+                    "Component assessment requires an exact validated package revision.");
             }
 
             if (assessment.CompletionState == "complete" &&
@@ -329,11 +377,39 @@ public static class AssessmentService
                 throw new DeterministicValidationException(
                     "A complete component assessment requires package assessment and report digests.");
             }
+
+            ValidatePackageBinding(assessment, input, packageBinding);
         }
-        else if (assessment.PackageReference is not null)
+        else if (assessment.PackageReference is not null || packageBinding is not null)
         {
             throw new DeterministicValidationException(
                 "Only component assessments may contain a package reference.");
+        }
+    }
+
+    private static void ValidatePackageBinding(
+        ReadinessAssessment assessment,
+        InputManifest componentInput,
+        PackageRevisionBinding packageBinding)
+    {
+        if (packageBinding.Assessment.AssessmentKind != "package" ||
+            packageBinding.Assessment.CompletionState != "complete" ||
+            packageBinding.Manifest.AssessmentKind != "package" ||
+            packageBinding.Manifest.CompletionState != "complete" ||
+            assessment.PackageReference != packageBinding.Reference ||
+            assessment.Identity.Package != packageBinding.Assessment.Identity.Package ||
+            componentInput.Package.PackageId != packageBinding.Input.Package.PackageId ||
+            componentInput.Package.Version != packageBinding.Input.Package.Version ||
+            componentInput.Package.NupkgDigest != packageBinding.Input.Package.NupkgDigest ||
+            componentInput.Source != packageBinding.Input.Source ||
+            assessment.RubricVersion != packageBinding.Assessment.RubricVersion ||
+            assessment.ScopeSchemaVersion != packageBinding.Assessment.ScopeSchemaVersion ||
+            assessment.RubricDigest != packageBinding.Assessment.RubricDigest ||
+            assessment.ScopeMapDigest != packageBinding.Assessment.ScopeMapDigest ||
+            !assessment.Overlays.SequenceEqual(packageBinding.Assessment.Overlays))
+        {
+            throw new DeterministicValidationException(
+                "Component assessment package ID, version, nupkg digest, source mapping, rubric, scope, overlays, completion, or package artifact binding differs from the validated package revision.");
         }
     }
 
@@ -415,6 +491,7 @@ public static class AssessmentService
 
     private static void ValidateFindings(
         IReadOnlyList<AssessmentFinding> findings,
+        IReadOnlyList<AssessmentRow> rows,
         IReadOnlyList<string> selectedIds,
         IReadOnlySet<string> selectedEvidence,
         ISet<string> usedEvidence)
@@ -425,23 +502,94 @@ public static class AssessmentService
             RequireSubstantive(finding.FactualSummary, "finding factual summary");
             ValidateReferences(finding.RequirementIds, selectedIds, "finding requirement");
             ValidateEvidenceReferences(finding.EvidenceIds, selectedEvidence, "finding evidence");
+            ValidateExactEvidenceUnion(
+                finding.RequirementIds,
+                finding.EvidenceIds,
+                rows,
+                "finding");
             usedEvidence.UnionWith(finding.EvidenceIds);
         }
     }
 
     private static void ValidateSummaryGroups(
+        ReadinessAssessment assessment,
         IReadOnlyList<AssessmentSummaryGroup> summaries,
         IReadOnlyList<string> selectedIds,
         IReadOnlySet<string> selectedEvidence,
         ISet<string> usedEvidence)
     {
+        if (assessment.AssessmentKind == "package" && assessment.CompletionState == "complete")
+        {
+            var statuses = RubricLoader.Load().Statuses;
+            var expected = statuses
+                .Select(status => new
+                {
+                    Status = status,
+                    Rows = assessment.Rows.Where(row => row.Status == status).ToArray()
+                })
+                .Where(group => group.Rows.Length > 0)
+                .ToArray();
+            if (summaries.Count != expected.Length)
+            {
+                throw new DeterministicValidationException(
+                    "Complete package assessments require one canonical factual summary group for every represented status.");
+            }
+
+            for (var index = 0; index < expected.Length; index++)
+            {
+                var summary = summaries[index];
+                var group = expected[index];
+                if (summary.Name != group.Status ||
+                    !summary.RequirementIds.SequenceEqual(
+                        group.Rows.Select(row => row.Id),
+                        StringComparer.Ordinal))
+                {
+                    throw new DeterministicValidationException(
+                        "Package summary groups must partition all 46 repository-wide IDs exactly once by actual row status in canonical status order.");
+                }
+            }
+
+            if (summaries.SelectMany(summary => summary.RequirementIds)
+                    .Distinct(StringComparer.Ordinal)
+                    .Count() != assessment.Rows.Count)
+            {
+                throw new DeterministicValidationException(
+                    "Package summary groups overlap or omit repository-wide requirement IDs.");
+            }
+        }
+
         foreach (var summary in summaries)
         {
-            RequireSubstantive(summary.Name, "summary group name");
+            ValidateOptionalField(summary.Name, "summary group name");
             RequireSubstantive(summary.FactualSummary, "summary factual text");
             ValidateReferences(summary.RequirementIds, selectedIds, "summary requirement");
             ValidateEvidenceReferences(summary.EvidenceIds, selectedEvidence, "summary evidence");
+            ValidateExactEvidenceUnion(
+                summary.RequirementIds,
+                summary.EvidenceIds,
+                assessment.Rows,
+                "summary");
             usedEvidence.UnionWith(summary.EvidenceIds);
+        }
+    }
+
+    private static void ValidateExactEvidenceUnion(
+        IReadOnlyList<string> requirementIds,
+        IReadOnlyList<string> evidenceIds,
+        IReadOnlyList<AssessmentRow> rows,
+        string resource)
+    {
+        var selected = requirementIds.ToHashSet(StringComparer.Ordinal);
+        var expected = rows
+            .Where(row => selected.Contains(row.Id))
+            .SelectMany(row => row.EvidenceIds)
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (!evidenceIds.SequenceEqual(expected, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"{resource} evidence must equal the exact canonical union of its underlying row evidence.");
         }
     }
 
@@ -452,9 +600,13 @@ public static class AssessmentService
     {
         if (references.Count == 0 ||
             references.Distinct(StringComparer.Ordinal).Count() != references.Count ||
-            references.Any(reference => !selected.Contains(reference, StringComparer.Ordinal)))
+            references.Any(reference => !selected.Contains(reference, StringComparer.Ordinal)) ||
+            !references.SequenceEqual(
+                selected.Where(id => references.Contains(id, StringComparer.Ordinal)),
+                StringComparer.Ordinal))
         {
-            throw new DeterministicValidationException($"{name} IDs must be nonempty, unique, and selected.");
+            throw new DeterministicValidationException(
+                $"{name} IDs must be nonempty, unique, selected, and in canonical rubric order.");
         }
     }
 
@@ -561,8 +713,10 @@ public static class AssessmentService
         writer.WriteStartObject();
         writer.WritePropertyName("package");
         WritePackage(writer, reference.Package);
+        ContractJson.WriteDigest(writer, "input_manifest_sha256", reference.InputManifestDigest);
         WriteNullableDigest(writer, "assessment_sha256", reference.AssessmentDigest);
         WriteNullableDigest(writer, "report_sha256", reference.ReportDigest);
+        ContractJson.WriteDigest(writer, "validation_sha256", reference.ValidationDigest);
         writer.WriteEndObject();
     }
 
@@ -624,11 +778,19 @@ public static class AssessmentService
         }
 
         var value = element.Value;
-        ContractJson.RequireProperties(value, "package", "assessment_sha256", "report_sha256");
+        ContractJson.RequireProperties(
+            value,
+            "package",
+            "input_manifest_sha256",
+            "assessment_sha256",
+            "report_sha256",
+            "validation_sha256");
         return new PackageAssessmentReference(
             ParsePackage(ContractJson.Object(value, "package")),
+            ContractJson.Digest(ContractJson.Object(value, "input_manifest_sha256")),
             ParseNullableDigest(value, "assessment_sha256"),
-            ParseNullableDigest(value, "report_sha256"));
+            ParseNullableDigest(value, "report_sha256"),
+            ContractJson.Digest(ContractJson.Object(value, "validation_sha256")));
     }
 
     private static AssessmentRow ParseRow(JsonElement element)

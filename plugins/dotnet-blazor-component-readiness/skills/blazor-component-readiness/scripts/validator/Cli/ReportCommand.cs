@@ -16,8 +16,8 @@ public static class ReportCommand
         Deterministic readiness reports
 
         Usage:
-          readiness-validator report render --root <input-root> --input <confirmed> --assessment <json> --evidence <bundle> --output <revisions-root> [--predecessor <digest>]
-          readiness-validator report verify --root <input-root> --revision <0001-directory>
+          readiness-validator report render --root <input-root> --input <confirmed> --assessment <json> --evidence <bundle> --output <revisions-root> [--feedback <markdown>] [--predecessor <digest>] [--changed-ids <id,id>] [--package-revision <dir>] [--package-feedback <markdown>]
+          readiness-validator report verify --root <input-root> --revision <revision-directory> [--feedback <markdown>] [--package-revision <dir>] [--package-feedback <markdown>]
         """;
 
     public static int Run(IReadOnlyList<string> args, TextWriter output)
@@ -36,7 +36,7 @@ public static class ReportCommand
         };
     }
 
-    private static int Render(IReadOnlyList<string> args, TextWriter output)
+    internal static int Render(IReadOnlyList<string> args, TextWriter output)
     {
         if (args.Count == 1 && IsHelp(args[0]))
         {
@@ -51,19 +51,25 @@ public static class ReportCommand
             "--assessment",
             "--evidence",
             "--output",
-            "--predecessor");
-        if (options.Optional("--predecessor") is not null)
-        {
-            throw new DeterministicValidationException("Revision 0001 cannot declare a predecessor.");
-        }
-
+            "--feedback",
+            "--predecessor",
+            "--changed-ids",
+            "--package-revision",
+            "--package-feedback");
         var root = Path.GetFullPath(options.Single("--root"));
-        var inputPath = Path.GetFullPath(options.Single("--input"));
-        var assessmentPath = Path.GetFullPath(options.Single("--assessment"));
-        var evidencePath = Path.GetFullPath(options.Single("--evidence"));
-        var inputSnapshot = ImmutableInputSnapshot.Capture(inputPath, "confirmed input manifest");
-        var assessmentSnapshot = ImmutableInputSnapshot.Capture(assessmentPath, "assessment");
-        var evidenceSnapshot = ImmutableInputSnapshot.Capture(evidencePath, "evidence bundle");
+        var inputSnapshot = ImmutableInputSnapshot.Capture(
+            Path.GetFullPath(options.Single("--input")),
+            "confirmed input manifest");
+        var assessmentSnapshot = ImmutableInputSnapshot.Capture(
+            Path.GetFullPath(options.Single("--assessment")),
+            "assessment");
+        var evidenceSnapshot = ImmutableInputSnapshot.Capture(
+            Path.GetFullPath(options.Single("--evidence")),
+            "evidence bundle");
+        var feedbackSnapshot = CaptureOptional(options.Optional("--feedback"), "assessment feedback");
+        var packageFeedbackSnapshot = CaptureOptional(
+            options.Optional("--package-feedback"),
+            "package assessment feedback");
         var inputBytes = inputSnapshot.Bytes;
         var assessmentBytes = assessmentSnapshot.Bytes;
         var evidenceBytes = evidenceSnapshot.Bytes;
@@ -73,33 +79,149 @@ public static class ReportCommand
         InputManifestService.Validate(input, root, requireConfirmed: true);
         var assessment = AssessmentService.Parse(assessmentBytes);
         var evidence = CanonicalEvidenceJson.ParseBundle(evidenceBytes);
-        AssessmentService.Validate(assessment, assessmentBytes, input, inputBytes, evidence);
-        var reportBytes = ReportService.RenderMarkdown(assessment, input, evidence);
-        var manifestBytes = ReportService.SerializeManifest(
-            ReportService.CreateManifest(
-                assessment,
-                assessmentBytes,
-                input,
-                inputBytes,
-                evidence,
-                evidenceBytes,
-                reportBytes));
+        var packageBinding = LoadPackageBinding(
+            root,
+            assessment.AssessmentKind,
+            options.Optional("--package-revision"),
+            packageFeedbackSnapshot?.Bytes);
+        AssessmentService.Validate(
+            assessment,
+            assessmentBytes,
+            input,
+            inputBytes,
+            evidence,
+            packageBinding);
+        var feedback = feedbackSnapshot is null
+            ? null
+            : FeedbackService.Parse(feedbackSnapshot.Bytes, assessment);
         var outputRoot = Path.GetFullPath(options.Single("--output"));
-        AtomicDirectory.WriteNew(outputRoot, "0001", staging =>
+        EnsureFeedbackOutsideRevisions(feedbackSnapshot, outputRoot);
+        if (options.Optional("--package-revision") is { } packageRevision)
+        {
+            EnsureFeedbackOutsideRevisions(
+                packageFeedbackSnapshot,
+                Path.GetDirectoryName(Path.GetFullPath(packageRevision))!);
+        }
+
+        var nextSequence = NextSequence(outputRoot);
+        var changedIds = ParseChangedIds(options.Optional("--changed-ids"));
+        var predecessorText = options.Optional("--predecessor");
+        Sha256Digest? predecessorDigest = null;
+        RevisionArtifacts? predecessor = null;
+        if (nextSequence == 1)
+        {
+            if (predecessorText is not null || changedIds.Count != 0)
+            {
+                throw new DeterministicValidationException(
+                    "Revision 0001 cannot declare a predecessor or changed requirement IDs.");
+            }
+        }
+        else
+        {
+            if (predecessorText is null)
+            {
+                throw new DeterministicValidationException(
+                    "Every revision after 0001 requires the immediate predecessor manifest digest.");
+            }
+
+            predecessorDigest = ParseDigest(predecessorText, "predecessor manifest digest");
+            var predecessorDirectory = Path.Combine(outputRoot, (nextSequence - 1).ToString("D4"));
+            predecessor = RevisionService.VerifyRevision(
+                root,
+                predecessorDirectory,
+                feedbackBytes: null,
+                packageBinding,
+                validateChain: true,
+                allowMissingFeedback: true);
+            if (ContractJson.RawDigest(predecessor.ManifestBytes) != predecessorDigest)
+            {
+                throw new DeterministicValidationException(
+                    "Declared predecessor is missing, forked, or not the immediate preceding manifest.");
+            }
+        }
+
+        var reportBytes = ReportService.RenderMarkdown(assessment, input, evidence, feedback);
+        var manifest = ReportService.CreateManifest(
+            assessment,
+            assessmentBytes,
+            input,
+            inputBytes,
+            evidence,
+            evidenceBytes,
+            reportBytes,
+            predecessorDigest,
+            feedback?.Digest,
+            changedIds);
+        var manifestBytes = ReportService.SerializeManifest(manifest);
+        var revisionName = nextSequence.ToString("D4");
+        var replacement = new RevisionArtifacts(
+            Path.Combine(outputRoot, revisionName),
+            assessment.AssessmentKind,
+            input,
+            inputBytes,
+            assessment,
+            assessmentBytes,
+            evidence,
+            evidenceBytes,
+            reportBytes,
+            manifest,
+            manifestBytes);
+        if (predecessor is not null)
+        {
+            if (changedIds.Count == 0)
+            {
+                if (!inputBytes.AsSpan().SequenceEqual(predecessor.InputBytes) ||
+                    !assessmentBytes.AsSpan().SequenceEqual(predecessor.AssessmentBytes) ||
+                    !evidenceBytes.AsSpan().SequenceEqual(predecessor.EvidenceBytes))
+                {
+                    throw new DeterministicValidationException(
+                        "Feedback-only revisions must preserve input, assessment, and evidence bytes exactly.");
+                }
+            }
+            else
+            {
+                RevisionService.ValidateCorrection(predecessor, replacement, changedIds);
+            }
+        }
+
+        AtomicDirectory.WriteNew(outputRoot, revisionName, staging =>
         {
             File.WriteAllBytes(Path.Combine(staging, "input-manifest.json"), inputBytes);
-            File.WriteAllBytes(Path.Combine(staging, $"{assessment.AssessmentKind}.assessment.json"), assessmentBytes);
-            File.WriteAllBytes(Path.Combine(staging, $"{assessment.AssessmentKind}.evidence.json"), evidenceBytes);
-            File.WriteAllBytes(Path.Combine(staging, $"{assessment.AssessmentKind}.report.md"), reportBytes);
-            File.WriteAllBytes(Path.Combine(staging, $"{assessment.AssessmentKind}.validation.json"), manifestBytes);
+            File.WriteAllBytes(
+                Path.Combine(staging, $"{assessment.AssessmentKind}.assessment.json"),
+                assessmentBytes);
+            File.WriteAllBytes(
+                Path.Combine(staging, $"{assessment.AssessmentKind}.evidence.json"),
+                evidenceBytes);
+            File.WriteAllBytes(
+                Path.Combine(staging, $"{assessment.AssessmentKind}.report.md"),
+                reportBytes);
+            File.WriteAllBytes(
+                Path.Combine(staging, $"{assessment.AssessmentKind}.validation.json"),
+                manifestBytes);
             BeforePublishForTests?.Invoke();
             InputManifestService.Validate(input, root, requireConfirmed: true);
             inputSnapshot.EnsureUnchanged();
             assessmentSnapshot.EnsureUnchanged();
             evidenceSnapshot.EnsureUnchanged();
+            feedbackSnapshot?.EnsureUnchanged();
+            packageFeedbackSnapshot?.EnsureUnchanged();
             foreach (var snapshot in referencedSnapshots)
             {
                 snapshot.EnsureUnchanged();
+            }
+
+            if (packageBinding is not null)
+            {
+                var rebound = RevisionService.LoadPackageBinding(
+                    root,
+                    options.Optional("--package-revision")!,
+                    packageFeedbackSnapshot?.Bytes);
+                if (rebound.Reference != packageBinding.Reference)
+                {
+                    throw new DeterministicValidationException(
+                        "Validated package revision changed while the component report was rendered.");
+                }
             }
         });
         return ExitCodes.Success;
@@ -113,53 +235,184 @@ public static class ReportCommand
             return ExitCodes.Success;
         }
 
-        var options = CommandOptions.Parse(args, "--root", "--revision");
+        var options = CommandOptions.Parse(
+            args,
+            "--root",
+            "--revision",
+            "--feedback",
+            "--package-revision",
+            "--package-feedback");
         var root = Path.GetFullPath(options.Single("--root"));
         var revision = Path.GetFullPath(options.Single("--revision"));
-        if (Path.GetFileName(revision) != "0001")
+        var feedbackBytes = ReadOptional(options.Optional("--feedback"), "assessment feedback");
+        var packageFeedbackBytes = ReadOptional(
+            options.Optional("--package-feedback"),
+            "package assessment feedback");
+        EnsureFeedbackOutsideRevisions(
+            options.Optional("--feedback"),
+            Path.GetDirectoryName(revision)!);
+        if (options.Optional("--package-revision") is { } packageRevision)
         {
-            throw new DeterministicValidationException("Commit 4 verifies only initial revision 0001.");
+            EnsureFeedbackOutsideRevisions(
+                options.Optional("--package-feedback"),
+                Path.GetDirectoryName(Path.GetFullPath(packageRevision))!);
         }
 
-        var validationFiles = Directory.GetFiles(revision, "*.validation.json", SearchOption.TopDirectoryOnly);
+        var validationFiles = Directory.GetFiles(
+            revision,
+            "*.validation.json",
+            SearchOption.TopDirectoryOnly);
         if (validationFiles.Length != 1)
         {
-            throw new DeterministicValidationException("Revision requires exactly one validation manifest.");
+            throw new DeterministicValidationException(
+                "Revision requires exactly one validation manifest.");
         }
 
         var kind = Path.GetFileName(validationFiles[0]).Split('.')[0];
-        var inputBytes = Read(Path.Combine(revision, "input-manifest.json"), "input manifest snapshot");
-        var assessmentBytes = Read(Path.Combine(revision, $"{kind}.assessment.json"), "assessment snapshot");
-        var evidenceBytes = Read(Path.Combine(revision, $"{kind}.evidence.json"), "evidence snapshot");
-        var reportBytes = Read(Path.Combine(revision, $"{kind}.report.md"), "report");
-        var manifestBytes = Read(validationFiles[0], "validation manifest");
-        var input = InputManifestService.Parse(inputBytes);
-        InputManifestService.Validate(input, root, requireConfirmed: true);
-        var assessment = AssessmentService.Parse(assessmentBytes);
-        var evidence = CanonicalEvidenceJson.ParseBundle(evidenceBytes);
-        AssessmentService.Validate(assessment, assessmentBytes, input, inputBytes, evidence);
-        var expectedReport = ReportService.RenderMarkdown(assessment, input, evidence);
-        if (!reportBytes.AsSpan().SequenceEqual(expectedReport))
-        {
-            throw new DeterministicValidationException(
-                "Rendered report differs by one or more bytes or contains extra bytes.");
-        }
-
-        var actualManifest = ReportService.ParseManifest(manifestBytes);
-        var expectedManifest = ReportService.CreateManifest(
-            assessment,
-            assessmentBytes,
-            input,
-            inputBytes,
-            evidence,
-            evidenceBytes,
-            reportBytes);
-        ReportService.ValidateManifest(actualManifest, expectedManifest);
+        var packageBinding = LoadPackageBinding(
+            root,
+            kind,
+            options.Optional("--package-revision"),
+            packageFeedbackBytes);
+        _ = RevisionService.VerifyRevision(
+            root,
+            revision,
+            feedbackBytes,
+            packageBinding,
+            validateChain: true);
         return ExitCodes.Success;
     }
 
-    private static byte[] Read(string path, string resource) =>
-        BoundedIO.ReadAllBytes(path, ResourceLimits.SerializedArtifactBytes, resource);
+    private static PackageRevisionBinding? LoadPackageBinding(
+        string root,
+        string assessmentKind,
+        string? packageRevision,
+        byte[]? packageFeedbackBytes)
+    {
+        if (assessmentKind == "component")
+        {
+            if (packageRevision is null)
+            {
+                throw new DeterministicValidationException(
+                    "Component assessment requires --package-revision.");
+            }
+
+            return RevisionService.LoadPackageBinding(
+                root,
+                Path.GetFullPath(packageRevision),
+                packageFeedbackBytes);
+        }
+
+        if (packageRevision is not null || packageFeedbackBytes is not null)
+        {
+            throw new DeterministicValidationException(
+                "Only component assessments may specify package revision artifacts.");
+        }
+
+        return null;
+    }
+
+    private static int NextSequence(string outputRoot)
+    {
+        if (!Directory.Exists(outputRoot))
+        {
+            return 1;
+        }
+
+        if (Directory.GetFiles(outputRoot, "*", SearchOption.TopDirectoryOnly).Length != 0)
+        {
+            throw new DeterministicValidationException(
+                "Revision root cannot contain mutable files or a latest pointer.");
+        }
+
+        var directories = Directory.GetDirectories(outputRoot)
+            .Select(path => new
+            {
+                Path = path,
+                Name = Path.GetFileName(path)
+            })
+            .OrderBy(item => item.Name, StringComparer.Ordinal)
+            .ToArray();
+        for (var index = 0; index < directories.Length; index++)
+        {
+            var expected = (index + 1).ToString("D4");
+            if (directories[index].Name != expected)
+            {
+                throw new DeterministicValidationException(
+                    "Revision root contains a fork, reused name, or skipped sequence.");
+            }
+        }
+
+        return directories.Length + 1;
+    }
+
+    private static IReadOnlyList<string> ParseChangedIds(string? value)
+    {
+        if (value is null)
+        {
+            return [];
+        }
+
+        var ids = value.Split(',', StringSplitOptions.None)
+            .Select(id => ContractJson.NormalizeText(id, "declared changed ID", 64))
+            .ToArray();
+        if (ids.Any(string.IsNullOrWhiteSpace) ||
+            ids.Distinct(StringComparer.Ordinal).Count() != ids.Length)
+        {
+            throw new DeterministicValidationException(
+                "--changed-ids must contain unique comma-separated requirement IDs.");
+        }
+
+        return ids.Order(StringComparer.Ordinal).ToArray();
+    }
+
+    private static Sha256Digest ParseDigest(string value, string resource)
+    {
+        var digest = new Sha256Digest("sha256", value);
+        EvidenceIdentity.ValidateDigest(digest, resource);
+        return digest;
+    }
+
+    private static ImmutableInputSnapshot? CaptureOptional(string? path, string resource) =>
+        path is null ? null : ImmutableInputSnapshot.Capture(Path.GetFullPath(path), resource);
+
+    private static byte[]? ReadOptional(string? path, string resource) =>
+        path is null
+            ? null
+            : BoundedIO.ReadAllBytes(
+                Path.GetFullPath(path),
+                ResourceLimits.SerializedArtifactBytes,
+                resource);
+
+    private static void EnsureFeedbackOutsideRevisions(
+        ImmutableInputSnapshot? feedback,
+        string revisionsRoot)
+    {
+        if (feedback is not null)
+        {
+            EnsureFeedbackOutsideRevisions(feedback.Path, revisionsRoot);
+        }
+    }
+
+    private static void EnsureFeedbackOutsideRevisions(string? feedbackPath, string revisionsRoot)
+    {
+        if (feedbackPath is null)
+        {
+            return;
+        }
+
+        var relative = Path.GetRelativePath(
+            Path.GetFullPath(revisionsRoot),
+            Path.GetFullPath(feedbackPath));
+        if (relative == "." ||
+            relative != ".." &&
+            !relative.StartsWith($"..{Path.DirectorySeparatorChar}", StringComparison.Ordinal) &&
+            !Path.IsPathRooted(relative))
+        {
+            throw new DeterministicValidationException(
+                "Assessment feedback must live outside immutable revision directories.");
+        }
+    }
 
     private static IReadOnlyList<ImmutableInputSnapshot> CaptureReferencedInputs(
         InputManifest input,

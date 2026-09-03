@@ -32,8 +32,18 @@ public sealed record AssessmentOverlay(
 
 public sealed record PackageAssessmentReference(
     EvidencePackageIdentity Package,
+    Sha256Digest InputManifestDigest,
     Sha256Digest? AssessmentDigest,
-    Sha256Digest? ReportDigest);
+    Sha256Digest? ReportDigest,
+    Sha256Digest ValidationDigest);
+
+public sealed record AssessmentFeedbackEntry(
+    IReadOnlyList<string> RequirementIds,
+    string RawPayload);
+
+public sealed record AssessmentFeedback(
+    IReadOnlyList<AssessmentFeedbackEntry> Entries,
+    Sha256Digest Digest);
 
 public sealed record AssessmentRow(
     string Id,

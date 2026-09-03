@@ -20,7 +20,8 @@ public static class ReportService
     public static byte[] RenderMarkdown(
         ReadinessAssessment assessment,
         InputManifest input,
-        EvidenceBundle evidence)
+        EvidenceBundle evidence,
+        AssessmentFeedback? feedback = null)
     {
         var provenance = evidence.SourceLedgers
             .SelectMany(ledger => ledger.Ledger.Records)
@@ -117,6 +118,24 @@ public static class ReportService
                 lines.Add($"Requirements: {string.Join(", ", finding.RequirementIds.Select(id => $"`{id}`"))}");
                 lines.Add($"Evidence: {RenderEvidence(finding.EvidenceIds, provenance)}");
                 lines.Add("");
+            }
+        }
+
+        if (feedback is not null)
+        {
+            lines.AddRange(
+            [
+                "",
+                "## Assessment feedback",
+                "",
+                "| Requirement IDs | Feedback |",
+                "|---|---|"
+            ]);
+            foreach (var entry in feedback.Entries)
+            {
+                lines.Add(
+                    $"| {string.Join(", ", entry.RequirementIds.Select(id => $"`{id}`"))} |" +
+                    $"{entry.RawPayload}|");
             }
         }
 
@@ -334,8 +353,10 @@ public static class ReportService
         writer.WriteString("version", reference.Package.Version);
         ContractJson.WriteDigest(writer, "nupkg_sha256", reference.Package.NupkgDigest);
         writer.WriteEndObject();
+        ContractJson.WriteDigest(writer, "input_manifest_sha256", reference.InputManifestDigest);
         WriteNullableDigest(writer, "assessment_sha256", reference.AssessmentDigest);
         WriteNullableDigest(writer, "report_sha256", reference.ReportDigest);
+        ContractJson.WriteDigest(writer, "validation_sha256", reference.ValidationDigest);
         writer.WriteEndObject();
     }
 
@@ -347,7 +368,13 @@ public static class ReportService
         }
 
         var value = element.Value;
-        ContractJson.RequireProperties(value, "package", "assessment_sha256", "report_sha256");
+        ContractJson.RequireProperties(
+            value,
+            "package",
+            "input_manifest_sha256",
+            "assessment_sha256",
+            "report_sha256",
+            "validation_sha256");
         var package = ContractJson.Object(value, "package");
         ContractJson.RequireProperties(package, "package_id", "version", "nupkg_sha256");
         return new PackageAssessmentReference(
@@ -355,8 +382,10 @@ public static class ReportService
                 ContractJson.String(package, "package_id"),
                 ContractJson.String(package, "version"),
                 ContractJson.Digest(ContractJson.Object(package, "nupkg_sha256"))),
+            ContractJson.Digest(ContractJson.Object(value, "input_manifest_sha256")),
             ParseNullableDigest(value, "assessment_sha256"),
-            ParseNullableDigest(value, "report_sha256"));
+            ParseNullableDigest(value, "report_sha256"),
+            ContractJson.Digest(ContractJson.Object(value, "validation_sha256")));
     }
 
     private static AssessmentOverlay ParseOverlay(JsonElement element)

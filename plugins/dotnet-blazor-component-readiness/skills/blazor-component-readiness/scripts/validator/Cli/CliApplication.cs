@@ -25,7 +25,8 @@ public static class CliApplication
           assessment init    Create canonical unified, package, or component rows.
           assessment validate
                              Validate an assessment against inputs, rubric, and evidence.
-          report render      Render immutable deterministic revision 0001.
+          assessment revise  Validate an evidence-backed correction and render its next revision.
+          report render      Render the next immutable deterministic revision.
           report verify      Verify report bytes and every validation-manifest binding.
           help               Show this help.
 
