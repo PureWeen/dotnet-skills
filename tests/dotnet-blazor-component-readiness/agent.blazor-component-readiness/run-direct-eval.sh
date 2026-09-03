@@ -27,7 +27,17 @@ import yaml
 source = Path(os.environ["SOURCE_EVAL"])
 target = Path(os.environ["OUTPUT_EVAL"])
 spec = yaml.safe_load(source.read_text(encoding="utf-8"))
-stimuli = spec["stimuli"][:1] if os.environ["SMOKE"] == "1" else spec["stimuli"]
+scenario_filter = os.environ.get("DIRECT_EVAL_SCENARIO")
+if scenario_filter:
+    stimuli = [
+        stimulus
+        for stimulus in spec["stimuli"]
+        if stimulus["name"] == scenario_filter
+    ]
+    if len(stimuli) != 1:
+        raise SystemExit(f"direct eval scenario not found: {scenario_filter}")
+else:
+    stimuli = spec["stimuli"][:1] if os.environ["SMOKE"] == "1" else spec["stimuli"]
 
 def seconds(value):
     value = str(value)
