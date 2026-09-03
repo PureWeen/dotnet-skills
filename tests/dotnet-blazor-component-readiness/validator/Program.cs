@@ -173,6 +173,7 @@ EvidenceTests.Run(root, plugin);
 AssessmentTests.Run(root, plugin);
 LibraryTests.Run(root, plugin);
 WorkflowTests.Run(plugin);
+EnforcementTests.Run(root, plugin);
 
 Console.WriteLine("All Blazor component readiness Commit 1 through Commit 8 tests passed.");
 

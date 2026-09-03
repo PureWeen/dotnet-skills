@@ -240,6 +240,7 @@ public static class AssessmentService
         }
 
         EvidenceInputBindingValidator.Validate(root, assessment, input, evidence);
+        EvidenceProtocolValidator.Validate(root, assessment, input, evidence);
         ValidateCompletion(assessment);
         BoundedIO.EnsureLength(assessmentBytes.Length, ResourceLimits.SerializedArtifactBytes, "assessment");
     }

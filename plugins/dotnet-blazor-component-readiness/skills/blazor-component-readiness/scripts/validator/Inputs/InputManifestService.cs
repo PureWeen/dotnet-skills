@@ -8,7 +8,14 @@ namespace BlazorComponentReadiness.Validator.Inputs;
 
 public static class InputManifestService
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2;
+    private static readonly string[] DynamicChildLifecycleTriggers =
+    [
+        "composite-children",
+        "grouped-children",
+        "registered-children",
+        "selected-children"
+    ];
 
     public static InputManifest Discover(string root, string nupkgPath, ReadOnlyMemory<byte> candidateBytes)
     {
@@ -30,12 +37,14 @@ public static class InputManifestService
             "documentation",
             "package_sources",
             "source_artifacts",
+            "evidence_inputs",
             "owner_inputs",
             "components",
             "exclusions");
         if (ContractJson.Int32(candidate, "schema_version") != SchemaVersion)
         {
-            throw new DeterministicValidationException("Input discovery candidate schema_version must be 1.");
+            throw new DeterministicValidationException(
+                $"Input discovery candidate schema_version must be {SchemaVersion}.");
         }
 
         var acquisition = ContractJson.String(candidate, "acquisition");
@@ -68,12 +77,17 @@ public static class InputManifestService
             .Select(item => CreateSourceArtifact(root, item))
             .OrderBy(item => item.SourcePath, StringComparer.Ordinal)
             .ToArray();
+        var evidenceInputs = ContractJson.Array(candidate, "evidence_inputs")
+            .EnumerateArray()
+            .Select(item => CreateEvidenceInput(root, item))
+            .OrderBy(item => item.Basename, StringComparer.Ordinal)
+            .ToArray();
         var ownerInputs = ContractJson.Array(candidate, "owner_inputs")
             .EnumerateArray()
             .Select(item => CreateOwnerInput(root, item))
             .OrderBy(item => item.Basename, StringComparer.Ordinal)
             .ToArray();
-        ValidateOwnerCeilings(ownerInputs);
+        ValidateSupplementalInputCeilings(evidenceInputs, ownerInputs);
         var components = ContractJson.Array(candidate, "components")
             .EnumerateArray()
             .Select(ParseCandidateComponent)
@@ -102,6 +116,7 @@ public static class InputManifestService
             RequireUnique(documentation, item => item.Url, "documentation URL"),
             RequireUnique(packageSources, item => $"{item.Kind}\0{item.Locator}", "package source"),
             RequireUnique(sourceArtifacts, item => item.SourcePath, "source artifact path"),
+            RequireUnique(evidenceInputs, item => item.Basename, "evidence input basename"),
             RequireUnique(ownerInputs, item => item.Basename, "owner input basename"),
             RequireUnique(components, item => item.Id, "component ID"),
             exclusions);
@@ -205,8 +220,28 @@ public static class InputManifestService
                 "Only source-available inputs may confirm captured source artifacts.");
         }
 
+        ValidateUniqueAndSorted(manifest.EvidenceInputs, item => item.Basename, "evidence inputs");
+        foreach (var evidenceInput in manifest.EvidenceInputs)
+        {
+            if (Canonicalization.Basename(evidenceInput.Basename, "evidence input basename") !=
+                    evidenceInput.Basename ||
+                ContractJson.NormalizeText(evidenceInput.Kind, "evidence input kind", 128) !=
+                    evidenceInput.Kind)
+            {
+                throw new DeterministicValidationException(
+                    "Evidence input basename or kind is invalid.");
+            }
+
+            ValidateSupplementalInput(
+                root,
+                evidenceInput.Basename,
+                evidenceInput.ContentDigest,
+                evidenceInput.Size,
+                "evidence input");
+        }
+
         ValidateUniqueAndSorted(manifest.OwnerInputs, item => item.Basename, "owner inputs");
-        ValidateOwnerCeilings(manifest.OwnerInputs);
+        ValidateSupplementalInputCeilings(manifest.EvidenceInputs, manifest.OwnerInputs);
         foreach (var owner in manifest.OwnerInputs)
         {
             if (Canonicalization.Basename(owner.Basename, "owner input basename") != owner.Basename ||
@@ -215,15 +250,12 @@ public static class InputManifestService
                 throw new DeterministicValidationException("Owner input basename or provenance is invalid.");
             }
 
-            var path = SafePath.ResolveUnderRoot(root, owner.Basename, requireExisting: true, requireFile: true);
-            BoundedIO.EnsureFileLength(path, ResourceLimits.SupplementalInputAggregateBytes, "owner input");
-            if (new FileInfo(path).Length != owner.Size)
-            {
-                throw new DeterministicValidationException(
-                    $"Owner input '{owner.Basename}' has a stale byte size.");
-            }
-
-            ValidateLocalDigest(root, owner.Basename, owner.ContentDigest, "owner input");
+            ValidateSupplementalInput(
+                root,
+                owner.Basename,
+                owner.ContentDigest,
+                owner.Size,
+                "owner input");
         }
 
         ValidateUniqueAndSorted(manifest.Components, item => item.Id, "components");
@@ -260,6 +292,8 @@ public static class InputManifestService
                 throw new DeterministicValidationException(
                     "Component allowed source paths are not canonical, unique, and sorted.");
             }
+
+            ValidateDynamicChildLifecycle(component.DynamicChildLifecycle);
         }
 
         var exclusions = manifest.Exclusions
@@ -354,6 +388,19 @@ public static class InputManifestService
             }
 
             writer.WriteEndArray();
+            writer.WritePropertyName("evidence_inputs");
+            writer.WriteStartArray();
+            foreach (var evidenceInput in manifest.EvidenceInputs)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("basename", evidenceInput.Basename);
+                writer.WriteString("kind", evidenceInput.Kind);
+                ContractJson.WriteDigest(writer, "content_sha256", evidenceInput.ContentDigest);
+                writer.WriteNumber("size", evidenceInput.Size);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
             writer.WritePropertyName("owner_inputs");
             writer.WriteStartArray();
             foreach (var owner in manifest.OwnerInputs)
@@ -390,6 +437,21 @@ public static class InputManifestService
                 }
 
                 writer.WriteEndArray();
+                writer.WritePropertyName("dynamic_child_lifecycle");
+                writer.WriteStartObject();
+                writer.WriteString(
+                    "applicability",
+                    component.DynamicChildLifecycle.Applicability);
+                writer.WritePropertyName("triggers");
+                writer.WriteStartArray();
+                foreach (var trigger in component.DynamicChildLifecycle.Triggers)
+                {
+                    writer.WriteStringValue(trigger);
+                }
+
+                writer.WriteEndArray();
+                WriteNullable(writer, "rationale", component.DynamicChildLifecycle.Rationale);
+                writer.WriteEndObject();
                 writer.WriteEndObject();
             }
 
@@ -426,6 +488,7 @@ public static class InputManifestService
             "documentation",
             "package_sources",
             "source_artifacts",
+            "evidence_inputs",
             "owner_inputs",
             "components",
             "exclusions");
@@ -439,6 +502,7 @@ public static class InputManifestService
             ContractJson.Array(root, "documentation").EnumerateArray().Select(ParseDocument).ToArray(),
             ContractJson.Array(root, "package_sources").EnumerateArray().Select(ParsePackageSource).ToArray(),
             ContractJson.Array(root, "source_artifacts").EnumerateArray().Select(ParseSourceArtifact).ToArray(),
+            ContractJson.Array(root, "evidence_inputs").EnumerateArray().Select(ParseEvidenceInput).ToArray(),
             ContractJson.Array(root, "owner_inputs").EnumerateArray().Select(ParseOwnerInput).ToArray(),
             ContractJson.Array(root, "components").EnumerateArray().Select(ParseComponent).ToArray(),
             ContractJson.Array(root, "exclusions").EnumerateArray().Select(ParseExclusion).ToArray());
@@ -461,6 +525,7 @@ public static class InputManifestService
             "documentation",
             "package_sources",
             "source_artifacts",
+            "evidence_inputs",
             "owner_inputs",
             "components",
             "exclusions");
@@ -523,6 +588,11 @@ public static class InputManifestService
             .Select(item => CreateDraftSourceArtifact(root, item))
             .OrderBy(item => item.SourcePath, StringComparer.Ordinal)
             .ToArray();
+        var evidenceInputs = ContractJson.Array(value, "evidence_inputs")
+            .EnumerateArray()
+            .Select(item => CreateDraftEvidenceInput(root, item))
+            .OrderBy(item => item.Basename, StringComparer.Ordinal)
+            .ToArray();
         var ownerInputs = ContractJson.Array(value, "owner_inputs")
             .EnumerateArray()
             .Select(item => CreateDraftOwnerInput(root, item))
@@ -549,6 +619,7 @@ public static class InputManifestService
             RequireUnique(documentation, item => item.Url, "documentation URL"),
             RequireUnique(packageSources, item => $"{item.Kind}\0{item.Locator}", "package source"),
             RequireUnique(sourceArtifacts, item => item.SourcePath, "source artifact path"),
+            RequireUnique(evidenceInputs, item => item.Basename, "evidence input basename"),
             RequireUnique(ownerInputs, item => item.Basename, "owner input basename"),
             RequireUnique(components, item => item.Id, "component ID"),
             exclusions);
@@ -775,6 +846,32 @@ public static class InputManifestService
             new FileInfo(path).Length);
     }
 
+    private static InputEvidenceArtifact CreateEvidenceInput(string root, JsonElement element)
+    {
+        ContractJson.RequireProperties(element, "path", "kind");
+        var basename = Canonicalization.Basename(
+            EditableText(ContractJson.String(element, "path")),
+            "evidence input path");
+        var kind = ContractJson.NormalizeText(
+            EditableText(ContractJson.String(element, "kind")).ToLowerInvariant(),
+            "evidence input kind",
+            128);
+        var path = SafePath.ResolveUnderRoot(root, basename, requireExisting: true, requireFile: true);
+        BoundedIO.EnsureFileLength(
+            path,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "evidence input");
+        var content = BoundedIO.ReadAllBytes(
+            path,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "evidence input");
+        return new InputEvidenceArtifact(
+            basename,
+            kind,
+            ContractJson.RawDigest(content),
+            content.LongLength);
+    }
+
     private static InputSourceArtifact CreateSourceArtifact(string root, JsonElement element)
     {
         ContractJson.RequireProperties(element, "source_path", "content_path");
@@ -797,7 +894,8 @@ public static class InputManifestService
             "id",
             "display_name",
             "render_modes",
-            "allowed_source_paths");
+            "allowed_source_paths",
+            "dynamic_child_lifecycle");
         var modes = ContractJson.StringArray(element, "render_modes")
             .Select(value => Canonicalization.RenderMode(EditableText(value)))
             .Distinct(StringComparer.Ordinal)
@@ -815,7 +913,8 @@ public static class InputManifestService
                 "component display name",
                 256),
             modes,
-            ParseAllowedSourcePaths(element));
+            ParseAllowedSourcePaths(element),
+            ParseDynamicChildLifecycle(ContractJson.Object(element, "dynamic_child_lifecycle")));
     }
 
     private static InputExclusion ParseExclusion(JsonElement element)
@@ -908,6 +1007,16 @@ public static class InputManifestService
             ContractJson.Int64(element, "size"));
     }
 
+    private static InputEvidenceArtifact ParseEvidenceInput(JsonElement element)
+    {
+        ContractJson.RequireProperties(element, "basename", "kind", "content_sha256", "size");
+        return new InputEvidenceArtifact(
+            ContractJson.String(element, "basename"),
+            ContractJson.String(element, "kind"),
+            ContractJson.Digest(ContractJson.Object(element, "content_sha256")),
+            ContractJson.Int64(element, "size"));
+    }
+
     private static InputSourceArtifact ParseSourceArtifact(JsonElement element)
     {
         ContractJson.RequireProperties(element, "source_path", "content_path", "content_sha256");
@@ -924,12 +1033,14 @@ public static class InputManifestService
             "id",
             "display_name",
             "render_modes",
-            "allowed_source_paths");
+            "allowed_source_paths",
+            "dynamic_child_lifecycle");
         return new InputComponent(
             ContractJson.String(element, "id"),
             ContractJson.String(element, "display_name"),
             ContractJson.StringArray(element, "render_modes"),
-            ContractJson.StringArray(element, "allowed_source_paths"));
+            ContractJson.StringArray(element, "allowed_source_paths"),
+            ParseDynamicChildLifecycle(ContractJson.Object(element, "dynamic_child_lifecycle")));
     }
 
     private static InputSource ParseDraftSource(JsonElement element)
@@ -1041,6 +1152,39 @@ public static class InputManifestService
             content.LongLength);
     }
 
+    private static InputEvidenceArtifact CreateDraftEvidenceInput(string root, JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(
+            element,
+            "basename",
+            "kind",
+            "content_sha256",
+            "size");
+        _ = ContractJson.Digest(ContractJson.Object(element, "content_sha256"));
+        _ = ContractJson.Int64(element, "size");
+        var basename = Canonicalization.Basename(
+            EditableText(ContractJson.String(element, "basename")),
+            "evidence input basename");
+        var kind = ContractJson.NormalizeText(
+            EditableText(ContractJson.String(element, "kind")).ToLowerInvariant(),
+            "evidence input kind",
+            128);
+        var path = SafePath.ResolveUnderRoot(root, basename, requireExisting: true, requireFile: true);
+        BoundedIO.EnsureFileLength(
+            path,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "evidence input");
+        var content = BoundedIO.ReadAllBytes(
+            path,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "evidence input");
+        return new InputEvidenceArtifact(
+            basename,
+            kind,
+            ContractJson.RawDigest(content),
+            content.LongLength);
+    }
+
     private static InputSourceArtifact CreateDraftSourceArtifact(string root, JsonElement element)
     {
         ContractJson.RequirePropertiesUnordered(
@@ -1075,7 +1219,8 @@ public static class InputManifestService
             "id",
             "display_name",
             "render_modes",
-            "allowed_source_paths");
+            "allowed_source_paths",
+            "dynamic_child_lifecycle");
         var modes = ContractJson.StringArray(element, "render_modes")
             .Select(value => Canonicalization.RenderMode(EditableText(value)))
             .Distinct(StringComparer.Ordinal)
@@ -1093,7 +1238,33 @@ public static class InputManifestService
                 "component display name",
                 256),
             modes,
-            ParseAllowedSourcePaths(element));
+            ParseAllowedSourcePaths(element),
+            ParseDynamicChildLifecycle(ContractJson.Object(element, "dynamic_child_lifecycle")));
+    }
+
+    private static DynamicChildLifecycle ParseDynamicChildLifecycle(JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(
+            element,
+            "applicability",
+            "triggers",
+            "rationale");
+        var rationale = ContractJson.NullableString(element, "rationale");
+        var value = new DynamicChildLifecycle(
+            EditableText(ContractJson.String(element, "applicability")).ToLowerInvariant(),
+            ContractJson.StringArray(element, "triggers")
+                .Select(trigger => EditableText(trigger).ToLowerInvariant())
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray(),
+            rationale is null
+                ? null
+                : ContractJson.NormalizeText(
+                    EditableText(rationale),
+                    "dynamic child lifecycle rationale",
+                    1024));
+        ValidateDynamicChildLifecycle(value);
+        return value;
     }
 
     private static IReadOnlyList<string> ParseAllowedSourcePaths(JsonElement element) =>
@@ -1177,22 +1348,79 @@ public static class InputManifestService
         }
     }
 
-    private static void ValidateOwnerCeilings(IReadOnlyList<OwnerInput> ownerInputs)
+    private static void ValidateDynamicChildLifecycle(DynamicChildLifecycle lifecycle)
     {
-        if (ownerInputs.Count > ResourceLimits.SupplementalInputCount)
+        if (lifecycle.Applicability == "required")
+        {
+            if (lifecycle.Triggers.Count == 0 || lifecycle.Rationale is not null)
+            {
+                throw new DeterministicValidationException(
+                    "Required dynamic child lifecycle coverage needs at least one trigger and no not-applicable rationale.");
+            }
+        }
+        else if (lifecycle.Applicability == "not-applicable")
+        {
+            if (lifecycle.Triggers.Count != 0 ||
+                string.IsNullOrWhiteSpace(lifecycle.Rationale))
+            {
+                throw new DeterministicValidationException(
+                    "A not-applicable dynamic child lifecycle declaration requires a rationale and no triggers.");
+            }
+        }
+        else
         {
             throw new DeterministicValidationException(
-                $"Owner inputs exceed the {ResourceLimits.SupplementalInputCount}-file ceiling.");
+                "Dynamic child lifecycle applicability must be 'required' or 'not-applicable'.");
+        }
+
+        if (!lifecycle.Triggers.SequenceEqual(
+                lifecycle.Triggers.Order(StringComparer.Ordinal),
+                StringComparer.Ordinal) ||
+            lifecycle.Triggers.Any(trigger =>
+                !DynamicChildLifecycleTriggers.Contains(trigger, StringComparer.Ordinal)))
+        {
+            throw new DeterministicValidationException(
+                "Dynamic child lifecycle triggers are not canonical, unique, and supported.");
+        }
+    }
+
+    private static void ValidateSupplementalInput(
+        string root,
+        string basename,
+        Sha256Digest digest,
+        long size,
+        string name)
+    {
+        var path = SafePath.ResolveUnderRoot(root, basename, requireExisting: true, requireFile: true);
+        BoundedIO.EnsureFileLength(path, ResourceLimits.SupplementalInputAggregateBytes, name);
+        if (new FileInfo(path).Length != size)
+        {
+            throw new DeterministicValidationException(
+                $"{name} '{basename}' has a stale byte size.");
+        }
+
+        ValidateLocalDigest(root, basename, digest, name);
+    }
+
+    private static void ValidateSupplementalInputCeilings(
+        IReadOnlyList<InputEvidenceArtifact> evidenceInputs,
+        IReadOnlyList<OwnerInput> ownerInputs)
+    {
+        if (evidenceInputs.Count + ownerInputs.Count > ResourceLimits.SupplementalInputCount)
+        {
+            throw new DeterministicValidationException(
+                $"Supplemental inputs exceed the {ResourceLimits.SupplementalInputCount}-file ceiling.");
         }
 
         long total = 0;
-        foreach (var owner in ownerInputs)
+        foreach (var size in evidenceInputs.Select(input => input.Size)
+                     .Concat(ownerInputs.Select(input => input.Size)))
         {
-            total = checked(total + owner.Size);
+            total = checked(total + size);
             BoundedIO.EnsureLength(
                 total,
                 ResourceLimits.SupplementalInputAggregateBytes,
-                "owner input aggregate");
+                "supplemental input aggregate");
         }
     }
 

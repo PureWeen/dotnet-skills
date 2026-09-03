@@ -44,10 +44,12 @@ explicit coordinator surface; it does not replace the skill or the bundled valid
    claimed modes, output root, and timebox. Never provide sibling component evidence.
 7. Require each worker to exercise every claimed mode and return its unit ID, revision directory,
    report path, validation-manifest path and digest, and blockers.
-8. Recompute and validate every returned manifest/digest and reject skipped modes, duplicate unit
+8. For grouped, registered, selected, or composite child controls, require the canonical
+   post-initialization lifecycle protocol. Reject a prose-only matrix or initial-state-only probe.
+9. Recompute and validate every returned manifest/digest and reject skipped modes, duplicate unit
    ownership, sibling leakage, repository-wide rows in component records, or a wrong package
    binding.
-9. Reconcile the run manifest from immutable revisions, validate completion, and generate the
+10. Reconcile the run manifest from immutable revisions, validate completion, and generate the
    factual library JSON/Markdown index.
 
 ## Isolation and interruption
@@ -59,6 +61,10 @@ fall back to shared context or serial reasoning in one growing context.
 On interruption, do not edit completed revisions. Mark active units incomplete, reconcile the run
 manifest, report pending/blocked/incomplete units, and resume only those units in fresh isolated
 workers.
+
+For an explicitly requested blinded comparison, freeze and validate the separate conclusion-free
+comparison-input manifest before launching a worker. Give the worker only that confirmed manifest
+and its exact allowed files. Fail closed on missing, stale, revealing, or unresolved inputs.
 
 ## Feedback, corrections, and guidance
 

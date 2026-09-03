@@ -50,8 +50,13 @@ public static class EvidenceInputBindingValidator
                     ValidateSourceArtifact(component, input, provenance),
                 EvidenceIdentity.OwnerDeclaredClosedSource =>
                     input.Source.Availability == "closed-source",
-                EvidenceIdentity.ReproducedRuntimeObservation or
-                    EvidenceIdentity.OwnerDeclaredUnavailable => true,
+                EvidenceIdentity.ReproducedRuntimeObservation =>
+                    IsStructuredProtocol(provenance.Method)
+                        ? ValidateEvidenceInput(input, provenance)
+                        : true,
+                EvidenceIdentity.ReviewerGeneratedAnalysis =>
+                    ValidateEvidenceInput(input, provenance),
+                EvidenceIdentity.OwnerDeclaredUnavailable => true,
                 _ => false
             };
             if (!valid)
@@ -110,4 +115,14 @@ public static class EvidenceInputBindingValidator
                 artifact.SourcePath == sourcePath &&
                 artifact.ContentDigest == provenance.ContentDigest);
     }
+
+    private static bool ValidateEvidenceInput(
+        InputManifest input,
+        EvidenceProvenance provenance) =>
+        input.EvidenceInputs.Any(evidenceInput =>
+            evidenceInput.Basename == provenance.Locator &&
+            evidenceInput.ContentDigest == provenance.ContentDigest);
+
+    private static bool IsStructuredProtocol(string method) =>
+        method.StartsWith("protocol:", StringComparison.Ordinal);
 }

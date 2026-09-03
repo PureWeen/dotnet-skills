@@ -13,6 +13,7 @@ internal static class WorkflowTests
         "status-boundaries.md",
         "targeted-profiles.md",
         "learning-loop.md",
+        "blinded-comparison.md",
         "area-provenance-integrity.md",
         "area-security-privacy.md",
         "area-accessibility.md",
@@ -86,6 +87,9 @@ internal static class WorkflowTests
         AssertContains(skill, "owner-supplied-public-evidence", "public owner evidence");
         AssertContains(skill, "current-generation.json", "authoritative library index pointer");
         AssertContains(skill, "every claimed render mode", "render-mode coverage");
+        AssertContains(skill, "dynamic_child_lifecycle.applicability", "conditional lifecycle gate");
+        AssertContains(skill, "comparison inputs-freeze", "blinded comparison freeze");
+        AssertContains(skill, "comparison inputs-validate", "blinded comparison validation");
         AssertContains(skill, "Single component, unified", "unified mode");
         AssertContains(skill, "Single package, split", "split mode");
         AssertContains(skill, "Full library", "library mode");
@@ -244,6 +248,7 @@ internal static class WorkflowTests
         AssertContains(worker, "exactly one coordinator-assigned", "worker single-unit scope");
         AssertContains(worker, "Do not discover or add components", "worker scope prohibition");
         AssertContains(worker, "every claimed render mode", "worker mode coverage");
+        AssertContains(worker, "comparison inputs-validate", "blind worker input gate");
         AssertContains(worker, "unit_id:", "worker handoff unit");
         AssertContains(worker, "revision_path:", "worker handoff revision");
         AssertContains(worker, "report_path:", "worker handoff report");

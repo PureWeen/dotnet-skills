@@ -52,6 +52,8 @@ stop with an environment limitation; do not weaken the launcher isolation.
 | Components | Yes | IDs/display names and every claimed render mode; owner confirms before probes. |
 | Source | Yes | Record `source-available`, `closed-source`, or `unresolved`; never infer closed source from retrieval failure. |
 | Documentation | Yes | Discover official owner-controlled docs, package metadata/README, and source docs when available; owner confirms the set. |
+| Dynamic children | Conditional | Declare whether the component groups, registers, selects, or composes children; required surfaces use the post-initialization lifecycle matrix. |
+| Evidence inputs | Conditional | Confirm protocol documents and raw observation/log/inventory files by neutral basename, kind, size, and digest. |
 | Owner evidence | Optional | Local public/internal evidence with explicit provenance and digest; never treat feedback as evidence. |
 | Exclusions/timebox | Optional | Record explicit exclusions and stop when the timebox expires. |
 
@@ -131,10 +133,12 @@ environment/tool failure.
    Classify source as `source-available`, `closed-source`, or `unresolved`.
 4. Discover components and every claimed mode (`static-ssr`, `interactive-server`,
    `interactive-webassembly`, `interactive-auto`, or `standalone-webassembly`).
-5. Show package/version/digest, acquisition mode, source mapping/availability, official documents,
+5. For each component, declare whether grouped, registered, selected, or composite children make
+   the dynamic-child lifecycle matrix required. Do not infer not-applicable from a missing probe.
+6. Show package/version/digest, acquisition mode, source mapping/availability, official documents,
    owner inputs, component inventory, claimed modes, and exclusions. Ask the owner to correct and
    confirm the draft.
-6. Canonicalize and freeze the manifest:
+7. Canonicalize and freeze the manifest:
 
    ```text
    <launcher> inputs discover --root <output> --nupkg <exact.nupkg> --candidates <candidates.json> --output <input.draft.json>
@@ -168,6 +172,11 @@ owner evidence. Lower-ranked evidence cannot override contradictory higher-ranke
   labeled `owner-supplied-internal-evidence` or `owner-supplied-public-evidence`.
 - An owner declaration can establish `owner-declared-closed-source` or
   `owner-declared-unavailable`; it cannot substitute for unrelated runtime or artifact proof.
+- Use the canonical verified-boundary protocols in
+  [provenance and integrity](references/area-provenance-integrity.md) and
+  [support/lifecycle](references/area-support-lifecycle.md). Notice sidecars, certificate-table
+  presence, signer subjects, organization names, authors, and contact routes are weak hints, not
+  sufficient `verified` evidence for `LP-04`, `PI-02`, or `SUP-01`.
 
 Use exact grouped commands:
 
@@ -197,6 +206,11 @@ Remove disposable apps and raw logs after extracting bounded commands, results, 
 and digests into the local evidence set. Retain a failed probe only when needed for reproduction;
 record why and avoid secrets, credentials, unrelated private URLs, and machine-specific absolute
 paths in reports.
+
+When `dynamic_child_lifecycle.applicability` is `required`, run the complete conditional matrix in
+[Blazor runtime](references/area-blazor-runtime.md) after initial render. Bind each operation's raw
+observation digest in one canonical lifecycle protocol. A blocked operation remains `not tested`
+with its exact reason; never substitute an initial-state-only pass.
 
 ### 4. Create and validate assessments
 
@@ -274,6 +288,19 @@ only from that validated revision, may include the requested verdict/priorities,
 unbound and regenerable. It cannot alter rows, evidence, counts, report, or manifests. Replace it
 only after another explicit guidance request.
 
+### 8. Optional blinded comparison
+
+Only for an explicit blinded accuracy/replay request, follow
+[blinded comparison](references/blinded-comparison.md). Freeze and validate the exact allowed raw
+input set before launching the blind worker. The worker fails closed on a missing or stale input and
+never receives statuses, findings, recommendations, scorecards, feedback, or oracle conclusions.
+This comparison gate does not add requirements to ordinary readiness runs.
+
+```text
+<launcher> comparison inputs-freeze --root <bundle-root> --draft <comparison-inputs.draft.json> --output <comparison-inputs.confirmed.json>
+<launcher> comparison inputs-validate --root <bundle-root> --manifest <comparison-inputs.confirmed.json>
+```
+
 ## Validation before completion
 
 Run automatically; do not report completion until all applicable checks pass:
@@ -287,6 +314,10 @@ Run automatically; do not report completion until all applicable checks pass:
 6. Recompute each handoff validation-manifest digest and compare it with the run manifest.
 7. Confirm disposable probes were removed or explicitly retained with a bounded reason.
 8. Report structural validation separately from unresolved factual limitations.
+9. For lifecycle-required components, verify all ten operation dispositions and raw observation
+   bindings.
+10. For blinded comparisons, revalidate the confirmed comparison-input manifest before worker
+    launch and reject any undefined final disposition.
 
 If any check fails, preserve valid immutable revisions, mark the unit blocked/incomplete, and
 report the exact command, exit code, and smallest next action. Never claim readiness from an

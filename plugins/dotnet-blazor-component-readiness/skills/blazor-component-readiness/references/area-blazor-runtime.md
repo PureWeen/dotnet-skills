@@ -35,3 +35,32 @@ or host startup failures are probe blockers unless direct evidence ties them to 
 For navigation over disabled/hidden items, include all-disabled/no-focusable cases and assert
 termination. Report a shared-runtime problem at its owning layer while retaining the assigned
 component as demonstrated scope. Never generalize one component's result to siblings.
+
+## Conditional dynamic-child lifecycle matrix
+
+Apply this matrix only when the confirmed component groups, registers, selects, or composes child
+items. The input manifest must declare `dynamic_child_lifecycle.applicability` as `required` with
+one or more matching triggers. A component with no such surface declares `not-applicable` with a
+specific rationale and is not forced through these probes.
+
+After initial render and upgrade, obtain a raw observation for every operation:
+
+1. add one child;
+2. remove one child;
+3. reorder keyed children;
+4. disable or remove the selected child;
+5. reconcile membership;
+6. propagate name, default, value, and selected state;
+7. transfer and restore focus ownership;
+8. preserve exactly one expected roving tab stop;
+9. route callbacks and callback failures;
+10. clean up registrations, listeners, references, and async disposal.
+
+The lifecycle protocol must contain all ten operations in canonical order. Each operation is either
+`observed`, with a `passed` or `failed` outcome and a digest-bound raw observation, or `not-tested`,
+with an operation-specific blocker. Initial-state-only evidence, a prose checklist, or one aggregate
+browser summary cannot verify the matrix.
+
+Confirm the protocol and raw files under `evidence_inputs`. Register the protocol evidence as
+`reproduced-runtime-observation` with the protocol basename as locator and
+`protocol:dynamic-child-lifecycle-v1` as `provenance.method`.

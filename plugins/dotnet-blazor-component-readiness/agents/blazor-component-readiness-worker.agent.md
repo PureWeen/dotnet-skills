@@ -21,6 +21,8 @@ Accept only:
   exact validated package revision binding;
 - official documents, package sources, and owner evidence already constrained to this unit;
 - one local output/revision root and optional timebox.
+- for blinded comparison mode only, one validated conclusion-free comparison-input manifest and
+  its exact allowed-input set.
 
 Reject missing, conflicting, unconfirmed, multi-unit, or sibling inputs. Do not discover or add
 components, alter inventory, inspect sibling source, or broaden the package/version.
@@ -29,11 +31,15 @@ components, alter inventory, inspect sibling source, or broaden the package/vers
 
 1. Invoke `blazor-component-readiness` and resolve the validator relative to its loaded `SKILL.md`.
 2. Validate the confirmed input before investigation.
+   In blinded comparison mode, first run `comparison inputs-validate`; fail closed before reading
+   raw inputs if it fails.
 3. Collect only evidence allowed for this unit. A package worker owns the 46 repository-wide rows;
    a component worker owns the 64 component-specific rows and must bind the supplied package
    revision.
 4. For a component, create disposable external consumers and exercise every claimed render mode.
    Record blocked probes as `not tested`; do not omit a mode or infer runtime behavior from a build.
+   If grouped, registered, selected, or composite children apply, complete every post-initialization
+   lifecycle operation with a digest-bound raw observation or operation-specific not-tested reason.
 5. Build immutable evidence ledgers/bundle, initialize and populate the assessment, validate it,
    render the next revision, and run `report verify`.
 6. Remove disposable probes and raw logs after retaining bounded commands, results, relevant

@@ -120,6 +120,62 @@ public static class NupkgInspector
         }
     }
 
+    public static IReadOnlyDictionary<string, string> GetFileEntryDigests(
+        string path,
+        string extension)
+    {
+        SafePath.EnsureRegularFile(path);
+        var bytes = BoundedIO.ReadAllBytes(path, ResourceLimits.NupkgBytes, "nupkg");
+        try
+        {
+            using var packageStream = new MemoryStream(bytes, writable: false);
+            using var archive = new ZipArchive(packageStream, ZipArchiveMode.Read, leaveOpen: false);
+            ValidateArchiveEntries(archive);
+            var result = new SortedDictionary<string, string>(StringComparer.Ordinal);
+            foreach (var entry in archive.Entries.Where(entry =>
+                         !entry.FullName.EndsWith('/') &&
+                         entry.FullName.EndsWith(extension, StringComparison.OrdinalIgnoreCase)))
+            {
+                BoundedIO.EnsureLength(
+                    entry.Length,
+                    ResourceLimits.NupkgBytes,
+                    "expanded package entry");
+                using var stream = entry.Open();
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                var buffer = new byte[64 * 1024];
+                long total = 0;
+                while (true)
+                {
+                    var read = stream.Read(buffer, 0, buffer.Length);
+                    if (read == 0)
+                    {
+                        break;
+                    }
+
+                    total = checked(total + read);
+                    BoundedIO.EnsureLength(total, ResourceLimits.NupkgBytes, "expanded package entry");
+                    hash.AppendData(buffer, 0, read);
+                }
+
+                if (!result.TryAdd(
+                        entry.FullName,
+                        Convert.ToHexStringLower(hash.GetHashAndReset())))
+                {
+                    throw new DeterministicValidationException(
+                        $"Package contains duplicate entry '{entry.FullName}'.");
+                }
+            }
+
+            return result;
+        }
+        catch (InvalidDataException exception)
+        {
+            throw new DeterministicValidationException(
+                "The nupkg is not a valid ZIP package.",
+                exception);
+        }
+    }
+
     private static (string Id, string Version) ReadIdentity(byte[] nuspecBytes)
     {
         try

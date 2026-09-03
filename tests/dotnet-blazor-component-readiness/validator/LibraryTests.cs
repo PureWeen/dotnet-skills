@@ -148,7 +148,11 @@ internal static class LibraryTests
                 Canonicalization.ComponentId(item.DisplayName),
                 item.DisplayName,
                 item.Modes.Order(StringComparer.Ordinal).ToArray(),
-                [$"src/{Canonicalization.ComponentId(item.DisplayName)}.razor"]))
+                [$"src/{Canonicalization.ComponentId(item.DisplayName)}.razor"],
+                new DynamicChildLifecycle(
+                    "not-applicable",
+                    [],
+                    "This synthetic component does not manage grouped, registered, selected, or composite children.")))
             .OrderBy(item => item.Id, StringComparer.Ordinal)
             .ToArray();
         var nupkgRelative = $"inputs/{canonicalId}.{canonicalVersion}{qualifier}.nupkg";
@@ -354,6 +358,7 @@ internal static class LibraryTests
             documentation ?? [],
             packageSources ?? [],
             sourceArtifacts ?? [],
+            [],
             ownerInputs ?? [],
             components,
             [new InputExclusion("Synthetic external services", "Outside this deterministic library fixture.")]);

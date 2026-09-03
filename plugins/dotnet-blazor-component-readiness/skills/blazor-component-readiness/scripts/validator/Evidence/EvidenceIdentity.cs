@@ -13,6 +13,7 @@ public static partial class EvidenceIdentity
     public const string PackageArtifactMetadata = "package-artifact-metadata";
     public const string VendorSourceRepository = "vendor-source-repository";
     public const string ReproducedRuntimeObservation = "reproduced-runtime-observation";
+    public const string ReviewerGeneratedAnalysis = "reviewer-generated-analysis";
     public const string OwnerSuppliedInternalEvidence = "owner-supplied-internal-evidence";
     public const string OwnerSuppliedPublicEvidence = "owner-supplied-public-evidence";
     public const string OwnerDeclaredClosedSource = "owner-declared-closed-source";
@@ -201,6 +202,7 @@ public static partial class EvidenceIdentity
             VendorSourceRepository => CanonicalizeSourceLocator(value),
             PackageArtifactMetadata => CanonicalizePackageLocator(value),
             ReproducedRuntimeObservation => CanonicalizeCommandProbe(value),
+            ReviewerGeneratedAnalysis => CanonicalizeCommandProbe(value),
             OwnerSuppliedInternalEvidence => CanonicalizeOwnerInput(value),
             OwnerSuppliedPublicEvidence => CanonicalizeOwnerInput(value),
             OwnerDeclaredClosedSource => CanonicalizeClosedSourceDeclaration(value),

@@ -76,7 +76,7 @@ internal static class AssessmentTests
             candidatesPath,
             """
             {
-              "schema_version": 1,
+              "schema_version": 2,
               "acquisition": "release-candidate",
               "package_origin": {
                 "locator": "Sample.Widgets.01.002.000.nupkg",
@@ -121,6 +121,7 @@ internal static class AssessmentTests
               "source_artifacts": [
                 {"source_path": "src/FancyTree.razor", "content_path": "source-captures/FancyTree.razor"}
               ],
+              "evidence_inputs": [],
               "owner_inputs": [
                 {"path": "owner-audit.txt", "provenance": "owner-supplied-internal-evidence"}
               ],
@@ -129,7 +130,12 @@ internal static class AssessmentTests
                   "id": " Fancy Tree ",
                   "display_name": "Fancy Tree",
                   "render_modes": ["Server", "STATIC SSR", "WASM"],
-                  "allowed_source_paths": ["src/FancyTree.razor", "src/FancyTree.razor.cs"]
+                  "allowed_source_paths": ["src/FancyTree.razor", "src/FancyTree.razor.cs"],
+                  "dynamic_child_lifecycle": {
+                    "applicability": "not-applicable",
+                    "triggers": [],
+                    "rationale": "This bounded fixture does not manage grouped, registered, selected, or composite children."
+                  }
                 }
               ],
               "exclusions": [
@@ -2266,7 +2272,7 @@ internal static class AssessmentTests
         var unknownPath = Path.Combine(fixture.Root, "draft-unknown.json");
         File.WriteAllText(
             unknownPath,
-            draftText.Replace("{\"schema_version\":1,", "{\"schema_version\":1,\"unknown\":true,", StringComparison.Ordinal),
+            draftText.Replace("{\"schema_version\":2,", "{\"schema_version\":2,\"unknown\":true,", StringComparison.Ordinal),
             new UTF8Encoding(false));
         AssertEqual(
             ExitCodes.ValidationFailure,
@@ -2284,7 +2290,7 @@ internal static class AssessmentTests
         var duplicatePath = Path.Combine(fixture.Root, "draft-duplicate.json");
         File.WriteAllText(
             duplicatePath,
-            draftText.Replace("{\"schema_version\":1,", "{\"schema_version\":1,\"schema_version\":1,", StringComparison.Ordinal),
+            draftText.Replace("{\"schema_version\":2,", "{\"schema_version\":2,\"schema_version\":2,", StringComparison.Ordinal),
             new UTF8Encoding(false));
         AssertEqual(
             ExitCodes.ValidationFailure,

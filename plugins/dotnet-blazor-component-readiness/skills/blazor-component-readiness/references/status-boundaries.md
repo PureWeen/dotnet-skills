@@ -23,6 +23,11 @@ Calibration:
   package.
 - An unsupported optional mode may be `not applicable` only when explicitly unclaimed and safe.
 - A package signature verifies only that signature layer.
+- License or notice sidecars verify only those exact files, not complete notice coverage.
+- A PE certificate table or signer subject does not verify Authenticode file-digest, chain,
+  timestamp, or revocation validity.
+- Organization, author, or contact metadata does not verify accountable support ownership,
+  backup, or escalation coverage.
 - Feedback and decision guidance never establish a status.
 
 Do not substitute alternate status words or abbreviations.

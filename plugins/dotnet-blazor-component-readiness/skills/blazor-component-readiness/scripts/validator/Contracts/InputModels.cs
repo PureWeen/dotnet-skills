@@ -37,11 +37,23 @@ public sealed record OwnerInput(
     Sha256Digest ContentDigest,
     long Size);
 
+public sealed record InputEvidenceArtifact(
+    string Basename,
+    string Kind,
+    Sha256Digest ContentDigest,
+    long Size);
+
+public sealed record DynamicChildLifecycle(
+    string Applicability,
+    IReadOnlyList<string> Triggers,
+    string? Rationale);
+
 public sealed record InputComponent(
     string Id,
     string DisplayName,
     IReadOnlyList<string> RenderModes,
-    IReadOnlyList<string> AllowedSourcePaths);
+    IReadOnlyList<string> AllowedSourcePaths,
+    DynamicChildLifecycle DynamicChildLifecycle);
 
 public sealed record InputExclusion(
     string Subject,
@@ -64,6 +76,7 @@ public sealed record InputManifest(
     IReadOnlyList<InputDocument> Documentation,
     IReadOnlyList<InputPackageSource> PackageSources,
     IReadOnlyList<InputSourceArtifact> SourceArtifacts,
+    IReadOnlyList<InputEvidenceArtifact> EvidenceInputs,
     IReadOnlyList<OwnerInput> OwnerInputs,
     IReadOnlyList<InputComponent> Components,
     IReadOnlyList<InputExclusion> Exclusions);

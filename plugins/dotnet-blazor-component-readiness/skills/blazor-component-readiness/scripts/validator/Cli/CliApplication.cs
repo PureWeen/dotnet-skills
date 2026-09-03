@@ -34,6 +34,10 @@ public static class CliApplication
           library reconcile  Reconstruct mutable run state from immutable validated revisions.
           library validate   Prove every confirmed library work unit is accounted for.
           library index      Write deterministic factual JSON and Markdown library indexes.
+          comparison inputs-freeze
+                             Freeze conclusion-free exact inputs for a blinded comparison.
+          comparison inputs-validate
+                             Revalidate the exact allowed-input set before a blind worker starts.
           help               Show this help.
 
         Run 'readiness-validator <command> --help' for command details.
@@ -94,6 +98,11 @@ public static class CliApplication
             if (string.Equals(args[0], "library", StringComparison.Ordinal))
             {
                 return LibraryCommand.Run(args.Skip(1).ToArray(), output);
+            }
+
+            if (string.Equals(args[0], "comparison", StringComparison.Ordinal))
+            {
+                return ComparisonCommand.Run(args.Skip(1).ToArray(), output);
             }
 
             if (!string.Equals(args[0], "package", StringComparison.Ordinal))
