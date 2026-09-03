@@ -14,6 +14,7 @@ public static partial class EvidenceIdentity
     public const string VendorSourceRepository = "vendor-source-repository";
     public const string ReproducedRuntimeObservation = "reproduced-runtime-observation";
     public const string OwnerSuppliedInternalEvidence = "owner-supplied-internal-evidence";
+    public const string OwnerSuppliedPublicEvidence = "owner-supplied-public-evidence";
     public const string OwnerDeclaredClosedSource = "owner-declared-closed-source";
     public const string OwnerDeclaredUnavailable = "owner-declared-unavailable";
 
@@ -201,6 +202,7 @@ public static partial class EvidenceIdentity
             PackageArtifactMetadata => CanonicalizePackageLocator(value),
             ReproducedRuntimeObservation => CanonicalizeCommandProbe(value),
             OwnerSuppliedInternalEvidence => CanonicalizeOwnerInput(value),
+            OwnerSuppliedPublicEvidence => CanonicalizeOwnerInput(value),
             OwnerDeclaredClosedSource => CanonicalizeClosedSourceDeclaration(value),
             OwnerDeclaredUnavailable => CanonicalizeUnavailableDeclaration(value),
             _ => throw new DeterministicValidationException(

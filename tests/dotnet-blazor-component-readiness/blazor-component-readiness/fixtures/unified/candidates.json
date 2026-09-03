@@ -16,7 +16,10 @@
     {"url": "https://docs.example.test/synthetic/readiness", "content_path": "docs.html"}
   ],
   "package_sources": [
-    {"kind": "package-readme", "locator": "package:README.md", "content_path": "package-readme.md"}
+    {"kind": "package-readme", "locator": "package:entry/README.md", "content_path": "package-readme.md"}
+  ],
+  "source_artifacts": [
+    {"source_path": "src/Grid.razor", "content_path": "Grid.razor"}
   ],
   "owner_inputs": [
     {"path": "owner-audit.txt", "provenance": "owner-supplied-internal-evidence"}

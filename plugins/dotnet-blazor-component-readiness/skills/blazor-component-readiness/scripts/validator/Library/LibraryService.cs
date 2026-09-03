@@ -10,6 +10,11 @@ using BlazorComponentReadiness.Validator.Validation;
 
 namespace BlazorComponentReadiness.Validator.Library;
 
+public sealed record LibraryIndexArtifacts(
+    string GenerationId,
+    byte[] Json,
+    byte[] Markdown);
+
 public static class LibraryService
 {
     public const int SchemaVersion = 1;
@@ -309,7 +314,7 @@ public static class LibraryService
             writer.WriteEndObject();
         });
 
-    public static (byte[] Json, byte[] Markdown) CreateIndex(
+    public static LibraryIndexArtifacts CreateIndex(
         LibraryInventory inventory,
         ReadOnlySpan<byte> inventoryBytes,
         LibraryRunManifest manifest,
@@ -444,7 +449,7 @@ public static class LibraryService
         var markdown = Encoding.UTF8.GetBytes(string.Join('\n', lines));
         BoundedIO.EnsureLength(json.Length, ResourceLimits.SerializedArtifactBytes, "library index JSON");
         BoundedIO.EnsureLength(markdown.Length, ResourceLimits.SerializedArtifactBytes, "library index Markdown");
-        return (json, markdown);
+        return new LibraryIndexArtifacts(generationId, json, markdown);
     }
 
     private static UnitScan ScanPackage(
@@ -502,8 +507,13 @@ public static class LibraryService
                     "Component revision requires exactly one validation manifest.");
             }
 
+            var safeManifestPath = SafePath.ResolveUnderRoot(
+                revision,
+                Path.GetFileName(manifestPath[0]),
+                requireExisting: true,
+                requireFile: true);
             var manifestBytes = BoundedIO.ReadAllBytes(
-                manifestPath[0],
+                safeManifestPath,
                 ResourceLimits.SerializedArtifactBytes,
                 "component validation manifest");
             var manifest = ReportService.ParseManifest(manifestBytes);
@@ -573,53 +583,12 @@ public static class LibraryService
         InventoryComponent component,
         RevisionArtifacts artifacts)
     {
-        var documents = artifacts.Input.Documentation
-            .ToDictionary(document => document.Url, document => document.ContentDigest, StringComparer.Ordinal);
-        var packageLocators = artifacts.Input.PackageSources
-            .ToDictionary(source => source.Locator, source => source.ContentDigest, StringComparer.Ordinal);
-        var ownerInputs = artifacts.Input.OwnerInputs
-            .ToDictionary(owner => owner.Basename, owner => owner.ContentDigest, StringComparer.Ordinal);
-        var sourcePaths = component.AllowedSourcePaths.ToHashSet(StringComparer.Ordinal);
-        var packagePath = SafePath.ResolveUnderRoot(
+        _ = component;
+        EvidenceInputBindingValidator.Validate(
             root,
-            artifacts.Input.Package.NupkgPath,
-            requireExisting: true,
-            requireFile: true);
-        var ledgers = artifacts.Evidence.SourceLedgers
-            .ToDictionary(ledger => ledger.SourceLedgerSha256, ledger => ledger.Ledger, StringComparer.Ordinal);
-        foreach (var selection in artifacts.Evidence.Selection)
-        {
-            var record = ledgers[selection.SourceLedgerSha256].Records
-                .Single(item => item.StableId == selection.EvidenceId);
-            var provenance = record.Provenance;
-            var allowed = provenance.Kind switch
-            {
-                EvidenceIdentity.VendorPublicDocumentation =>
-                    documents.TryGetValue(provenance.Locator, out var documentDigest) &&
-                    documentDigest == provenance.ContentDigest,
-                EvidenceIdentity.VendorSourceRepository =>
-                    provenance.Locator.StartsWith("source:", StringComparison.Ordinal) &&
-                    sourcePaths.Contains(provenance.Locator["source:".Length..]),
-                EvidenceIdentity.OwnerSuppliedInternalEvidence =>
-                    ownerInputs.TryGetValue(provenance.Locator, out var ownerDigest) &&
-                    ownerDigest == provenance.ContentDigest,
-                EvidenceIdentity.PackageArtifactMetadata =>
-                    provenance.Locator.StartsWith(
-                        NupkgInspector.PackageEntryEvidencePrefix,
-                        StringComparison.Ordinal) &&
-                    packageLocators.TryGetValue(provenance.Locator, out var packageDigest) &&
-                    packageDigest == provenance.ContentDigest &&
-                    NupkgInspector.ComputeEvidenceContentSha256(
-                        packagePath,
-                        provenance.Locator) == provenance.ContentDigest.Value,
-                _ => true
-            };
-            if (!allowed)
-            {
-                throw new DeterministicValidationException(
-                    $"Component unit '{component.UnitId}' selected evidence outside its confirmed documentation, package entries, owner inputs, or allowed source paths.");
-            }
-        }
+            artifacts.Assessment,
+            artifacts.Input,
+            artifacts.Evidence);
     }
 
     private static void RegisterIdentity(
@@ -792,6 +761,15 @@ public static class LibraryService
         }
 
         var files = Directory.GetFiles(path, "*", SearchOption.TopDirectoryOnly);
+        foreach (var file in files)
+        {
+            _ = SafePath.ResolveUnderRoot(
+                path,
+                Path.GetFileName(file),
+                requireExisting: true,
+                requireFile: true);
+        }
+
         if (files.Length != 0)
         {
             throw new DeterministicValidationException(
@@ -799,6 +777,7 @@ public static class LibraryService
         }
 
         var directories = Directory.GetDirectories(path, "*", SearchOption.TopDirectoryOnly)
+            .Select(directory => SafePath.ResolveExistingDirectoryUnderRoot(path, directory))
             .OrderBy(item => Path.GetFileName(item), StringComparer.Ordinal)
             .ToArray();
         for (var index = 0; index < directories.Length; index++)

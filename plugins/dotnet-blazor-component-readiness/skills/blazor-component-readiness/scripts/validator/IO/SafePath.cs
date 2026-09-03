@@ -1,3 +1,5 @@
+using BlazorComponentReadiness.Validator.Validation;
+
 namespace BlazorComponentReadiness.Validator.IO;
 
 public static class SafePath
@@ -71,6 +73,27 @@ public static class SafePath
         {
             throw new DeterministicValidationException("The input path is not a regular file.");
         }
+    }
+
+    public static string ResolveExistingDirectoryUnderRoot(string root, string path)
+    {
+        var fullRoot = Path.GetFullPath(root);
+        var fullPath = Path.GetFullPath(path);
+        var relative = Path.GetRelativePath(fullRoot, fullPath)
+            .Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
+        var resolved = ResolveUnderRoot(
+            fullRoot,
+            Canonicalization.RelativePath(relative, "directory path"),
+            requireExisting: true);
+        if (!Directory.Exists(resolved) ||
+            (File.GetAttributes(resolved) & (FileAttributes.ReparsePoint | FileAttributes.Directory)) !=
+            FileAttributes.Directory)
+        {
+            throw new DeterministicValidationException(
+                "The path beneath the artifact root is not a regular non-link directory.");
+        }
+
+        return resolved;
     }
 
     public static void ValidateArchiveEntry(string entryName, bool isSymbolicLink)

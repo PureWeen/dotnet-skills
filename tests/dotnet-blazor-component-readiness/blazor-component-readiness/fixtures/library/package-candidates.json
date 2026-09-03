@@ -17,6 +17,10 @@
     {"url": "https://docs.example.test/library/grid", "content_path": "docs-grid.html"}
   ],
   "package_sources": [],
+  "source_artifacts": [
+    {"source_path": "src/Chart.razor", "content_path": "Chart.razor"},
+    {"source_path": "src/Grid.razor", "content_path": "Grid.razor"}
+  ],
   "owner_inputs": [],
   "components": [
     {"id": "chart", "display_name": "Chart", "render_modes": ["interactive-webassembly"], "allowed_source_paths": ["src/Chart.razor"]},

@@ -170,8 +170,17 @@ def verify_revision(args):
 
 def verify_library(args):
     root = Path(args.root)
-    index = json.loads((root / "library-index.json").read_text(encoding="utf-8"))
-    markdown = (root / "library-index.md").read_text(encoding="utf-8").lower()
+    pointer = json.loads(
+        (root / ".readiness-index" / "current-generation.json").read_text(encoding="utf-8")
+    )
+    generation_json = root / pointer["json_path"]
+    generation_markdown = root / pointer["markdown_path"]
+    assert generation_json.read_bytes() == (root / "library-index.json").read_bytes()
+    assert generation_markdown.read_bytes() == (root / "library-index.md").read_bytes()
+    index = json.loads(generation_json.read_text(encoding="utf-8"))
+    markdown = generation_markdown.read_text(encoding="utf-8").lower()
+    assert index["generation_id"] == pointer["generation_id"]
+    assert f"**generation:** `{pointer['generation_id'].lower()}`" in markdown
     packages = index["packages"]
     assert len(packages) == args.packages
     assert sum(len(package["components"]) for package in packages) == args.components

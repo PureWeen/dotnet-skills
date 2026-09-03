@@ -14,6 +14,9 @@
   ],
   "documentation": [{"url": "https://docs.example.test/library/grid", "content_path": "docs-grid.html"}],
   "package_sources": [],
+  "source_artifacts": [
+    {"source_path": "src/Grid.razor", "content_path": "Grid.razor"}
+  ],
   "owner_inputs": [],
   "components": [
     {"id": "grid", "display_name": "Grid", "render_modes": ["interactive-server", "static-ssr"], "allowed_source_paths": ["src/Grid.razor"]}

@@ -31,6 +31,7 @@ internal static class AssessmentTests
         {
             var fixture = CreateInputFixture(root);
             var packageRevision = CreatePackageRevision(fixture);
+            TestRevisionPathSafety(fixture, packageRevision);
             var packageBinding = RevisionService.LoadPackageBinding(
                 fixture.Root,
                 packageRevision,
@@ -38,6 +39,7 @@ internal static class AssessmentTests
             TestRubricAndInputContracts(fixture, pluginRoot);
             TestAssessmentKinds(fixture, packageRevision, packageBinding);
             TestStatusAndEvidenceBoundaries(fixture);
+            TestEvidenceInputBinding(fixture);
             TestCliAndRendering(fixture);
             TestCommit5Contracts(fixture, packageRevision, packageBinding);
             TestRevisionIntegrityRegressions(fixture, packageRevision);
@@ -62,6 +64,11 @@ internal static class AssessmentTests
         File.WriteAllText(Path.Combine(root, "docs.html"), "<h1>Official docs</h1>", new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(root, "package-readme.md"), "# Package README\n", new UTF8Encoding(false));
         File.WriteAllText(Path.Combine(root, "owner-audit.txt"), "Retained owner audit evidence.", new UTF8Encoding(false));
+        Directory.CreateDirectory(Path.Combine(root, "source-captures"));
+        File.WriteAllText(
+            Path.Combine(root, "source-captures", "FancyTree.razor"),
+            "<div>Fancy Tree</div>",
+            new UTF8Encoding(false));
         var nupkg = Path.Combine(root, "Sample.Widgets.01.002.000.nupkg");
         CreatePackage(nupkg, "Sample.Widgets", "01.002.000");
         var candidatesPath = Path.Combine(root, "candidates.json");
@@ -110,6 +117,9 @@ internal static class AssessmentTests
               ],
               "package_sources": [
                 {"kind": "package-readme", "locator": "package:entry/README.md", "content_path": "package-readme.md"}
+              ],
+              "source_artifacts": [
+                {"source_path": "src/FancyTree.razor", "content_path": "source-captures/FancyTree.razor"}
               ],
               "owner_inputs": [
                 {"path": "owner-audit.txt", "provenance": "owner-supplied-internal-evidence"}
@@ -279,6 +289,26 @@ internal static class AssessmentTests
                     "mapping": null,
                     "confidence": null
                 """,
+                StringComparison.Ordinal)
+            .Replace(
+                """
+                "subject": "source",
+                      "locator": "https://source.example.test/widgets",
+                """,
+                """
+                "subject": "documentation",
+                      "locator": "https://source.example.test/widgets",
+                """,
+                StringComparison.Ordinal)
+            .Replace(
+                """
+                "source_artifacts": [
+                    {"source_path": "src/FancyTree.razor", "content_path": "source-captures/FancyTree.razor"}
+                  ]
+                """,
+                """
+                "source_artifacts": []
+                """,
                 StringComparison.Ordinal);
         AssertEqual(
             "closed-source",
@@ -287,6 +317,33 @@ internal static class AssessmentTests
                 fixture.NupkgPath,
                 Encoding.UTF8.GetBytes(closedCandidates)).Source.Availability,
             "closed-source state");
+        var inferredClosedCandidates = closedCandidates
+            .Replace(
+                """
+                "subject": "documentation",
+                      "locator": "https://source.example.test/widgets",
+                """,
+                """
+                "subject": "source",
+                      "locator": "https://source.example.test/widgets",
+                """,
+                StringComparison.Ordinal)
+            .Replace(
+                """
+                "result": "succeeded",
+                      "detail": "The exact source commit was acquired."
+                """,
+                """
+                "result": "network-failure",
+                      "detail": "The bounded source retrieval failed."
+                """,
+                StringComparison.Ordinal);
+        ExpectValidation(
+            () => InputManifestService.Discover(
+                fixture.Root,
+                fixture.NupkgPath,
+                Encoding.UTF8.GetBytes(inferredClosedCandidates)),
+            "source retrieval failure cannot imply closed source");
         var unresolvedCandidates = closedCandidates.Replace(
             "\"availability\": \"closed-source\"",
             "\"availability\": \"unresolved\"",
@@ -640,6 +697,132 @@ internal static class AssessmentTests
             "targeted rows cannot be complete");
     }
 
+    private static void TestEvidenceInputBinding(Fixture fixture)
+    {
+        var unified = AssessmentService.Initialize(
+            "unified",
+            fixture.Root,
+            fixture.Confirmed,
+            fixture.ConfirmedBytes,
+            "fancy-tree",
+            []);
+        var documentationDraft = CreateEvidenceDraft(unified.Identity, alternate: false);
+        var fabricatedDocumentation = BuildEvidence(
+            unified.Identity,
+            [
+                documentationDraft with
+                {
+                    Provenance = documentationDraft.Provenance with
+                    {
+                        ContentDigest = new Sha256Digest("sha256", new string('b', 64))
+                    }
+                }
+            ]);
+        ExpectValidation(
+            () => Validate(
+                fixture,
+                Complete(unified, fabricatedDocumentation, "verified"),
+                fabricatedDocumentation),
+            "fabricated documentation digest");
+
+        var sourceArtifact = fixture.Confirmed.SourceArtifacts.Single();
+        var sourceEvidence = BuildEvidence(
+            unified.Identity,
+            [
+                new EvidenceRecordDraft(
+                    "The confirmed source capture establishes this synthetic component fact.",
+                    new EvidenceApplicability("repository-wide", null),
+                    new EvidenceProvenance(
+                        EvidenceIdentity.VendorSourceRepository,
+                        $"source:{sourceArtifact.SourcePath}",
+                        "Read the confirmed source capture.",
+                        "2026-09-02T20:02:00Z",
+                        sourceArtifact.ContentDigest,
+                        "commitment-only"),
+                    [])
+            ]);
+        Validate(fixture, Complete(unified, sourceEvidence, "verified"), sourceEvidence);
+
+        var package = AssessmentService.Initialize(
+            "package",
+            fixture.Root,
+            fixture.Confirmed,
+            fixture.ConfirmedBytes,
+            null,
+            []);
+        foreach (var provenance in new[]
+                 {
+                     new EvidenceProvenance(
+                         EvidenceIdentity.PackageArtifactMetadata,
+                         NupkgInspector.WholePackageEvidenceLocator,
+                         "Inspected the exact confirmed package.",
+                         "2026-09-02T20:03:00Z",
+                         fixture.Confirmed.Package.NupkgDigest,
+                         "commitment-only"),
+                     new EvidenceProvenance(
+                         EvidenceIdentity.PackageArtifactMetadata,
+                         fixture.Confirmed.PackageSources.Single().Locator,
+                         "Inspected the captured package README.",
+                         "2026-09-02T20:04:00Z",
+                         fixture.Confirmed.PackageSources.Single().ContentDigest,
+                         "commitment-only")
+                 })
+        {
+            var evidence = BuildEvidence(
+                package.Identity,
+                [
+                    new EvidenceRecordDraft(
+                        "The exact package artifact establishes this synthetic package fact.",
+                        new EvidenceApplicability("repository-wide", null),
+                        provenance,
+                        [])
+                ]);
+            Validate(fixture, Complete(package, evidence, "verified"), evidence);
+        }
+
+        var publicInput = fixture.Confirmed with
+        {
+            OwnerInputs =
+            [
+                fixture.Confirmed.OwnerInputs.Single() with
+                {
+                    Provenance = EvidenceIdentity.OwnerSuppliedPublicEvidence
+                }
+            ]
+        };
+        var publicBytes = InputManifestService.Serialize(publicInput);
+        var publicAssessment = AssessmentService.Initialize(
+            "unified",
+            fixture.Root,
+            publicInput,
+            publicBytes,
+            "fancy-tree",
+            []);
+        var publicEvidence = BuildEvidence(
+            publicAssessment.Identity,
+            [
+                new EvidenceRecordDraft(
+                    "The public owner record establishes this synthetic component fact.",
+                    new EvidenceApplicability("repository-wide", null),
+                    new EvidenceProvenance(
+                        EvidenceIdentity.OwnerSuppliedPublicEvidence,
+                        publicInput.OwnerInputs.Single().Basename,
+                        "Read the confirmed public owner record.",
+                        "2026-09-02T20:05:00Z",
+                        publicInput.OwnerInputs.Single().ContentDigest,
+                        "commitment-only"),
+                    [])
+            ]);
+        var completedPublic = Complete(publicAssessment, publicEvidence, "verified");
+        AssessmentService.Validate(
+            fixture.Root,
+            completedPublic,
+            AssessmentService.Serialize(completedPublic),
+            publicInput,
+            publicBytes,
+            publicEvidence);
+    }
+
     private static void TestCliAndRendering(Fixture fixture)
     {
         var output = new StringWriter();
@@ -787,7 +970,7 @@ internal static class AssessmentTests
         var firstMarkdown = ReportService.RenderMarkdown(goldenAssessment, goldenInput, goldenEvidence);
         var secondMarkdown = ReportService.RenderMarkdown(goldenAssessment, goldenInput, goldenEvidence);
         AssertEqual(
-            "a5c891963f099ae3b4daa953ab6fffa3ad55b79bc1aa46e8d42ca119f185aecf",
+            "c50c7c81e645d10d4a450217c0510600be3b2f333e9694979c9cb03c5c1b4046",
             ContractJson.RawDigest(firstMarkdown).Value,
             "deterministic report golden digest");
         AssertBytes(firstMarkdown, secondMarkdown, "same inputs byte-identical Markdown");
@@ -1770,6 +1953,85 @@ internal static class AssessmentTests
                 "correction preserves predecessor feedback digest");
         }
 
+    private static void TestRevisionPathSafety(Fixture fixture, string packageRevision)
+    {
+        var root = Path.Combine(fixture.Root, "revision-path-safety");
+        Directory.CreateDirectory(root);
+        try
+        {
+            var linkedRevision = Path.Combine(root, "0001");
+            Directory.CreateSymbolicLink(linkedRevision, packageRevision);
+            ExpectValidation(
+                () => RevisionService.VerifyRevision(
+                    fixture.Root,
+                    linkedRevision,
+                    feedbackBytes: null,
+                    packageBinding: null,
+                    validateChain: true,
+                    allowMissingFeedback: true),
+                "symlinked revision directory");
+            Directory.Delete(linkedRevision);
+
+            foreach (var filename in new[] { "package.report.md", "package.validation.json" })
+            {
+                var caseRoot = Path.Combine(root, filename.Replace('.', '-'));
+                var revision = Path.Combine(caseRoot, "0001");
+                CopyDirectory(packageRevision, revision);
+                var artifact = Path.Combine(revision, filename);
+                File.Delete(artifact);
+                File.CreateSymbolicLink(artifact, Path.Combine(packageRevision, filename));
+                ExpectValidation(
+                    () => RevisionService.VerifyRevision(
+                        fixture.Root,
+                        revision,
+                        feedbackBytes: null,
+                        packageBinding: null,
+                        validateChain: true,
+                        allowMissingFeedback: true),
+                    $"symlinked revision artifact {filename}");
+            }
+
+            var chainRoot = Path.Combine(root, "predecessor-chain");
+            var first = Path.Combine(chainRoot, "0001");
+            CopyDirectory(packageRevision, first);
+            var predecessorDigest = ContractJson.RawDigest(
+                File.ReadAllBytes(Path.Combine(first, "package.validation.json"))).Value;
+            var output = new StringWriter();
+            var error = new StringWriter();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    [
+                        "report", "render",
+                        "--root", fixture.Root,
+                        "--input", Path.Combine(first, "input-manifest.json"),
+                        "--assessment", Path.Combine(first, "package.assessment.json"),
+                        "--evidence", Path.Combine(first, "package.evidence.json"),
+                        "--output", chainRoot,
+                        "--predecessor", predecessorDigest
+                    ],
+                    output,
+                    error),
+                $"create predecessor link chain: {error}");
+            var saved = Path.Combine(root, "saved-predecessor");
+            Directory.Move(first, saved);
+            Directory.CreateSymbolicLink(first, saved);
+            ExpectValidation(
+                () => RevisionService.VerifyRevision(
+                    fixture.Root,
+                    Path.Combine(chainRoot, "0002"),
+                    feedbackBytes: null,
+                    packageBinding: null,
+                    validateChain: true,
+                    allowMissingFeedback: true),
+                "symlinked predecessor directory");
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+        }
+    }
+
     private static void TestHistoricalPackageFeedbackBinding(Fixture fixture)
     {
             var initialized = AssessmentService.Initialize(
@@ -2080,6 +2342,7 @@ internal static class AssessmentTests
             ["nupkg"] = fixture.NupkgPath,
             ["documentation"] = Path.Combine(fixture.Root, "docs.html"),
             ["package-source"] = Path.Combine(fixture.Root, "package-readme.md"),
+            ["source-artifact"] = Path.Combine(fixture.Root, "source-captures", "FancyTree.razor"),
             ["owner-input"] = Path.Combine(fixture.Root, "owner-audit.txt")
         };
         File.WriteAllBytes(paths["assessment"], AssessmentService.Serialize(assessment));
@@ -2424,7 +2687,9 @@ internal static class AssessmentTests
                     ? "Ran the bounded synthetic component probe."
                     : "Captured official documentation content.",
                 alternate ? "2026-09-02T21:00:00Z" : "2026-09-02T20:00:00Z",
-                new Sha256Digest("sha256", new string(alternate ? 'c' : 'b', 64)),
+                alternate
+                    ? new Sha256Digest("sha256", new string('c', 64))
+                    : ContractJson.RawDigest(Encoding.UTF8.GetBytes("<h1>Official docs</h1>")),
                 "commitment-only"),
             []);
     }
@@ -2463,6 +2728,7 @@ internal static class AssessmentTests
     {
         var assessmentBytes = AssessmentService.Serialize(assessment);
         AssessmentService.Validate(
+            fixture.Root,
             assessment,
             assessmentBytes,
             fixture.Confirmed,
@@ -2532,9 +2798,19 @@ internal static class AssessmentTests
         using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
         var entry = archive.CreateEntry($"{id}.nuspec", CompressionLevel.NoCompression);
         entry.LastWriteTime = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        using var stream = entry.Open();
-        using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: false);
-        writer.Write($"<package><metadata><id>{id}</id><version>{version}</version></metadata></package>");
+        using (var stream = entry.Open())
+        using (var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: false))
+        {
+            writer.Write($"<package><metadata><id>{id}</id><version>{version}</version></metadata></package>");
+        }
+
+        var readme = archive.CreateEntry("README.md", CompressionLevel.NoCompression);
+        readme.LastWriteTime = entry.LastWriteTime;
+        using (var readmeStream = readme.Open())
+        using (var readmeWriter = new StreamWriter(readmeStream, new UTF8Encoding(false), leaveOpen: false))
+        {
+            readmeWriter.Write("# Package README\n");
+        }
     }
 
     private static void ExpectValidation(Action action, string name)

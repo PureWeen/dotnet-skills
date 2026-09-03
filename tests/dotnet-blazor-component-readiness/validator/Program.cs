@@ -174,7 +174,7 @@ AssessmentTests.Run(root, plugin);
 LibraryTests.Run(root, plugin);
 WorkflowTests.Run(plugin);
 
-Console.WriteLine("All Blazor component readiness Commit 1 through Commit 7 tests passed.");
+Console.WriteLine("All Blazor component readiness Commit 1 through Commit 8 tests passed.");
 
 static string FindRepositoryRoot()
 {

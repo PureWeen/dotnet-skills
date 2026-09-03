@@ -110,6 +110,7 @@ public static class AssessmentService
     }
 
     public static void Validate(
+        string root,
         ReadinessAssessment assessment,
         ReadOnlySpan<byte> assessmentBytes,
         InputManifest input,
@@ -238,6 +239,7 @@ public static class AssessmentService
                 "Every selected evidence ID must be used and no unselected evidence may be referenced.");
         }
 
+        EvidenceInputBindingValidator.Validate(root, assessment, input, evidence);
         ValidateCompletion(assessment);
         BoundedIO.EnsureLength(assessmentBytes.Length, ResourceLimits.SerializedArtifactBytes, "assessment");
     }

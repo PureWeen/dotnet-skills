@@ -70,6 +70,11 @@ public static class ReportService
             ? ["   - None recorded."]
             : input.PackageSources.Select(source =>
                 $"   - `{source.Kind}` {Escape(source.Locator)} (`{source.ContentDigest.Value}`)"));
+        lines.Add(" - Confirmed source artifacts:");
+        lines.AddRange(input.SourceArtifacts.Count == 0
+            ? ["   - None recorded."]
+            : input.SourceArtifacts.Select(artifact =>
+                $"   - `source:{Escape(artifact.SourcePath)}` (`{artifact.ContentDigest.Value}`)"));
         lines.Add(" - Owner-supplied inputs:");
         lines.AddRange(input.OwnerInputs.Count == 0
             ? ["   - None recorded."]

@@ -27,8 +27,8 @@ unranked, and traceable to selected rows/evidence.
 The generated report includes:
 
 1. completion state and exact package/component/rubric identity;
-2. assessment inputs, retrieval attempts, source availability, documents, owner inputs, confirmed
-   inventory, modes, and exclusions;
+2. assessment inputs, retrieval attempts, source availability, source-artifact captures, documents,
+   owner inputs, confirmed inventory, modes, and exclusions;
 3. counts for all five statuses plus incomplete;
 4. factual summaries/findings;
 5. optional feedback rendered verbatim;
@@ -53,7 +53,8 @@ approval, certification, or suitability.
 
 Run `assessment validate` before `report render`, then `report verify` on the created revision.
 Reject an extra byte, stale feedback, wrong package binding, missing selected evidence, changed
-identity, mutable earlier revision, or unverified handoff.
+identity, evidence not bound to confirmed input bytes, linked revision/artifact paths, mutable
+earlier revision, or unverified handoff.
 
 ## Decision guidance
 

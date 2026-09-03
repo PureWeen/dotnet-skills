@@ -16,6 +16,9 @@
   "package_sources": [
     {"kind": "package-readme", "locator": "candidate:release-notes", "content_path": "release-notes.md"}
   ],
+  "source_artifacts": [
+    {"source_path": "src/CandidateGrid.razor", "content_path": "CandidateGrid.razor"}
+  ],
   "owner_inputs": [],
   "components": [
     {"id": "candidate-grid", "display_name": "Candidate Grid", "render_modes": ["interactive-server"], "allowed_source_paths": ["src/CandidateGrid.razor"]}

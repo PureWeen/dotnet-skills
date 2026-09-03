@@ -89,14 +89,15 @@ public static class LibraryStateReceiptService
             .ToDictionary(UnitDirectoryName, unitId => unitId, StringComparer.Ordinal);
         foreach (var unitDirectory in Directory.GetDirectories(runRoot, "*", SearchOption.TopDirectoryOnly))
         {
-            var key = Path.GetFileName(unitDirectory);
+            var safeUnitDirectory = SafePath.ResolveExistingDirectoryUnderRoot(runRoot, unitDirectory);
+            var key = Path.GetFileName(safeUnitDirectory);
             if (!units.TryGetValue(key, out var unitId))
             {
                 throw new DeterministicValidationException(
                     "Library state receipt run root contains a receipt directory for an unknown unit.");
             }
 
-            if (Directory.GetDirectories(unitDirectory, "*", SearchOption.TopDirectoryOnly).Length != 0)
+            if (Directory.GetDirectories(safeUnitDirectory, "*", SearchOption.TopDirectoryOnly).Length != 0)
             {
                 throw new DeterministicValidationException(
                     $"Library state receipt directory for '{unitId}' contains undeclared subdirectories.");
@@ -105,7 +106,12 @@ public static class LibraryStateReceiptService
             Sha256Digest? priorDigest = null;
             string? priorState = null;
             var interruptedTransition = false;
-            var files = Directory.GetFiles(unitDirectory, "*", SearchOption.TopDirectoryOnly)
+            var files = Directory.GetFiles(safeUnitDirectory, "*", SearchOption.TopDirectoryOnly)
+                .Select(file => SafePath.ResolveUnderRoot(
+                    safeUnitDirectory,
+                    Path.GetFileName(file),
+                    requireExisting: true,
+                    requireFile: true))
                 .OrderBy(path => Path.GetFileName(path), StringComparer.Ordinal)
                 .ToArray();
             LibraryStateReceiptSnapshot? latest = null;

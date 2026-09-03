@@ -161,6 +161,9 @@ owner evidence. Lower-ranked evidence cannot override contradictory higher-ranke
 - Reuse repository-wide evidence only for the same exact package ID, normalized version, nupkg
   digest, and source commit when present.
 - Keep component evidence within its confirmed component and allowed source paths.
+- Bind selected documentation, package metadata, source captures, and owner inputs to exact
+  locators and SHA-256 values in the confirmed input manifest. A source retrieval failure leaves
+  source `unresolved`; it never implies `closed-source`.
 - Owner-supplied evidence may support `verified` when directly applicable, digest-bound, and
   labeled `owner-supplied-internal-evidence` or `owner-supplied-public-evidence`.
 - An owner declaration can establish `owner-declared-closed-source` or
@@ -200,7 +203,7 @@ paths in reports.
 Initialize the appropriate row ownership:
 
 ```text
-<launcher> assessment init --kind unified --root <output> --input <input.confirmed.json> --output <unified.assessment.json>
+<launcher> assessment init --kind unified --root <output> --input <input.confirmed.json> --component <component-id> --output <unified.assessment.json>
 <launcher> assessment init --kind package --root <output> --input <package.input.confirmed.json> --output <package.assessment.json>
 <launcher> assessment init --kind component --root <output> --input <component.input.confirmed.json> --component <component-id> --package-revision <package-revision> --output <component.assessment.json>
 ```
@@ -239,6 +242,10 @@ units validate, run:
 <launcher> library validate --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json
 <launcher> library index --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json --json <output>/library-index.json --markdown <output>/library-index.md
 ```
+
+The JSON and Markdown arguments are compatibility caches. The authoritative index is the immutable
+generation named by `<output>/.readiness-index/current-generation.json`; rerunning `library index`
+repairs missing or mismatched caches under the library run lock.
 
 The index is factual only: packages/versions, completion state, status counts, report links,
 missing inputs, and blocked probes.

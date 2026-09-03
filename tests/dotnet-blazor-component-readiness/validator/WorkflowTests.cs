@@ -83,6 +83,8 @@ internal static class WorkflowTests
         AssertContains(skill, "46 `repository-wide` / 64 `component-specific`", "scope ownership");
         AssertContains(skill, "`source-available`, `closed-source`, or `unresolved`", "source availability");
         AssertContains(skill, "owner-supplied-internal-evidence", "owner evidence");
+        AssertContains(skill, "owner-supplied-public-evidence", "public owner evidence");
+        AssertContains(skill, "current-generation.json", "authoritative library index pointer");
         AssertContains(skill, "every claimed render mode", "render-mode coverage");
         AssertContains(skill, "Single component, unified", "unified mode");
         AssertContains(skill, "Single package, split", "split mode");
@@ -95,6 +97,11 @@ internal static class WorkflowTests
         AssertContains(skill, "decision-guidance.md", "decision guidance");
         AssertContains(skill, "source validation-manifest SHA-256", "guidance source digest");
         AssertContains(skill, "Run automatically", "automatic validation");
+        Assert(
+            Regex.IsMatch(
+                skill,
+                @"assessment init --kind unified\b[^\r\n]*--component <component-id>"),
+            "unified assessment init example requires the component identity");
 
         foreach (var status in Statuses)
         {
@@ -258,6 +265,8 @@ internal static class WorkflowTests
         AssertContains(library, "`pending`, `active`, `completed`, `blocked`, or `incomplete`", "library states");
         AssertContains(library, "one isolated worker per unit", "library isolation");
         AssertContains(library, "factual status counts", "factual library index");
+        AssertContains(library, "current-generation.json", "generation index publication");
+        AssertContains(library, "compatibility caches", "index cache recovery");
     }
 
     private static void AssertContains(string value, string expected, string name) =>

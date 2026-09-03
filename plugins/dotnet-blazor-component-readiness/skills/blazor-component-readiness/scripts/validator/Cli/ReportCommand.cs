@@ -85,6 +85,7 @@ public static class ReportCommand
             options.Optional("--package-revision"),
             packageFeedbackSnapshot?.Bytes);
         AssessmentService.Validate(
+            root,
             assessment,
             assessmentBytes,
             input,
@@ -279,17 +280,7 @@ public static class ReportCommand
                 Path.GetDirectoryName(Path.GetFullPath(packageRevision))!);
         }
 
-        var validationFiles = Directory.GetFiles(
-            revision,
-            "*.validation.json",
-            SearchOption.TopDirectoryOnly);
-        if (validationFiles.Length != 1)
-        {
-            throw new DeterministicValidationException(
-                "Revision requires exactly one validation manifest.");
-        }
-
-        var kind = Path.GetFileName(validationFiles[0]).Split('.')[0];
+        var kind = RevisionService.DetectKind(root, revision);
         var packageBinding = LoadPackageBinding(
             root,
             kind,
@@ -488,6 +479,15 @@ public static class ReportCommand
                     requireFile: true),
                 ResourceLimits.SupplementalInputAggregateBytes,
                 $"referenced package source '{source.ContentPath}'")));
+        snapshots.AddRange(input.SourceArtifacts.Select(artifact =>
+            ImmutableInputSnapshot.Capture(
+                SafePath.ResolveUnderRoot(
+                    root,
+                    artifact.ContentPath,
+                    requireExisting: true,
+                    requireFile: true),
+                ResourceLimits.SupplementalInputAggregateBytes,
+                $"referenced source artifact '{artifact.ContentPath}'")));
         snapshots.AddRange(input.OwnerInputs.Select(owner =>
             ImmutableInputSnapshot.Capture(
                 SafePath.ResolveUnderRoot(

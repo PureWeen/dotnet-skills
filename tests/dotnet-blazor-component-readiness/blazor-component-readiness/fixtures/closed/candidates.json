@@ -10,6 +10,7 @@
     {"url": "https://docs.example.test/closed/widget", "content_path": "docs.html"}
   ],
   "package_sources": [],
+  "source_artifacts": [],
   "owner_inputs": [],
   "components": [
     {"id": "closed-grid", "display_name": "Closed Grid", "render_modes": ["interactive-server"], "allowed_source_paths": []}

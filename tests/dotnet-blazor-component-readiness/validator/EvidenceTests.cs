@@ -298,6 +298,7 @@ internal static class EvidenceTests
             (EvidenceIdentity.VendorSourceRepository, "source:src/Tree.cs"),
             (EvidenceIdentity.ReproducedRuntimeObservation, "dotnet test Tree.Keyboard"),
             (EvidenceIdentity.OwnerSuppliedInternalEvidence, "accessibility-audit.pdf"),
+            (EvidenceIdentity.OwnerSuppliedPublicEvidence, "public-conformance.json"),
             (EvidenceIdentity.OwnerDeclaredClosedSource, "source"),
             (EvidenceIdentity.OwnerDeclaredUnavailable, "artifact:private-sbom")
         };

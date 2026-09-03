@@ -146,6 +146,7 @@ public static class LibraryCommand
             "run manifest");
         var manifest = LibraryService.Parse(manifestBytes);
         _ = LibraryService.Validate(root, inventory, inventoryBytes, manifest);
+        LibraryIndexPublicationService.RecoverCurrent(root);
         return ExitCodes.Success;
     }
 
@@ -189,7 +190,11 @@ public static class LibraryCommand
             Path.Combine(root, "run-manifest.json"),
             manifestBytes,
             "index");
-        AtomicFile.ReplacePair(root, json, index.Json, markdown, index.Markdown);
+        _ = LibraryIndexPublicationService.Publish(
+            root,
+            json,
+            markdown,
+            index);
         return ExitCodes.Success;
     }
 

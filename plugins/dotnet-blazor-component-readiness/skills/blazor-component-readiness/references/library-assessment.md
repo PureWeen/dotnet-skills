@@ -51,3 +51,11 @@ Run `library reconcile`, `library validate`, then `library index`. The index is 
 validated manifests and contains package/version identities, completed/incomplete components,
 factual status counts, report links, missing inputs, and blocked probes. It contains no default
 verdict, ranking, or remediation priority.
+
+Index publication is generation-based. Both authoritative files are committed together beneath
+`.readiness-index/generations/<generation-id>/`, then one regular-file
+`.readiness-index/current-generation.json` pointer is atomically replaced. The requested
+`library-index.json` and `library-index.md` paths are compatibility caches; every index run detects
+and repairs cache drift from the pointer while holding the run lock. Interrupted publication before
+or after pointer replacement is recovered on the next run without exposing a mixed authoritative
+generation.

@@ -28,6 +28,12 @@ Lower-ranked evidence cannot override contradictory higher-ranked evidence.
 Repository evidence may be reused only for the same package ID/version/digest and source commit.
 Component evidence cannot prove repository-wide rows.
 
+Every selected record must bind to the confirmed input manifest. Documentation binds exact URL and
+captured digest; package evidence binds the exact nupkg or recomputed archive entry; source binds an
+exact confirmed `source:<path>` capture and digest; owner evidence binds exact basename,
+classification, and digest. Treat `owner-supplied-public-evidence` and
+`owner-supplied-internal-evidence` as distinct first-class provenance kinds.
+
 Use `gap` for directly observed missing/contradictory required public artifacts. Use
 `owner evidence required` for inaccessible private approval, retention, signing, or legal records.
 A rebuilt package cannot verify the distributed artifact.

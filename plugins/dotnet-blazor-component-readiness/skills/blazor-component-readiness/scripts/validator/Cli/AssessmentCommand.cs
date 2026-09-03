@@ -115,6 +115,7 @@ public static class AssessmentCommand
             options.Optional("--package-revision"),
             options.Optional("--package-feedback"));
         AssessmentService.Validate(
+            root,
             assessment,
             assessmentBytes,
             input,

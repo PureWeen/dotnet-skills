@@ -26,6 +26,11 @@ public sealed record InputPackageSource(
     string ContentPath,
     Sha256Digest ContentDigest);
 
+public sealed record InputSourceArtifact(
+    string SourcePath,
+    string ContentPath,
+    Sha256Digest ContentDigest);
+
 public sealed record OwnerInput(
     string Basename,
     string Provenance,
@@ -58,6 +63,7 @@ public sealed record InputManifest(
     IReadOnlyList<InputRetrievalAttempt> RetrievalAttempts,
     IReadOnlyList<InputDocument> Documentation,
     IReadOnlyList<InputPackageSource> PackageSources,
+    IReadOnlyList<InputSourceArtifact> SourceArtifacts,
     IReadOnlyList<OwnerInput> OwnerInputs,
     IReadOnlyList<InputComponent> Components,
     IReadOnlyList<InputExclusion> Exclusions);

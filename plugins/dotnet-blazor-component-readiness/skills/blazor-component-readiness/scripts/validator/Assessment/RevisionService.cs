@@ -68,12 +68,20 @@ public static class RevisionService
         bool validateChain,
         bool allowMissingFeedback = false)
     {
-        var revision = Path.GetFullPath(revisionDirectory);
+        var revision = SafePath.ResolveExistingDirectoryUnderRoot(root, revisionDirectory);
         var sequence = ParseSequence(revision);
         var validationFiles = Directory.GetFiles(
             revision,
             "*.validation.json",
             SearchOption.TopDirectoryOnly);
+        foreach (var validationFile in validationFiles)
+        {
+            _ = SafePath.ResolveUnderRoot(
+                revision,
+                Path.GetFileName(validationFile),
+                requireExisting: true,
+                requireFile: true);
+        }
         if (validationFiles.Length != 1)
         {
             throw new DeterministicValidationException(
@@ -104,21 +112,24 @@ public static class RevisionService
                 "Immutable revisions contain exactly the input, assessment, evidence, report, and validation artifacts.");
         }
 
-        var inputBytes = Read(Path.Combine(revision, "input-manifest.json"), "input manifest snapshot");
+        var inputBytes = Read(revision, "input-manifest.json", "input manifest snapshot");
         var assessmentBytes = Read(
-            Path.Combine(revision, $"{kind}.assessment.json"),
+            revision,
+            $"{kind}.assessment.json",
             "assessment snapshot");
         var evidenceBytes = Read(
-            Path.Combine(revision, $"{kind}.evidence.json"),
+            revision,
+            $"{kind}.evidence.json",
             "evidence snapshot");
-        var reportBytes = Read(Path.Combine(revision, $"{kind}.report.md"), "report");
-        var manifestBytes = Read(validationFiles[0], "validation manifest");
+        var reportBytes = Read(revision, $"{kind}.report.md", "report");
+        var manifestBytes = Read(revision, $"{kind}.validation.json", "validation manifest");
         var input = InputManifestService.Parse(inputBytes);
         InputManifestService.Validate(input, root, requireConfirmed: true);
         var assessment = AssessmentService.Parse(assessmentBytes);
         var evidence = CanonicalEvidenceJson.ParseBundle(evidenceBytes);
         var manifest = ReportService.ParseManifest(manifestBytes);
         AssessmentService.Validate(
+            root,
             assessment,
             assessmentBytes,
             input,
@@ -394,6 +405,32 @@ public static class RevisionService
         before.Provenance == after.Provenance &&
         before.Supersedes.SequenceEqual(after.Supersedes, StringComparer.Ordinal);
 
-    private static byte[] Read(string path, string resource) =>
-        BoundedIO.ReadAllBytes(path, ResourceLimits.SerializedArtifactBytes, resource);
+    public static string DetectKind(string root, string revisionDirectory)
+    {
+        var revision = SafePath.ResolveExistingDirectoryUnderRoot(root, revisionDirectory);
+        var files = Directory.GetFiles(revision, "*.validation.json", SearchOption.TopDirectoryOnly);
+        if (files.Length != 1)
+        {
+            throw new DeterministicValidationException(
+                "Revision requires exactly one validation manifest.");
+        }
+
+        var file = SafePath.ResolveUnderRoot(
+            revision,
+            Path.GetFileName(files[0]),
+            requireExisting: true,
+            requireFile: true);
+        return Path.GetFileName(file).Split('.')[0];
+    }
+
+    private static byte[] Read(string revision, string filename, string resource)
+    {
+        var path = SafePath.ResolveUnderRoot(
+            revision,
+            filename,
+            requireExisting: true,
+            requireFile: true);
+        SafePath.EnsureRegularFile(path);
+        return BoundedIO.ReadAllBytes(path, ResourceLimits.SerializedArtifactBytes, resource);
+    }
 }

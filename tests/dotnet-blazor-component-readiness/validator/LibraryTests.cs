@@ -174,6 +174,7 @@ internal static class LibraryTests
             componentContracts,
             componentInputs.Values.SelectMany(value => value.Documentation).ToArray(),
             componentInputs.Values.SelectMany(value => value.PackageSources).ToArray(),
+            componentInputs.Values.SelectMany(value => value.SourceArtifacts).ToArray(),
             componentInputs.Values.SelectMany(value => value.OwnerInputs).ToArray());
         var packageInputPath = $"inputs/{canonicalId}{qualifier}.package.input-manifest.json";
         File.WriteAllBytes(
@@ -191,6 +192,7 @@ internal static class LibraryTests
                 [component],
                 componentInputs[component.Id].Documentation,
                 componentInputs[component.Id].PackageSources,
+                componentInputs[component.Id].SourceArtifacts,
                 componentInputs[component.Id].OwnerInputs);
             var path = $"inputs/{canonicalId}{qualifier}.{component.Id}.input-manifest.json";
             File.WriteAllBytes(Path.Combine(root, path), InputManifestService.Serialize(componentInput));
@@ -329,6 +331,7 @@ internal static class LibraryTests
         IReadOnlyList<InputComponent> components,
         IReadOnlyList<InputDocument>? documentation = null,
         IReadOnlyList<InputPackageSource>? packageSources = null,
+        IReadOnlyList<InputSourceArtifact>? sourceArtifacts = null,
         IReadOnlyList<OwnerInput>? ownerInputs = null) =>
         new(
             InputManifestService.SchemaVersion,
@@ -350,6 +353,7 @@ internal static class LibraryTests
             [new InputRetrievalAttempt("package", nupkgRelative, "local-file", "succeeded", null)],
             documentation ?? [],
             packageSources ?? [],
+            sourceArtifacts ?? [],
             ownerInputs ?? [],
             components,
             [new InputExclusion("Synthetic external services", "Outside this deterministic library fixture.")]);
@@ -365,6 +369,9 @@ internal static class LibraryTests
         var packageSourcePath = $"inputs/{packageId}.{componentId}.package-source.txt";
         var packageSourceBytes = Encoding.UTF8.GetBytes($"Package entry content/{componentId}.txt.");
         File.WriteAllBytes(Path.Combine(root, packageSourcePath), packageSourceBytes);
+        var sourceCapturePath = $"inputs/{packageId}.{componentId}.source.txt";
+        var sourceBytes = Encoding.UTF8.GetBytes($"Source for {componentId}.");
+        File.WriteAllBytes(Path.Combine(root, sourceCapturePath), sourceBytes);
         var ownerBasename = $"{packageId}.{componentId}.owner.txt";
         var ownerBytes = Encoding.UTF8.GetBytes($"Owner evidence for {componentId}.");
         File.WriteAllBytes(Path.Combine(root, ownerBasename), ownerBytes);
@@ -381,6 +388,12 @@ internal static class LibraryTests
                     $"{NupkgInspector.PackageEntryEvidencePrefix}content/{componentId}.txt",
                     packageSourcePath,
                     ContractJson.RawDigest(packageSourceBytes))
+            ],
+            [
+                new InputSourceArtifact(
+                    $"src/{componentId}.razor",
+                    sourceCapturePath,
+                    ContractJson.RawDigest(sourceBytes))
             ],
             [
                 new OwnerInput(
@@ -670,6 +683,7 @@ internal static class LibraryTests
                 fixture.InventoryBytes),
             "corrupt state receipt rejected");
         File.WriteAllBytes(receiptPath, receiptBytes);
+        TestStateReceiptPathSafety(fixture, receiptPath);
 
         RunCli(
             fixture,
@@ -685,6 +699,43 @@ internal static class LibraryTests
             File.ReadAllText(Path.Combine(fixture.Root, "library-index.md"))
                 .Contains("**Overall state:** `incomplete`", StringComparison.Ordinal),
             "incomplete factual index");
+    }
+
+    private static void TestStateReceiptPathSafety(Fixture fixture, string receiptPath)
+    {
+        var safetyRoot = Path.Combine(fixture.Root, "state-receipt-path-safety");
+        Directory.CreateDirectory(safetyRoot);
+        try
+        {
+            var savedFile = Path.Combine(safetyRoot, "saved.state-receipt.json");
+            File.Move(receiptPath, savedFile);
+            File.CreateSymbolicLink(receiptPath, savedFile);
+            ExpectValidation(
+                () => LibraryStateReceiptService.Load(
+                    fixture.Root,
+                    fixture.Inventory,
+                    fixture.InventoryBytes),
+                "symlinked state receipt file");
+            File.Delete(receiptPath);
+            File.Move(savedFile, receiptPath);
+
+            var unitDirectory = Path.GetDirectoryName(receiptPath)!;
+            var savedDirectory = Path.Combine(safetyRoot, "saved-unit");
+            Directory.Move(unitDirectory, savedDirectory);
+            Directory.CreateSymbolicLink(unitDirectory, savedDirectory);
+            ExpectValidation(
+                () => LibraryStateReceiptService.Load(
+                    fixture.Root,
+                    fixture.Inventory,
+                    fixture.InventoryBytes),
+                "symlinked state receipt unit directory");
+            Directory.Delete(unitDirectory);
+            Directory.Move(savedDirectory, unitDirectory);
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+        }
     }
 
     private static Dictionary<string, string> CreatePackageRevisions(Fixture fixture)
@@ -826,20 +877,19 @@ internal static class LibraryTests
         {
             var evidence = BuildEvidence(initialized.Identity, [leak]);
             var assessment = Complete(initialized, evidence);
-            _ = Render(
-                fixture.Root,
-                inputPath,
-                assessment,
-                evidence,
-                Path.Combine(fixture.Root, target.RevisionRoot),
-                packageRevisions[package.UnitId]);
             ExpectValidation(
-                () => LibraryService.Reconcile(
+                () => AssessmentService.Validate(
                     fixture.Root,
-                    fixture.Inventory,
-                    fixture.InventoryBytes),
+                    assessment,
+                    AssessmentService.Serialize(assessment),
+                    input,
+                    inputBytes,
+                    evidence,
+                    binding),
                 $"component sibling {leak.Kind} leakage");
-            Directory.Delete(Path.Combine(fixture.Root, target.RevisionRoot), recursive: true);
+            Assert(
+                !Directory.Exists(Path.Combine(fixture.Root, target.RevisionRoot)),
+                $"component sibling {leak.Kind} leakage writes no revision");
         }
     }
 
@@ -970,6 +1020,7 @@ internal static class LibraryTests
         Assert(text.Contains("alpha.controls", StringComparison.Ordinal), "index includes first package");
         Assert(text.Contains("beta.controls", StringComparison.Ordinal), "index includes second package");
         Assert(text.Contains("**overall state:** `complete`", StringComparison.Ordinal), "index factual complete state");
+        TestIndexPublicationRecovery(fixture, jsonPath, markdownPath, json, markdown);
 
         var output = new StringWriter();
         var error = new StringWriter();
@@ -986,6 +1037,118 @@ internal static class LibraryTests
                 error),
             $"inventory status: {error}");
         Assert(output.ToString().Contains("\"completed\":6", StringComparison.Ordinal), "status completed count");
+    }
+
+    private static void TestIndexPublicationRecovery(
+        Fixture fixture,
+        string jsonPath,
+        string markdownPath,
+        byte[] expectedJson,
+        byte[] expectedMarkdown)
+    {
+        var publicationRoot = Path.Combine(fixture.Root, ".readiness-index");
+        Directory.Delete(publicationRoot, recursive: true);
+        File.Delete(jsonPath);
+        File.Delete(markdownPath);
+
+        var args = new[]
+        {
+            "library", "index",
+            "--root", fixture.Root,
+            "--inventory", fixture.ConfirmedPath,
+            "--run-manifest", fixture.RunPath,
+            "--json", jsonPath,
+            "--markdown", markdownPath
+        };
+        try
+        {
+            LibraryIndexPublicationService.AfterGenerationCommitForTests =
+                () => throw new IOException("deterministic failure after generation commit");
+            AssertIndexFailure(args, "failure after generation commit");
+        }
+        finally
+        {
+            LibraryIndexPublicationService.AfterGenerationCommitForTests = null;
+        }
+
+        Assert(
+            Directory.GetDirectories(
+                Path.Combine(publicationRoot, "generations"),
+                "GEN1-*",
+                SearchOption.TopDirectoryOnly).Length == 1,
+            "generation commit survives interrupted publication");
+        Assert(
+            !File.Exists(Path.Combine(publicationRoot, "current-generation.json")),
+            "failure after generation commit does not publish a pointer");
+
+        try
+        {
+            LibraryIndexPublicationService.BeforePointerUpdateForTests =
+                () => throw new IOException("deterministic failure before pointer update");
+            AssertIndexFailure(args, "failure before pointer update");
+        }
+        finally
+        {
+            LibraryIndexPublicationService.BeforePointerUpdateForTests = null;
+        }
+
+        RunCli(fixture, args);
+        var pointerPath = Path.Combine(publicationRoot, "current-generation.json");
+        Assert(File.Exists(pointerPath), "recovery publishes current-generation pointer");
+        AssertBytes(expectedJson, File.ReadAllBytes(jsonPath), "recovery repairs JSON cache");
+        AssertBytes(expectedMarkdown, File.ReadAllBytes(markdownPath), "recovery repairs Markdown cache");
+
+        File.Delete(jsonPath);
+        File.Delete(markdownPath);
+        try
+        {
+            LibraryIndexPublicationService.AfterPointerUpdateForTests =
+                () => throw new IOException("deterministic failure after pointer update");
+            AssertIndexFailure(args, "failure after pointer update");
+        }
+        finally
+        {
+            LibraryIndexPublicationService.AfterPointerUpdateForTests = null;
+        }
+
+        Assert(File.Exists(pointerPath), "pointer remains authoritative after post-update failure");
+        Assert(!File.Exists(jsonPath) && !File.Exists(markdownPath), "failed publish exposes no successful cache pair");
+        RunCli(fixture, args);
+        AssertBytes(expectedJson, File.ReadAllBytes(jsonPath), "post-pointer recovery repairs JSON");
+        AssertBytes(expectedMarkdown, File.ReadAllBytes(markdownPath), "post-pointer recovery repairs Markdown");
+
+        File.WriteAllText(jsonPath, "stale", new UTF8Encoding(false));
+        RunCli(fixture, args);
+        AssertBytes(expectedJson, File.ReadAllBytes(jsonPath), "stale JSON compatibility cache repaired");
+        AssertBytes(expectedMarkdown, File.ReadAllBytes(markdownPath), "paired Markdown remains coherent");
+        File.WriteAllText(markdownPath, "stale", new UTF8Encoding(false));
+        RunCli(
+            fixture,
+            [
+                "library", "validate",
+                "--root", fixture.Root,
+                "--inventory", fixture.ConfirmedPath,
+                "--run-manifest", fixture.RunPath
+            ]);
+        AssertBytes(expectedJson, File.ReadAllBytes(jsonPath), "validation preserves JSON cache");
+        AssertBytes(expectedMarkdown, File.ReadAllBytes(markdownPath), "validation repairs Markdown cache");
+
+        var pointer = LibraryIndexPublicationService.Parse(File.ReadAllBytes(pointerPath));
+        var generationJson = File.ReadAllBytes(Path.Combine(fixture.Root, pointer.JsonPath));
+        var generationMarkdown = File.ReadAllBytes(Path.Combine(fixture.Root, pointer.MarkdownPath));
+        AssertEqual(ContractJson.RawDigest(generationJson), pointer.JsonDigest, "pointer JSON digest");
+        AssertEqual(ContractJson.RawDigest(generationMarkdown), pointer.MarkdownDigest, "pointer Markdown digest");
+        AssertBytes(expectedJson, generationJson, "immutable generation JSON");
+        AssertBytes(expectedMarkdown, generationMarkdown, "immutable generation Markdown");
+    }
+
+    private static void AssertIndexFailure(IReadOnlyList<string> args, string name)
+    {
+        var output = new StringWriter();
+        var error = new StringWriter();
+        Assert(
+            CliApplication.Run(args, output, error) != ExitCodes.Success,
+            $"{name} must not report success");
     }
 
     private static void TestCorruptManifestReconstruction(Fixture fixture)
@@ -1050,6 +1213,26 @@ internal static class LibraryTests
         }
 
         Reconcile(fixture);
+        try
+        {
+            var revisionRoot = Path.Combine(fixture.Root, second.RevisionRoot);
+            var revision = Path.Combine(revisionRoot, "0001");
+            var savedRevision = Path.Combine(fixture.Root, "saved-linked-revision");
+            Directory.Move(revision, savedRevision);
+            Directory.CreateSymbolicLink(revision, savedRevision);
+            ExpectValidation(
+                () => LibraryService.Reconcile(
+                    fixture.Root,
+                    fixture.Inventory,
+                    fixture.InventoryBytes),
+                "library revision enumeration rejects linked revision directories");
+            Directory.Delete(revision);
+            Directory.Move(savedRevision, revision);
+        }
+        catch (Exception exception) when (
+            exception is UnauthorizedAccessException or IOException or PlatformNotSupportedException)
+        {
+        }
     }
 
     private static void TestCliSubprocess(Fixture fixture, string pluginRoot)
@@ -1226,8 +1409,10 @@ internal static class LibraryTests
                 $"2026-09-02T2{index}:00:00Z",
                 new Sha256Digest(
                     "sha256",
-                    Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
-                        Encoding.UTF8.GetBytes($"{identity.Package.PackageId}\0{identity.ComponentId}\0{mode}")))),
+                    identity.ComponentId is null
+                        ? identity.Package.NupkgDigest.Value
+                        : Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                            Encoding.UTF8.GetBytes($"{identity.Package.PackageId}\0{identity.ComponentId}\0{mode}")))),
                 "commitment-only"),
             [])).ToList();
         if (identity.ComponentId is not null && input is not null)
@@ -1251,7 +1436,7 @@ internal static class LibraryTests
                     $"source:{input.Components.Single().AllowedSourcePaths.Single()}",
                     "Read component source.",
                     "2026-09-02T22:01:00Z",
-                    Hash($"source:{identity.ComponentId}"),
+                    input.SourceArtifacts.Single().ContentDigest,
                     "commitment-only"),
                 []));
             drafts.Add(new EvidenceRecordDraft(
@@ -1612,6 +1797,7 @@ internal static class LibraryTests
     private sealed record ComponentInputs(
         IReadOnlyList<InputDocument> Documentation,
         IReadOnlyList<InputPackageSource> PackageSources,
+        IReadOnlyList<InputSourceArtifact> SourceArtifacts,
         IReadOnlyList<OwnerInput> OwnerInputs);
 
     private sealed record Fixture(

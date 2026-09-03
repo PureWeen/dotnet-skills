@@ -29,6 +29,7 @@ public static class InputManifestService
             "retrieval_attempts",
             "documentation",
             "package_sources",
+            "source_artifacts",
             "owner_inputs",
             "components",
             "exclusions");
@@ -61,6 +62,11 @@ public static class InputManifestService
             .Select(item => CreatePackageSource(root, item))
             .OrderBy(item => item.Kind, StringComparer.Ordinal)
             .ThenBy(item => item.Locator, StringComparer.Ordinal)
+            .ToArray();
+        var sourceArtifacts = ContractJson.Array(candidate, "source_artifacts")
+            .EnumerateArray()
+            .Select(item => CreateSourceArtifact(root, item))
+            .OrderBy(item => item.SourcePath, StringComparer.Ordinal)
             .ToArray();
         var ownerInputs = ContractJson.Array(candidate, "owner_inputs")
             .EnumerateArray()
@@ -95,6 +101,7 @@ public static class InputManifestService
             RequireUnique(retrievalAttempts, AttemptKey, "retrieval attempt"),
             RequireUnique(documentation, item => item.Url, "documentation URL"),
             RequireUnique(packageSources, item => $"{item.Kind}\0{item.Locator}", "package source"),
+            RequireUnique(sourceArtifacts, item => item.SourcePath, "source artifact path"),
             RequireUnique(ownerInputs, item => item.Basename, "owner input basename"),
             RequireUnique(components, item => item.Id, "component ID"),
             exclusions);
@@ -175,6 +182,27 @@ public static class InputManifestService
             }
 
             ValidateLocalDigest(root, source.ContentPath, source.ContentDigest, "package source content");
+        }
+
+        ValidateUniqueAndSorted(manifest.SourceArtifacts, item => item.SourcePath, "source artifacts");
+        foreach (var artifact in manifest.SourceArtifacts)
+        {
+            var canonical = new InputSourceArtifact(
+                Canonicalization.RelativePath(artifact.SourcePath, "source artifact source_path"),
+                Canonicalization.RelativePath(artifact.ContentPath, "source artifact content_path"),
+                artifact.ContentDigest);
+            if (canonical != artifact)
+            {
+                throw new DeterministicValidationException("Source artifact is not canonical.");
+            }
+
+            ValidateLocalDigest(root, artifact.ContentPath, artifact.ContentDigest, "source artifact content");
+        }
+
+        if (manifest.Source.Availability != "source-available" && manifest.SourceArtifacts.Count != 0)
+        {
+            throw new DeterministicValidationException(
+                "Only source-available inputs may confirm captured source artifacts.");
         }
 
         ValidateUniqueAndSorted(manifest.OwnerInputs, item => item.Basename, "owner inputs");
@@ -314,6 +342,18 @@ public static class InputManifestService
             }
 
             writer.WriteEndArray();
+            writer.WritePropertyName("source_artifacts");
+            writer.WriteStartArray();
+            foreach (var artifact in manifest.SourceArtifacts)
+            {
+                writer.WriteStartObject();
+                writer.WriteString("source_path", artifact.SourcePath);
+                writer.WriteString("content_path", artifact.ContentPath);
+                ContractJson.WriteDigest(writer, "content_sha256", artifact.ContentDigest);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
             writer.WritePropertyName("owner_inputs");
             writer.WriteStartArray();
             foreach (var owner in manifest.OwnerInputs)
@@ -385,6 +425,7 @@ public static class InputManifestService
             "retrieval_attempts",
             "documentation",
             "package_sources",
+            "source_artifacts",
             "owner_inputs",
             "components",
             "exclusions");
@@ -397,6 +438,7 @@ public static class InputManifestService
             ContractJson.Array(root, "retrieval_attempts").EnumerateArray().Select(ParseRetrievalAttempt).ToArray(),
             ContractJson.Array(root, "documentation").EnumerateArray().Select(ParseDocument).ToArray(),
             ContractJson.Array(root, "package_sources").EnumerateArray().Select(ParsePackageSource).ToArray(),
+            ContractJson.Array(root, "source_artifacts").EnumerateArray().Select(ParseSourceArtifact).ToArray(),
             ContractJson.Array(root, "owner_inputs").EnumerateArray().Select(ParseOwnerInput).ToArray(),
             ContractJson.Array(root, "components").EnumerateArray().Select(ParseComponent).ToArray(),
             ContractJson.Array(root, "exclusions").EnumerateArray().Select(ParseExclusion).ToArray());
@@ -418,6 +460,7 @@ public static class InputManifestService
             "retrieval_attempts",
             "documentation",
             "package_sources",
+            "source_artifacts",
             "owner_inputs",
             "components",
             "exclusions");
@@ -475,6 +518,11 @@ public static class InputManifestService
             .OrderBy(item => item.Kind, StringComparer.Ordinal)
             .ThenBy(item => item.Locator, StringComparer.Ordinal)
             .ToArray();
+        var sourceArtifacts = ContractJson.Array(value, "source_artifacts")
+            .EnumerateArray()
+            .Select(item => CreateDraftSourceArtifact(root, item))
+            .OrderBy(item => item.SourcePath, StringComparer.Ordinal)
+            .ToArray();
         var ownerInputs = ContractJson.Array(value, "owner_inputs")
             .EnumerateArray()
             .Select(item => CreateDraftOwnerInput(root, item))
@@ -500,6 +548,7 @@ public static class InputManifestService
             RequireUnique(attempts, AttemptKey, "retrieval attempt"),
             RequireUnique(documentation, item => item.Url, "documentation URL"),
             RequireUnique(packageSources, item => $"{item.Kind}\0{item.Locator}", "package source"),
+            RequireUnique(sourceArtifacts, item => item.SourcePath, "source artifact path"),
             RequireUnique(ownerInputs, item => item.Basename, "owner input basename"),
             RequireUnique(components, item => item.Id, "component ID"),
             exclusions);
@@ -619,6 +668,13 @@ public static class InputManifestService
             throw new DeterministicValidationException(
                 "Retrieval attempts must record successful acquisition of the exact package origin.");
         }
+
+        if (manifest.Source.Availability == "closed-source" &&
+            manifest.RetrievalAttempts.Any(attempt => attempt.Subject == "source"))
+        {
+            throw new DeterministicValidationException(
+                "Closed-source is an explicit owner boundary and cannot be inferred from source retrieval attempts.");
+        }
     }
 
     private static void ValidateSource(InputSource source)
@@ -717,6 +773,21 @@ public static class InputManifestService
                 ResourceLimits.SupplementalInputAggregateBytes,
                 "owner input")),
             new FileInfo(path).Length);
+    }
+
+    private static InputSourceArtifact CreateSourceArtifact(string root, JsonElement element)
+    {
+        ContractJson.RequireProperties(element, "source_path", "content_path");
+        var sourcePath = Canonicalization.RelativePath(
+            EditableText(ContractJson.String(element, "source_path")),
+            "source artifact source_path");
+        var contentPath = Canonicalization.RelativePath(
+            EditableText(ContractJson.String(element, "content_path")),
+            "source artifact content_path");
+        return new InputSourceArtifact(
+            sourcePath,
+            contentPath,
+            LocalDigest(root, contentPath, "source artifact content"));
     }
 
     private static InputComponent ParseCandidateComponent(JsonElement element)
@@ -835,6 +906,15 @@ public static class InputManifestService
             ContractJson.String(element, "provenance"),
             ContractJson.Digest(ContractJson.Object(element, "content_sha256")),
             ContractJson.Int64(element, "size"));
+    }
+
+    private static InputSourceArtifact ParseSourceArtifact(JsonElement element)
+    {
+        ContractJson.RequireProperties(element, "source_path", "content_path", "content_sha256");
+        return new InputSourceArtifact(
+            ContractJson.String(element, "source_path"),
+            ContractJson.String(element, "content_path"),
+            ContractJson.Digest(ContractJson.Object(element, "content_sha256")));
     }
 
     private static InputComponent ParseComponent(JsonElement element)
@@ -959,6 +1039,33 @@ public static class InputManifestService
             provenance,
             ContractJson.RawDigest(content),
             content.LongLength);
+    }
+
+    private static InputSourceArtifact CreateDraftSourceArtifact(string root, JsonElement element)
+    {
+        ContractJson.RequirePropertiesUnordered(
+            element,
+            "source_path",
+            "content_path",
+            "content_sha256");
+        _ = ContractJson.Digest(ContractJson.Object(element, "content_sha256"));
+        return CreateSourceArtifactFromConfirmedShape(root, element);
+    }
+
+    private static InputSourceArtifact CreateSourceArtifactFromConfirmedShape(
+        string root,
+        JsonElement element)
+    {
+        var sourcePath = Canonicalization.RelativePath(
+            EditableText(ContractJson.String(element, "source_path")),
+            "source artifact source_path");
+        var contentPath = Canonicalization.RelativePath(
+            EditableText(ContractJson.String(element, "content_path")),
+            "source artifact content_path");
+        return new InputSourceArtifact(
+            sourcePath,
+            contentPath,
+            LocalDigest(root, contentPath, "source artifact content"));
     }
 
     private static InputComponent ParseDraftComponent(JsonElement element)
