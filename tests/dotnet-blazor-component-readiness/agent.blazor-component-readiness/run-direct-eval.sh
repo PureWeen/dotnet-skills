@@ -9,6 +9,11 @@ results="${RESULTS_DIR:-$scratch/results}"
 model="${MODEL:-gpt-5-mini}"
 judge_model="${JUDGE_MODEL:-$model}"
 
+# Agent tool permissions compare physical paths, so normalize macOS's
+# /var -> /private/var temporary-directory alias before workdirs are created.
+physical_tmp="$(cd "${TMPDIR:-/tmp}" && pwd -P)"
+export TMPDIR="$physical_tmp/"
+
 rm -rf "$scratch"
 mkdir -p "$tests" "$results" "$scratch/dotnet-home"
 
