@@ -26,7 +26,7 @@
 # Environment:
 #   WORKERS=8         Max concurrent trials across the whole experiment (default: 8)
 #   EXPERIMENT_FILE   Base experiment file (default: dotnet-skills.experiment.yaml)
-#   VALLY             Eval CLI invocation (default: npx @microsoft/vally-cli)
+#   VALLY             Eval CLI invocation (default: npx @microsoft/vally-cli@0.14.0)
 #   RESULTS_DIR       Output root (default: ./eval-results)
 #
 # Model and judge model come from the experiment file's `overrides:` block —
@@ -48,7 +48,7 @@ set -euo pipefail
 
 SKILLS_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ADAPTER_DIR="$SKILLS_ROOT/eng/vally-adapter"
-VALLY="${VALLY:-npx @microsoft/vally-cli}"
+VALLY="${VALLY:-npx --yes @microsoft/vally-cli@0.14.0}"
 EXPERIMENT_FILE="${EXPERIMENT_FILE:-$SKILLS_ROOT/dotnet-skills.experiment.yaml}"
 RESULTS_ROOT="${RESULTS_DIR:-$SKILLS_ROOT/eval-results}"
 WORKERS="${WORKERS:-8}"
