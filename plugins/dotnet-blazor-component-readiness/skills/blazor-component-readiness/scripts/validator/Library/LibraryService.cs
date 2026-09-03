@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using BlazorComponentReadiness.Validator.Assessment;
 using BlazorComponentReadiness.Validator.Contracts;
+using BlazorComponentReadiness.Validator.Evidence;
 using BlazorComponentReadiness.Validator.Inventory;
 using BlazorComponentReadiness.Validator.IO;
 using BlazorComponentReadiness.Validator.Rendering;
@@ -19,9 +20,11 @@ public static class LibraryService
         string root,
         LibraryInventory inventory,
         ReadOnlySpan<byte> inventoryBytes,
-        LibraryRunManifest? previous = null)
+        LibraryRunManifest? previous = null,
+        IReadOnlyDictionary<string, LibraryStateReceiptSnapshot>? stateReceipts = null)
     {
         InventoryService.Validate(inventory, root, requireConfirmed: true);
+        stateReceipts ??= LibraryStateReceiptService.Load(root, inventory, inventoryBytes);
         if (previous is not null)
         {
             ValidateShape(previous, inventory, inventoryBytes);
@@ -44,7 +47,8 @@ public static class LibraryService
                 packageBindings,
                 manifestOwners,
                 identityOwners);
-            units.Add(CreateUnit(package, scan, previousUnit));
+            stateReceipts.TryGetValue(package.UnitId, out var stateReceipt);
+            units.Add(CreateUnit(package, scan, previousUnit, stateReceipt));
         }
 
         foreach (var package in inventory.Packages)
@@ -59,13 +63,16 @@ public static class LibraryService
                     packageBindings,
                     manifestOwners,
                     identityOwners);
-                units.Add(CreateUnit(component, scan, previousUnit));
+                stateReceipts.TryGetValue(component.UnitId, out var stateReceipt);
+                units.Add(CreateUnit(component, scan, previousUnit, stateReceipt));
             }
         }
 
         units.Sort((left, right) => StringComparer.Ordinal.Compare(left.UnitId, right.UnitId));
         var interrupted =
             previous?.Interrupted == true && units.Any(unit => unit.State != "completed") ||
+            stateReceipts.Values.Any(receipt => receipt.InterruptedTransition) &&
+            units.Any(unit => unit.State != "completed") ||
             units.Any(unit =>
                 previousUnits.TryGetValue(unit.UnitId, out var before) &&
                 before.State == "active" &&
@@ -209,6 +216,19 @@ public static class LibraryService
                     writer,
                     "package_validation_manifest_sha256",
                     unit.PackageValidationManifestDigest);
+                WriteNullable(writer, "state_receipt_path", unit.StateReceiptPath);
+                WriteNullableDigest(writer, "state_receipt_sha256", unit.StateReceiptDigest);
+                if (unit.StateReceiptSequence is null)
+                {
+                    writer.WriteNull("state_receipt_sequence");
+                }
+                else
+                {
+                    writer.WriteNumber("state_receipt_sequence", unit.StateReceiptSequence.Value);
+                }
+
+                WriteNullable(writer, "transitioned_at_utc", unit.TransitionedAtUtc);
+                WriteNullable(writer, "transition_reason", unit.TransitionReason);
                 writer.WritePropertyName("status_counts");
                 writer.WriteStartArray();
                 foreach (var count in unit.StatusCounts)
@@ -298,6 +318,9 @@ public static class LibraryService
         var status = GetStatus(manifest);
         var inventoryDigest = InventoryService.Digest(inventoryBytes);
         var manifestDigest = ContractJson.RawDigest(manifestBytes);
+        var generationId = "GEN1-" + DomainSeparatedHash.Compute(
+            "library.index-generation",
+            Encoding.UTF8.GetBytes($"{inventoryDigest.Value}\0{manifestDigest.Value}"));
         var assessmentCounts = RubricLoader.Load().Statuses
             .Concat(["incomplete"])
             .Select(value => new LibraryStatusCount(
@@ -311,6 +334,7 @@ public static class LibraryService
             writer.WriteStartObject();
             writer.WriteNumber("schema_version", 1);
             writer.WriteString("run_id", manifest.RunId);
+            writer.WriteString("generation_id", generationId);
             ContractJson.WriteDigest(writer, "inventory_sha256", inventoryDigest);
             ContractJson.WriteDigest(writer, "run_manifest_sha256", manifestDigest);
             writer.WriteString("state", manifest.State);
@@ -375,6 +399,7 @@ public static class LibraryService
             "# Blazor component readiness library index",
             "",
             $"**Run:** `{manifest.RunId}`",
+            $"**Generation:** `{generationId}`",
             $"**Inventory SHA-256:** `{inventoryDigest.Value}`",
             $"**Run manifest SHA-256:** `{manifestDigest.Value}`",
             $"**Overall state:** `{manifest.State}`",
@@ -395,6 +420,7 @@ public static class LibraryService
             var packageUnit = manifest.Units.Single(unit => unit.UnitId == package.UnitId);
             lines.Add($"## `{package.Package.PackageId}` `{package.Package.Version}`");
             lines.Add("");
+            lines.Add($" - Unit: `{package.UnitId}`");
             lines.Add($" - State: `{packageUnit.State}`");
             lines.Add($" - Report: {Link(packageUnit.ReportPath)}");
             AddCounts(lines, packageUnit.StatusCounts);
@@ -498,7 +524,7 @@ public static class LibraryService
                 packageBinding.Binding,
                 validateChain: true,
                 allowMissingFeedback: true);
-            ValidateArtifacts(package, component, artifacts);
+            ValidateArtifacts(root, package, component, artifacts);
             RegisterIdentity(component.UnitId, artifacts, manifestOwners, identityOwners);
             latest = FromArtifacts(root, artifacts, manifest.PackageReference.ValidationDigest);
         }
@@ -521,6 +547,7 @@ public static class LibraryService
     }
 
     private static void ValidateArtifacts(
+        string root,
         InventoryPackage package,
         InventoryComponent component,
         RevisionArtifacts artifacts)
@@ -536,6 +563,62 @@ public static class LibraryService
         {
             throw new DeterministicValidationException(
                 $"Component revision under '{component.RevisionRoot}' has cross-package/component identity, sibling leakage, or skipped render modes.");
+        }
+
+        ValidateComponentEvidenceIsolation(root, component, artifacts);
+    }
+
+    private static void ValidateComponentEvidenceIsolation(
+        string root,
+        InventoryComponent component,
+        RevisionArtifacts artifacts)
+    {
+        var documents = artifacts.Input.Documentation
+            .ToDictionary(document => document.Url, document => document.ContentDigest, StringComparer.Ordinal);
+        var packageLocators = artifacts.Input.PackageSources
+            .ToDictionary(source => source.Locator, source => source.ContentDigest, StringComparer.Ordinal);
+        var ownerInputs = artifacts.Input.OwnerInputs
+            .ToDictionary(owner => owner.Basename, owner => owner.ContentDigest, StringComparer.Ordinal);
+        var sourcePaths = component.AllowedSourcePaths.ToHashSet(StringComparer.Ordinal);
+        var packagePath = SafePath.ResolveUnderRoot(
+            root,
+            artifacts.Input.Package.NupkgPath,
+            requireExisting: true,
+            requireFile: true);
+        var ledgers = artifacts.Evidence.SourceLedgers
+            .ToDictionary(ledger => ledger.SourceLedgerSha256, ledger => ledger.Ledger, StringComparer.Ordinal);
+        foreach (var selection in artifacts.Evidence.Selection)
+        {
+            var record = ledgers[selection.SourceLedgerSha256].Records
+                .Single(item => item.StableId == selection.EvidenceId);
+            var provenance = record.Provenance;
+            var allowed = provenance.Kind switch
+            {
+                EvidenceIdentity.VendorPublicDocumentation =>
+                    documents.TryGetValue(provenance.Locator, out var documentDigest) &&
+                    documentDigest == provenance.ContentDigest,
+                EvidenceIdentity.VendorSourceRepository =>
+                    provenance.Locator.StartsWith("source:", StringComparison.Ordinal) &&
+                    sourcePaths.Contains(provenance.Locator["source:".Length..]),
+                EvidenceIdentity.OwnerSuppliedInternalEvidence =>
+                    ownerInputs.TryGetValue(provenance.Locator, out var ownerDigest) &&
+                    ownerDigest == provenance.ContentDigest,
+                EvidenceIdentity.PackageArtifactMetadata =>
+                    provenance.Locator.StartsWith(
+                        NupkgInspector.PackageEntryEvidencePrefix,
+                        StringComparison.Ordinal) &&
+                    packageLocators.TryGetValue(provenance.Locator, out var packageDigest) &&
+                    packageDigest == provenance.ContentDigest &&
+                    NupkgInspector.ComputeEvidenceContentSha256(
+                        packagePath,
+                        provenance.Locator) == provenance.ContentDigest.Value,
+                _ => true
+            };
+            if (!allowed)
+            {
+                throw new DeterministicValidationException(
+                    $"Component unit '{component.UnitId}' selected evidence outside its confirmed documentation, package entries, owner inputs, or allowed source paths.");
+            }
         }
     }
 
@@ -593,9 +676,11 @@ public static class LibraryService
     private static LibraryUnit CreateUnit(
         InventoryPackage package,
         UnitScan scan,
-        LibraryUnit? previous)
+        LibraryUnit? previous,
+        LibraryStateReceiptSnapshot? stateReceipt)
     {
-        var state = State(scan, previous);
+        var state = State(scan, previous, stateReceipt);
+        var receipt = state == "completed" ? null : stateReceipt;
         return new LibraryUnit(
             package.UnitId,
             "package",
@@ -611,17 +696,28 @@ public static class LibraryService
             scan.ValidationManifestPath,
             scan.ValidationManifestDigest,
             null,
+            receipt?.Path,
+            receipt?.Digest,
+            receipt?.Receipt.Sequence,
+            receipt?.Receipt.TransitionedAtUtc,
+            receipt?.Receipt.TransitionReason,
             scan.StatusCounts,
-            state == "completed" ? [] : CanonicalMessages(previous?.MissingInputs),
-            state == "blocked" ? CanonicalMessages(previous?.BlockedProbes) : []);
+            state == "completed"
+                ? []
+                : CanonicalMessages(receipt?.Receipt.MissingInputs ?? previous?.MissingInputs),
+            state == "blocked"
+                ? CanonicalMessages(receipt?.Receipt.BlockedProbes ?? previous?.BlockedProbes)
+                : []);
     }
 
     private static LibraryUnit CreateUnit(
         InventoryComponent component,
         UnitScan scan,
-        LibraryUnit? previous)
+        LibraryUnit? previous,
+        LibraryStateReceiptSnapshot? stateReceipt)
     {
-        var state = State(scan, previous);
+        var state = State(scan, previous, stateReceipt);
+        var receipt = state == "completed" ? null : stateReceipt;
         return new LibraryUnit(
             component.UnitId,
             "component",
@@ -637,12 +733,24 @@ public static class LibraryService
             scan.ValidationManifestPath,
             scan.ValidationManifestDigest,
             scan.PackageValidationManifestDigest,
+            receipt?.Path,
+            receipt?.Digest,
+            receipt?.Receipt.Sequence,
+            receipt?.Receipt.TransitionedAtUtc,
+            receipt?.Receipt.TransitionReason,
             scan.StatusCounts,
-            state == "completed" ? [] : CanonicalMessages(previous?.MissingInputs),
-            state == "blocked" ? CanonicalMessages(previous?.BlockedProbes) : []);
+            state == "completed"
+                ? []
+                : CanonicalMessages(receipt?.Receipt.MissingInputs ?? previous?.MissingInputs),
+            state == "blocked"
+                ? CanonicalMessages(receipt?.Receipt.BlockedProbes ?? previous?.BlockedProbes)
+                : []);
     }
 
-    private static string State(UnitScan scan, LibraryUnit? previous)
+    private static string State(
+        UnitScan scan,
+        LibraryUnit? previous,
+        LibraryStateReceiptSnapshot? stateReceipt)
     {
         if (scan.State == "completed")
         {
@@ -652,6 +760,11 @@ public static class LibraryService
         if (scan.State == "incomplete")
         {
             return "incomplete";
+        }
+
+        if (stateReceipt is not null)
+        {
+            return stateReceipt.Receipt.State;
         }
 
         return previous?.State switch
@@ -732,6 +845,11 @@ public static class LibraryService
                 unit.ValidationManifestDigest is null ||
                 unit.Kind == "component" && unit.PackageValidationManifestDigest is null ||
                 unit.Kind == "package" && unit.PackageValidationManifestDigest is not null ||
+                unit.StateReceiptPath is not null ||
+                unit.StateReceiptDigest is not null ||
+                unit.StateReceiptSequence is not null ||
+                unit.TransitionedAtUtc is not null ||
+                unit.TransitionReason is not null ||
                 unit.MissingInputs.Count != 0 ||
                 unit.BlockedProbes.Count != 0)
             {
@@ -753,6 +871,28 @@ public static class LibraryService
             throw new DeterministicValidationException(
                 $"Noncompleted unit '{unit.UnitId}' cannot claim validated completed outputs.");
         }
+
+        if (unit.StateReceiptPath is null != (unit.StateReceiptDigest is null) ||
+            unit.StateReceiptPath is null != (unit.StateReceiptSequence is null) ||
+            unit.StateReceiptPath is null != (unit.TransitionedAtUtc is null) ||
+            unit.StateReceiptPath is null != (unit.TransitionReason is null) ||
+            (unit.State is "active" or "blocked") && unit.StateReceiptPath is null)
+        {
+            throw new DeterministicValidationException(
+                $"Run manifest unit '{unit.UnitId}' has an incomplete or missing state receipt binding.");
+        }
+
+        if (unit.StateReceiptPath is not null)
+        {
+            _ = Canonicalization.RelativePath(unit.StateReceiptPath, "state receipt path");
+            if (unit.StateReceiptSequence <= 0)
+            {
+                throw new DeterministicValidationException(
+                    $"Run manifest unit '{unit.UnitId}' state receipt sequence is invalid.");
+            }
+
+            _ = ContractJson.NormalizeText(unit.TransitionReason!, "state transition reason", 2048);
+        }
     }
 
     private static LibraryUnit ParseUnit(JsonElement value)
@@ -773,6 +913,11 @@ public static class LibraryService
             "validation_manifest_path",
             "validation_manifest_sha256",
             "package_validation_manifest_sha256",
+            "state_receipt_path",
+            "state_receipt_sha256",
+            "state_receipt_sequence",
+            "transitioned_at_utc",
+            "transition_reason",
             "status_counts",
             "missing_inputs",
             "blocked_probes");
@@ -791,6 +936,11 @@ public static class LibraryService
             ContractJson.NullableString(value, "validation_manifest_path"),
             ParseNullableDigest(value, "validation_manifest_sha256"),
             ParseNullableDigest(value, "package_validation_manifest_sha256"),
+            ContractJson.NullableString(value, "state_receipt_path"),
+            ParseNullableDigest(value, "state_receipt_sha256"),
+            NullableInt32(value, "state_receipt_sequence"),
+            ContractJson.NullableString(value, "transitioned_at_utc"),
+            ContractJson.NullableString(value, "transition_reason"),
             ContractJson.Array(value, "status_counts").EnumerateArray().Select(ParseStatusCount).ToArray(),
             ContractJson.StringArray(value, "missing_inputs"),
             ContractJson.StringArray(value, "blocked_probes"));
@@ -808,6 +958,14 @@ public static class LibraryService
     {
         var digest = ContractJson.NullableObject(value, name);
         return digest is null ? null : ContractJson.Digest(digest.Value);
+    }
+
+    private static int? NullableInt32(JsonElement value, string name)
+    {
+        var property = value.GetProperty(name);
+        return property.ValueKind == JsonValueKind.Null
+            ? null
+            : ContractJson.Int32(value, name);
     }
 
     private static string Relative(string root, string path)

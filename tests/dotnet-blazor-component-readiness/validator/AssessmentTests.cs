@@ -115,7 +115,12 @@ internal static class AssessmentTests
                 {"path": "owner-audit.txt", "provenance": "owner-supplied-internal-evidence"}
               ],
               "components": [
-                {"id": " Fancy Tree ", "display_name": "Fancy Tree", "render_modes": ["Server", "STATIC SSR", "WASM"]}
+                {
+                  "id": " Fancy Tree ",
+                  "display_name": "Fancy Tree",
+                  "render_modes": ["Server", "STATIC SSR", "WASM"],
+                  "allowed_source_paths": ["src/FancyTree.razor", "src/FancyTree.razor.cs"]
+                }
               ],
               "exclusions": [
                 {"subject": "Mobile browser matrix", "rationale": "Explicitly outside this bounded assessment."}

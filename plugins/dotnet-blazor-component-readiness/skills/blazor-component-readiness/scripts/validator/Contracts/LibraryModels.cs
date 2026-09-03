@@ -13,6 +13,7 @@ public sealed record InventoryComponent(
     Sha256Digest InputManifestDigest,
     string RevisionRoot,
     IReadOnlyList<string> RenderModes,
+    IReadOnlyList<string> AllowedSourcePaths,
     IReadOnlyList<InventoryExclusion> Exclusions);
 
 public sealed record InventoryPackage(
@@ -51,6 +52,11 @@ public sealed record LibraryUnit(
     string? ValidationManifestPath,
     Sha256Digest? ValidationManifestDigest,
     Sha256Digest? PackageValidationManifestDigest,
+    string? StateReceiptPath,
+    Sha256Digest? StateReceiptDigest,
+    int? StateReceiptSequence,
+    string? TransitionedAtUtc,
+    string? TransitionReason,
     IReadOnlyList<LibraryStatusCount> StatusCounts,
     IReadOnlyList<string> MissingInputs,
     IReadOnlyList<string> BlockedProbes);
@@ -62,6 +68,29 @@ public sealed record LibraryRunManifest(
     string State,
     bool Interrupted,
     IReadOnlyList<LibraryUnit> Units);
+
+public sealed record LibraryStateUpdate(
+    int SchemaVersion,
+    string UnitId,
+    string State,
+    IReadOnlyList<string> MissingInputs,
+    IReadOnlyList<string> BlockedProbes,
+    string TransitionedAtUtc,
+    string TransitionReason);
+
+public sealed record LibraryStateReceipt(
+    int SchemaVersion,
+    string RunId,
+    Sha256Digest InventoryDigest,
+    string UnitId,
+    int Sequence,
+    Sha256Digest? PriorReceiptDigest,
+    int? PriorReceiptSequence,
+    string State,
+    IReadOnlyList<string> MissingInputs,
+    IReadOnlyList<string> BlockedProbes,
+    string TransitionedAtUtc,
+    string TransitionReason);
 
 public sealed record LibraryStatus(
     string State,

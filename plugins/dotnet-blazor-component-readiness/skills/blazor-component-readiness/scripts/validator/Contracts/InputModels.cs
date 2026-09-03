@@ -35,7 +35,8 @@ public sealed record OwnerInput(
 public sealed record InputComponent(
     string Id,
     string DisplayName,
-    IReadOnlyList<string> RenderModes);
+    IReadOnlyList<string> RenderModes,
+    IReadOnlyList<string> AllowedSourcePaths);
 
 public sealed record InputExclusion(
     string Subject,

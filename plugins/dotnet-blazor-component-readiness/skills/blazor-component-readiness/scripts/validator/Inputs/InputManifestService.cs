@@ -221,6 +221,17 @@ public static class InputManifestService
             {
                 throw new DeterministicValidationException("Component render modes are not canonical, unique, and sorted.");
             }
+
+            var allowedSourcePaths = component.AllowedSourcePaths
+                .Select(path => Canonicalization.RelativePath(path, "component allowed source path"))
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray();
+            if (!allowedSourcePaths.SequenceEqual(component.AllowedSourcePaths, StringComparer.Ordinal))
+            {
+                throw new DeterministicValidationException(
+                    "Component allowed source paths are not canonical, unique, and sorted.");
+            }
         }
 
         var exclusions = manifest.Exclusions
@@ -328,6 +339,14 @@ public static class InputManifestService
                 foreach (var mode in component.RenderModes)
                 {
                     writer.WriteStringValue(mode);
+                }
+
+                writer.WriteEndArray();
+                writer.WritePropertyName("allowed_source_paths");
+                writer.WriteStartArray();
+                foreach (var path in component.AllowedSourcePaths)
+                {
+                    writer.WriteStringValue(path);
                 }
 
                 writer.WriteEndArray();
@@ -702,7 +721,12 @@ public static class InputManifestService
 
     private static InputComponent ParseCandidateComponent(JsonElement element)
     {
-        ContractJson.RequireProperties(element, "id", "display_name", "render_modes");
+        ContractJson.RequireProperties(
+            element,
+            "id",
+            "display_name",
+            "render_modes",
+            "allowed_source_paths");
         var modes = ContractJson.StringArray(element, "render_modes")
             .Select(value => Canonicalization.RenderMode(EditableText(value)))
             .Distinct(StringComparer.Ordinal)
@@ -719,7 +743,8 @@ public static class InputManifestService
                 EditableText(ContractJson.String(element, "display_name")),
                 "component display name",
                 256),
-            modes);
+            modes,
+            ParseAllowedSourcePaths(element));
     }
 
     private static InputExclusion ParseExclusion(JsonElement element)
@@ -814,11 +839,17 @@ public static class InputManifestService
 
     private static InputComponent ParseComponent(JsonElement element)
     {
-        ContractJson.RequireProperties(element, "id", "display_name", "render_modes");
+        ContractJson.RequireProperties(
+            element,
+            "id",
+            "display_name",
+            "render_modes",
+            "allowed_source_paths");
         return new InputComponent(
             ContractJson.String(element, "id"),
             ContractJson.String(element, "display_name"),
-            ContractJson.StringArray(element, "render_modes"));
+            ContractJson.StringArray(element, "render_modes"),
+            ContractJson.StringArray(element, "allowed_source_paths"));
     }
 
     private static InputSource ParseDraftSource(JsonElement element)
@@ -932,7 +963,12 @@ public static class InputManifestService
 
     private static InputComponent ParseDraftComponent(JsonElement element)
     {
-        ContractJson.RequirePropertiesUnordered(element, "id", "display_name", "render_modes");
+        ContractJson.RequirePropertiesUnordered(
+            element,
+            "id",
+            "display_name",
+            "render_modes",
+            "allowed_source_paths");
         var modes = ContractJson.StringArray(element, "render_modes")
             .Select(value => Canonicalization.RenderMode(EditableText(value)))
             .Distinct(StringComparer.Ordinal)
@@ -949,8 +985,18 @@ public static class InputManifestService
                 EditableText(ContractJson.String(element, "display_name")),
                 "component display name",
                 256),
-            modes);
+            modes,
+            ParseAllowedSourcePaths(element));
     }
+
+    private static IReadOnlyList<string> ParseAllowedSourcePaths(JsonElement element) =>
+        ContractJson.StringArray(element, "allowed_source_paths")
+            .Select(value => Canonicalization.RelativePath(
+                EditableText(value),
+                "component allowed source path"))
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
 
     private static InputExclusion ParseDraftExclusion(JsonElement element)
     {

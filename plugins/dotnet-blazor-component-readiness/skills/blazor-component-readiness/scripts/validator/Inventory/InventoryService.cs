@@ -93,7 +93,7 @@ public static class InventoryService
             var packageInput = LoadInput(root, package.InputManifestPath);
             var expectedPackage = PackageIdentity(packageInput);
             var expectedUnit = PackageUnitId(expectedPackage);
-            var expectedRevisionRoot = PackageRevisionRoot(expectedPackage);
+            var expectedRevisionRoot = PackageRevisionRoot(expectedPackage, packageInput.Acquisition);
             if (package.UnitId != expectedUnit ||
                 package.Package != expectedPackage ||
                 package.Acquisition != packageInput.Acquisition ||
@@ -129,7 +129,10 @@ public static class InventoryService
                 InputManifestService.Validate(componentInput, root, requireConfirmed: true);
                 var inputComponent = componentInput.Components.SingleOrDefault();
                 var expectedComponentId = ComponentUnitId(package.UnitId, component.ComponentId);
-                var expectedComponentRoot = ComponentRevisionRoot(expectedPackage, component.ComponentId);
+                var expectedComponentRoot = ComponentRevisionRoot(
+                    expectedPackage,
+                    packageInput.Acquisition,
+                    component.ComponentId);
                 if (component.PackageUnitId != package.UnitId ||
                     component.UnitId != expectedComponentId ||
                     component.ComponentId != Canonicalization.ComponentId(component.ComponentId) ||
@@ -139,7 +142,10 @@ public static class InventoryService
                     inputComponent is null ||
                     inputComponent.Id != component.ComponentId ||
                     inputComponent.DisplayName != component.DisplayName ||
-                    !inputComponent.RenderModes.SequenceEqual(component.RenderModes, StringComparer.Ordinal))
+                    !inputComponent.RenderModes.SequenceEqual(component.RenderModes, StringComparer.Ordinal) ||
+                    !inputComponent.AllowedSourcePaths.SequenceEqual(
+                        component.AllowedSourcePaths,
+                        StringComparer.Ordinal))
                 {
                     throw new DeterministicValidationException(
                         $"Component inventory unit '{component.UnitId}' has a missing component, skipped render mode, duplicate/cross-package identity, or incorrect input/revision binding.");
@@ -164,11 +170,17 @@ public static class InventoryService
             }
 
             var packageComponents = packageInput.Components
-                .Select(item => (item.Id, Modes: string.Join('\0', item.RenderModes)))
+                .Select(item => (
+                    item.Id,
+                    Modes: string.Join('\0', item.RenderModes),
+                    Sources: string.Join('\0', item.AllowedSourcePaths)))
                 .OrderBy(item => item.Id, StringComparer.Ordinal)
                 .ToArray();
             var inventoryComponents = package.Components
-                .Select(item => (Id: item.ComponentId, Modes: string.Join('\0', item.RenderModes)))
+                .Select(item => (
+                    Id: item.ComponentId,
+                    Modes: string.Join('\0', item.RenderModes),
+                    Sources: string.Join('\0', item.AllowedSourcePaths)))
                 .OrderBy(item => item.Id, StringComparer.Ordinal)
                 .ToArray();
             if (!packageComponents.SequenceEqual(inventoryComponents))
@@ -213,6 +225,8 @@ public static class InventoryService
                     writer.WriteString("revision_root", component.RevisionRoot);
                     writer.WritePropertyName("render_modes");
                     WriteStrings(writer, component.RenderModes);
+                    writer.WritePropertyName("allowed_source_paths");
+                    WriteStrings(writer, component.AllowedSourcePaths);
                     writer.WritePropertyName("exclusions");
                     WriteExclusions(writer, component.Exclusions);
                     writer.WriteEndObject();
@@ -296,7 +310,8 @@ public static class InventoryService
                     UnitId = ComponentUnitId(packageUnitId, component.ComponentId),
                     DisplayName = inputComponent.DisplayName,
                     PackageUnitId = packageUnitId,
-                    InputManifestDigest = InputManifestService.Digest(componentBytes)
+                    InputManifestDigest = InputManifestService.Digest(componentBytes),
+                    AllowedSourcePaths = inputComponent.AllowedSourcePaths
                 };
             }).OrderBy(item => item.UnitId, StringComparer.Ordinal).ToArray();
             return package with
@@ -395,6 +410,7 @@ public static class InventoryService
             InputManifestService.Digest(inputBytes),
             Canonicalization.RelativePath(ContractJson.String(value, "revision_root"), "component revision_root"),
             modes,
+            inputComponent.AllowedSourcePaths,
             ParseCandidateExclusions(value));
     }
 
@@ -474,6 +490,7 @@ public static class InventoryService
             "input_manifest_sha256",
             "revision_root",
             "render_modes",
+            "allowed_source_paths",
             "exclusions");
         return new InventoryComponent(
             ContractJson.String(value, "unit_id"),
@@ -484,6 +501,7 @@ public static class InventoryService
             ContractJson.Digest(ContractJson.Object(value, "input_manifest_sha256")),
             ContractJson.String(value, "revision_root"),
             ContractJson.StringArray(value, "render_modes"),
+            ContractJson.StringArray(value, "allowed_source_paths"),
             ParseExclusions(ContractJson.Array(value, "exclusions")));
     }
 
@@ -499,6 +517,7 @@ public static class InventoryService
             "input_manifest_sha256",
             "revision_root",
             "render_modes",
+            "allowed_source_paths",
             "exclusions");
         var componentId = Canonicalization.ComponentId(ContractJson.String(value, "component_id"));
         return new InventoryComponent(
@@ -511,6 +530,11 @@ public static class InventoryService
             Canonicalization.RelativePath(ContractJson.String(value, "revision_root"), "component revision_root"),
             ContractJson.StringArray(value, "render_modes")
                 .Select(Canonicalization.RenderMode)
+                .Distinct(StringComparer.Ordinal)
+                .Order(StringComparer.Ordinal)
+                .ToArray(),
+            ContractJson.StringArray(value, "allowed_source_paths")
+                .Select(path => Canonicalization.RelativePath(path, "component allowed source path"))
                 .Distinct(StringComparer.Ordinal)
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
@@ -573,11 +597,20 @@ public static class InventoryService
     private static EvidencePackageIdentity PackageIdentity(InputManifest input) =>
         new(input.Package.PackageId, input.Package.Version, input.Package.NupkgDigest);
 
-    private static string PackageRevisionRoot(EvidencePackageIdentity package) =>
-        $"packages/{package.PackageId}/{package.Version}/revisions";
+    private static string PackageRevisionRoot(
+        EvidencePackageIdentity package,
+        string acquisition) =>
+        acquisition == "release-candidate"
+            ? $"packages/{package.PackageId}/{package.Version}/candidates/{package.NupkgDigest.Value}/revisions"
+            : $"packages/{package.PackageId}/{package.Version}/revisions";
 
-    private static string ComponentRevisionRoot(EvidencePackageIdentity package, string componentId) =>
-        $"packages/{package.PackageId}/{package.Version}/components/{componentId}/revisions";
+    private static string ComponentRevisionRoot(
+        EvidencePackageIdentity package,
+        string acquisition,
+        string componentId) =>
+        acquisition == "release-candidate"
+            ? $"packages/{package.PackageId}/{package.Version}/candidates/{package.NupkgDigest.Value}/components/{componentId}/revisions"
+            : $"packages/{package.PackageId}/{package.Version}/components/{componentId}/revisions";
 
     private static void ValidateUniqueSorted<T>(
         IReadOnlyList<T> values,

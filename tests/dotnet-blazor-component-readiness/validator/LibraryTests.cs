@@ -29,12 +29,14 @@ internal static class LibraryTests
             Path.Combine(pluginRoot, "skills", "blazor-component-readiness"));
         try
         {
+            TestReleaseCandidateDigestRoots(Path.Combine(root, "same-version-candidates"));
             var fixture = CreateFixture(root);
             TestDiscoveryAndConfirmation(fixture);
             TestDraftCannotRun(fixture);
             TestInterruptedAndIncompleteState(fixture);
             var packageRevisions = CreatePackageRevisions(fixture);
             TestMissingOutputPreventsComplete(fixture, packageRevisions);
+            TestComponentInputIsolation(fixture, packageRevisions);
             CreateComponentRevisions(fixture, packageRevisions);
             TestCompleteReconcileAndIndex(fixture);
             TestCorruptManifestReconstruction(fixture);
@@ -135,31 +137,45 @@ internal static class LibraryTests
         string id,
         string version,
         string acquisition,
-        IReadOnlyList<(string DisplayName, string[] Modes)> components)
+        IReadOnlyList<(string DisplayName, string[] Modes)> components,
+        string? fileQualifier = null)
     {
         var canonicalId = Canonicalization.PackageId(id);
         var canonicalVersion = NuGetVersionNormalizer.Normalize(version);
-        var nupkgRelative = $"inputs/{canonicalId}.{canonicalVersion}.nupkg";
+        var qualifier = fileQualifier is null ? string.Empty : $".{fileQualifier}";
+        var componentContracts = components
+            .Select(item => new InputComponent(
+                Canonicalization.ComponentId(item.DisplayName),
+                item.DisplayName,
+                item.Modes.Order(StringComparer.Ordinal).ToArray(),
+                [$"src/{Canonicalization.ComponentId(item.DisplayName)}.razor"]))
+            .OrderBy(item => item.Id, StringComparer.Ordinal)
+            .ToArray();
+        var nupkgRelative = $"inputs/{canonicalId}.{canonicalVersion}{qualifier}.nupkg";
         var nupkg = Path.Combine(root, nupkgRelative);
-        CreatePackage(nupkg, id, version);
+        CreatePackage(
+            nupkg,
+            id,
+            version,
+            componentContracts.Select(component => $"content/{component.Id}.txt").ToArray());
         var inspected = NupkgInspector.Inspect(nupkg);
         var package = new EvidencePackageIdentity(
             canonicalId,
             canonicalVersion,
             new Sha256Digest("sha256", inspected.NupkgSha256));
-        var componentContracts = components
-            .Select(item => new InputComponent(
-                Canonicalization.ComponentId(item.DisplayName),
-                item.DisplayName,
-                item.Modes.Order(StringComparer.Ordinal).ToArray()))
-            .OrderBy(item => item.Id, StringComparer.Ordinal)
-            .ToArray();
+        var componentInputs = componentContracts.ToDictionary(
+            component => component.Id,
+            component => CreateComponentInputs(root, canonicalId, component.Id),
+            StringComparer.Ordinal);
         var packageInput = CreateInput(
             acquisition,
             package,
             nupkgRelative,
-            componentContracts);
-        var packageInputPath = $"inputs/{canonicalId}.package.input-manifest.json";
+            componentContracts,
+            componentInputs.Values.SelectMany(value => value.Documentation).ToArray(),
+            componentInputs.Values.SelectMany(value => value.PackageSources).ToArray(),
+            componentInputs.Values.SelectMany(value => value.OwnerInputs).ToArray());
+        var packageInputPath = $"inputs/{canonicalId}{qualifier}.package.input-manifest.json";
         File.WriteAllBytes(
             Path.Combine(root, packageInputPath),
             InputManifestService.Serialize(packageInput));
@@ -172,21 +188,148 @@ internal static class LibraryTests
                 acquisition,
                 package,
                 nupkgRelative,
-                [component]);
-            var path = $"inputs/{canonicalId}.{component.Id}.input-manifest.json";
+                [component],
+                componentInputs[component.Id].Documentation,
+                componentInputs[component.Id].PackageSources,
+                componentInputs[component.Id].OwnerInputs);
+            var path = $"inputs/{canonicalId}{qualifier}.{component.Id}.input-manifest.json";
             File.WriteAllBytes(Path.Combine(root, path), InputManifestService.Serialize(componentInput));
             InputManifestService.Validate(componentInput, root, requireConfirmed: true);
             componentPaths.Add(component.Id, path);
         }
 
-        return new PackageSet(package, acquisition, packageInputPath, componentContracts, componentPaths);
+        return new PackageSet(
+            package,
+            acquisition,
+            packageInputPath,
+            componentContracts,
+            componentPaths,
+            componentInputs);
+    }
+
+    private static void TestReleaseCandidateDigestRoots(string root)
+    {
+        Directory.CreateDirectory(Path.Combine(root, "inputs"));
+        var first = CreatePackageSet(
+            root,
+            "Gamma.Controls",
+            "4.0.0-rc.1",
+            "release-candidate",
+            [("Gamma First", new[] { "interactive-server" })],
+            "first");
+        var second = CreatePackageSet(
+            root,
+            "Gamma.Controls",
+            "4.0.0-rc.1",
+            "release-candidate",
+            [("Gamma Second", new[] { "static-ssr" })],
+            "second");
+        Assert(first.Package.NupkgDigest != second.Package.NupkgDigest, "candidate package bytes differ");
+
+        var candidatesPath = Path.Combine(root, "inventory-candidates.json");
+        File.WriteAllText(
+            candidatesPath,
+            JsonSerializer.Serialize(new
+            {
+                schema_version = 1,
+                packages = new[] { Candidate(second), Candidate(first) }
+            }),
+            new UTF8Encoding(false));
+        var draftPath = Path.Combine(root, "inventory.draft.json");
+        var confirmedPath = Path.Combine(root, "inventory.confirmed.json");
+        RunCliRaw([
+            "inventory", "discover",
+            "--root", root,
+            "--candidates", candidatesPath,
+            "--output", draftPath
+        ]);
+        RunCliRaw([
+            "inventory", "confirm",
+            "--root", root,
+            "--draft", draftPath,
+            "--output", confirmedPath
+        ]);
+        var inventoryBytes = File.ReadAllBytes(confirmedPath);
+        var inventory = InventoryService.Parse(inventoryBytes);
+        AssertEqual(2, inventory.Packages.Count, "same-version release candidates remain distinct units");
+        AssertEqual(
+            2,
+            inventory.Packages.Select(package => package.RevisionRoot).Distinct(StringComparer.Ordinal).Count(),
+            "same-version release candidates have distinct package roots");
+        foreach (var package in inventory.Packages)
+        {
+            Assert(
+                package.RevisionRoot.Contains(
+                    $"/candidates/{package.Package.NupkgDigest.Value}/",
+                    StringComparison.Ordinal),
+                "release-candidate package root contains digest-derived segment");
+            Assert(
+                package.Components.Single().RevisionRoot.Contains(
+                    $"/candidates/{package.Package.NupkgDigest.Value}/",
+                    StringComparison.Ordinal),
+                "release-candidate component root contains digest-derived segment");
+        }
+
+        var fixture = new Fixture(
+            root,
+            candidatesPath,
+            draftPath,
+            confirmedPath,
+            Path.Combine(root, "run-manifest.json"),
+            inventory,
+            inventoryBytes,
+            [first, second]);
+        var packageRevisions = CreatePackageRevisions(fixture);
+        CreateComponentRevisions(fixture, packageRevisions);
+        Reconcile(fixture);
+        var manifestBytes = File.ReadAllBytes(fixture.RunPath);
+        var manifest = LibraryService.Parse(manifestBytes);
+        AssertEqual("complete", manifest.State, "same-version candidates complete independently");
+        foreach (var package in inventory.Packages)
+        {
+            var packageUnit = manifest.Units.Single(unit => unit.UnitId == package.UnitId);
+            var componentUnit = manifest.Units.Single(unit => unit.UnitId == package.Components.Single().UnitId);
+            AssertEqual(
+                packageUnit.ValidationManifestDigest,
+                componentUnit.PackageValidationManifestDigest,
+                "candidate component binds its own package validation revision");
+        }
+
+        var jsonPath = Path.Combine(root, "library-index.json");
+        var markdownPath = Path.Combine(root, "library-index.md");
+        RunCliRaw([
+            "library", "index",
+            "--root", root,
+            "--inventory", confirmedPath,
+            "--run-manifest", fixture.RunPath,
+            "--json", jsonPath,
+            "--markdown", markdownPath
+        ]);
+        using var index = JsonDocument.Parse(File.ReadAllBytes(jsonPath));
+        var entries = index.RootElement.GetProperty("packages").EnumerateArray().ToArray();
+        AssertEqual(2, entries.Length, "index retains both same-ID/version candidate entries");
+        AssertEqual(
+            2,
+            entries.Select(entry => entry.GetProperty("unit_id").GetString())
+                .Distinct(StringComparer.Ordinal)
+                .Count(),
+            "index candidate unit bindings are distinct");
+        AssertEqual(
+            2,
+            entries.Select(entry => entry.GetProperty("report").GetString())
+                .Distinct(StringComparer.Ordinal)
+                .Count(),
+            "index candidate report roots are distinct");
     }
 
     private static InputManifest CreateInput(
         string acquisition,
         EvidencePackageIdentity package,
         string nupkgRelative,
-        IReadOnlyList<InputComponent> components) =>
+        IReadOnlyList<InputComponent> components,
+        IReadOnlyList<InputDocument>? documentation = null,
+        IReadOnlyList<InputPackageSource>? packageSources = null,
+        IReadOnlyList<OwnerInput>? ownerInputs = null) =>
         new(
             InputManifestService.SchemaVersion,
             "confirmed",
@@ -198,26 +341,67 @@ internal static class LibraryTests
                 nupkgRelative,
                 nupkgRelative,
                 "local-file"),
-            new InputSource("closed-source", null, null, null, null),
+            new InputSource(
+                "source-available",
+                "https://source.example.test/vendor/components",
+                new string('a', 40),
+                "The package metadata maps each declared component path to this exact source commit.",
+                "high"),
             [new InputRetrievalAttempt("package", nupkgRelative, "local-file", "succeeded", null)],
-            [],
-            [],
-            [],
+            documentation ?? [],
+            packageSources ?? [],
+            ownerInputs ?? [],
             components,
             [new InputExclusion("Synthetic external services", "Outside this deterministic library fixture.")]);
+
+    private static ComponentInputs CreateComponentInputs(
+        string root,
+        string packageId,
+        string componentId)
+    {
+        var documentationPath = $"inputs/{packageId}.{componentId}.html";
+        var documentationBytes = Encoding.UTF8.GetBytes($"Documentation for {componentId}.");
+        File.WriteAllBytes(Path.Combine(root, documentationPath), documentationBytes);
+        var packageSourcePath = $"inputs/{packageId}.{componentId}.package-source.txt";
+        var packageSourceBytes = Encoding.UTF8.GetBytes($"Package entry content/{componentId}.txt.");
+        File.WriteAllBytes(Path.Combine(root, packageSourcePath), packageSourceBytes);
+        var ownerBasename = $"{packageId}.{componentId}.owner.txt";
+        var ownerBytes = Encoding.UTF8.GetBytes($"Owner evidence for {componentId}.");
+        File.WriteAllBytes(Path.Combine(root, ownerBasename), ownerBytes);
+        return new ComponentInputs(
+            [
+                new InputDocument(
+                    $"https://docs.example.test/{packageId}/{componentId}",
+                    documentationPath,
+                    ContractJson.RawDigest(documentationBytes))
+            ],
+            [
+                new InputPackageSource(
+                    "package-metadata",
+                    $"{NupkgInspector.PackageEntryEvidencePrefix}content/{componentId}.txt",
+                    packageSourcePath,
+                    ContractJson.RawDigest(packageSourceBytes))
+            ],
+            [
+                new OwnerInput(
+                    ownerBasename,
+                    "owner-supplied-internal-evidence",
+                    ContractJson.RawDigest(ownerBytes),
+                    ownerBytes.LongLength)
+            ]);
+    }
 
     private static object Candidate(PackageSet package) => new
     {
         input_manifest_path = package.PackageInputPath,
-        revision_root = $"packages/{package.Package.PackageId}/{package.Package.Version}/revisions",
+        revision_root = PackageRevisionRoot(package),
         components = package.Components
             .Reverse()
             .Select(component => new
             {
                 component_id = $" {component.DisplayName} ",
                 input_manifest_path = package.ComponentInputPaths[component.Id],
-                revision_root =
-                    $"packages/{package.Package.PackageId}/{package.Package.Version}/components/{component.Id}/revisions",
+                revision_root = ComponentRevisionRoot(package, component.Id),
                 render_modes = component.RenderModes
                     .Select(mode => mode switch
                     {
@@ -242,6 +426,16 @@ internal static class LibraryTests
             }
         }
     };
+
+    private static string PackageRevisionRoot(PackageSet package) =>
+        package.Acquisition == "release-candidate"
+            ? $"packages/{package.Package.PackageId}/{package.Package.Version}/candidates/{package.Package.NupkgDigest.Value}/revisions"
+            : $"packages/{package.Package.PackageId}/{package.Package.Version}/revisions";
+
+    private static string ComponentRevisionRoot(PackageSet package, string componentId) =>
+        package.Acquisition == "release-candidate"
+            ? $"packages/{package.Package.PackageId}/{package.Package.Version}/candidates/{package.Package.NupkgDigest.Value}/components/{componentId}/revisions"
+            : $"packages/{package.Package.PackageId}/{package.Package.Version}/components/{componentId}/revisions";
 
     private static void TestDiscoveryAndConfirmation(Fixture fixture)
     {
@@ -269,6 +463,11 @@ internal static class LibraryTests
                     component.RenderModes.Order(StringComparer.Ordinal),
                     StringComparer.Ordinal)),
             "render modes canonical and sorted");
+        var published = fixture.Inventory.Packages.Single(package => package.Acquisition == "published");
+        AssertEqual(
+            $"packages/{published.Package.PackageId}/{published.Package.Version}/revisions",
+            published.RevisionRoot,
+            "published stable package root retains version path");
         InventoryService.Validate(fixture.Inventory, fixture.Root, requireConfirmed: true);
 
         var repeated = InventoryService.Confirm(draft, fixture.Root);
@@ -329,16 +528,14 @@ internal static class LibraryTests
                 new
                 {
                     input_manifest_path = package.PackageInputPath,
-                    revision_root =
-                        $"packages/{package.Package.PackageId}/{package.Package.Version}/revisions",
+                    revision_root = PackageRevisionRoot(package),
                     components = new[]
                     {
                         new
                         {
                             component_id = package.Components[0].Id,
                             input_manifest_path = siblingPath,
-                            revision_root =
-                                $"packages/{package.Package.PackageId}/{package.Package.Version}/components/{package.Components[0].Id}/revisions",
+                            revision_root = ComponentRevisionRoot(package, package.Components[0].Id),
                             render_modes = package.Components[0].RenderModes,
                             exclusions = Array.Empty<object>()
                         },
@@ -346,8 +543,7 @@ internal static class LibraryTests
                         {
                             component_id = package.Components[1].Id,
                             input_manifest_path = package.ComponentInputPaths[package.Components[1].Id],
-                            revision_root =
-                                $"packages/{package.Package.PackageId}/{package.Package.Version}/components/{package.Components[1].Id}/revisions",
+                            revision_root = ComponentRevisionRoot(package, package.Components[1].Id),
                             render_modes = package.Components[1].RenderModes,
                             exclusions = Array.Empty<object>()
                         }
@@ -385,24 +581,95 @@ internal static class LibraryTests
         AssertEqual("incomplete", pending.State, "empty library incomplete");
         AssertEqual(6, pending.Units.Count(unit => unit.State == "pending"), "all initial units pending");
 
-        var first = pending.Units[0] with { State = "active" };
-        var active = pending with
-        {
-            Units = [first, .. pending.Units.Skip(1)]
-        };
-        File.WriteAllBytes(fixture.RunPath, LibraryService.Serialize(active));
-        RunCli(
+        var firstUnit = pending.Units[0].UnitId;
+        var activeMissing = new[] { "Awaiting the bounded interactive-server probe output." };
+        const string ActiveReason = "Started the component probe before the worker interruption.";
+        Reconcile(
             fixture,
-            [
-                "library", "reconcile",
-                "--root", fixture.Root,
-                "--inventory", fixture.ConfirmedPath,
-                "--run-manifest", fixture.RunPath
-            ]);
+            new LibraryStateUpdate(
+                1,
+                firstUnit,
+                "active",
+                activeMissing,
+                [],
+                "2026-09-02T20:00:00Z",
+                ActiveReason));
+        var active = LibraryService.Parse(File.ReadAllBytes(fixture.RunPath));
+        AssertEqual("active", active.Units[0].State, "state update records active");
+        AssertEqual(ActiveReason, active.Units[0].TransitionReason, "active transition reason");
+        Assert(
+            active.Units[0].MissingInputs.SequenceEqual(activeMissing, StringComparer.Ordinal),
+            "active missing-input reason preserved");
+
+        var activeBytes = File.ReadAllBytes(fixture.RunPath);
+        File.Delete(fixture.RunPath);
+        Reconcile(fixture);
+        AssertBytes(
+            activeBytes,
+            File.ReadAllBytes(fixture.RunPath),
+            "missing run manifest reconstructs active state and exact reasons");
+        File.WriteAllText(fixture.RunPath, "{\"schema_version\":1", new UTF8Encoding(false));
+        Reconcile(fixture);
+        AssertBytes(
+            activeBytes,
+            File.ReadAllBytes(fixture.RunPath),
+            "truncated run manifest reconstructs active state and exact reasons");
+
+        Reconcile(fixture);
         var interrupted = LibraryService.Parse(File.ReadAllBytes(fixture.RunPath));
         Assert(interrupted.Interrupted, "interrupted run state recorded");
         AssertEqual("incomplete", interrupted.Units[0].State, "interrupted active unit becomes incomplete");
+        AssertEqual(ActiveReason, interrupted.Units[0].TransitionReason, "interruption preserves exact reason");
+        Assert(
+            interrupted.Units[0].MissingInputs.SequenceEqual(activeMissing, StringComparer.Ordinal),
+            "interruption preserves exact missing inputs");
+        var interruptedReceipt = LibraryStateReceiptService.Load(
+            fixture.Root,
+            fixture.Inventory,
+            fixture.InventoryBytes)[firstUnit].Receipt;
+        AssertEqual(2, interruptedReceipt.Sequence, "interruption appends immutable state receipt");
+        AssertEqual(1, interruptedReceipt.PriorReceiptSequence, "state receipt binds prior sequence");
+        Assert(interruptedReceipt.PriorReceiptDigest is not null, "state receipt binds prior digest");
         AssertEqual(5, interrupted.Units.Count(unit => unit.State == "pending"), "remaining units stay pending");
+
+        var blockedUnit = interrupted.Units[1].UnitId;
+        var blockedMissing = new[] { "Vendor API token was not supplied." };
+        var blockedProbes = new[] { "Authenticated export probe cannot run without the vendor API token." };
+        const string BlockedReason = "The confirmed owner input set does not contain the required token.";
+        Reconcile(
+            fixture,
+            new LibraryStateUpdate(
+                1,
+                blockedUnit,
+                "blocked",
+                blockedMissing,
+                blockedProbes,
+                "2026-09-02T20:01:00Z",
+                BlockedReason));
+        var blockedBytes = File.ReadAllBytes(fixture.RunPath);
+        File.WriteAllText(fixture.RunPath, "not-json", new UTF8Encoding(false));
+        Reconcile(fixture);
+        AssertBytes(
+            blockedBytes,
+            File.ReadAllBytes(fixture.RunPath),
+            "corrupt run manifest reconstructs blocked state and exact reasons");
+        var blocked = LibraryService.Parse(File.ReadAllBytes(fixture.RunPath)).Units[1];
+        AssertEqual(BlockedReason, blocked.TransitionReason, "blocked transition reason preserved");
+        Assert(
+            blocked.MissingInputs.SequenceEqual(blockedMissing, StringComparer.Ordinal) &&
+            blocked.BlockedProbes.SequenceEqual(blockedProbes, StringComparer.Ordinal),
+            "blocked details preserved exactly");
+
+        var receiptPath = Path.Combine(fixture.Root, blocked.StateReceiptPath!);
+        var receiptBytes = File.ReadAllBytes(receiptPath);
+        File.WriteAllText(receiptPath, "{\"schema_version\":1", new UTF8Encoding(false));
+        ExpectValidation(
+            () => LibraryStateReceiptService.Load(
+                fixture.Root,
+                fixture.Inventory,
+                fixture.InventoryBytes),
+            "corrupt state receipt rejected");
+        File.WriteAllBytes(receiptPath, receiptBytes);
 
         RunCli(
             fixture,
@@ -435,7 +702,7 @@ internal static class LibraryTests
                 inputBytes,
                 null,
                 []);
-            var evidence = BuildEvidence(initialized.Identity, []);
+            var evidence = BuildEvidence(initialized.Identity, Array.Empty<string>());
             var assessment = Complete(initialized, evidence);
             var revision = Render(
                 fixture.Root,
@@ -468,7 +735,7 @@ internal static class LibraryTests
         var manifest = LibraryService.Parse(File.ReadAllBytes(fixture.RunPath));
         AssertEqual("incomplete", manifest.State, "missing component output prevents complete");
         AssertEqual(3, manifest.Units.Count(unit => unit.State == "completed"), "two packages and one component completed");
-        AssertEqual(3, manifest.Units.Count(unit => unit.State is "pending" or "incomplete"), "remaining component units incomplete");
+        AssertEqual(3, manifest.Units.Count(unit => unit.State != "completed"), "remaining component units noncompleted");
 
         var falseComplete = manifest with { State = "complete" };
         ExpectValidation(
@@ -499,6 +766,83 @@ internal static class LibraryTests
         }
     }
 
+    private static void TestComponentInputIsolation(
+        Fixture fixture,
+        IReadOnlyDictionary<string, string> packageRevisions)
+    {
+        var package = fixture.Inventory.Packages[0];
+        var sibling = package.Components[0];
+        var target = package.Components[1];
+        var siblingInputs = fixture.Packages
+            .Single(item => item.Package == package.Package)
+            .ComponentInputs[sibling.ComponentId];
+        var inputPath = Path.Combine(fixture.Root, target.InputManifestPath);
+        var inputBytes = File.ReadAllBytes(inputPath);
+        var input = InputManifestService.Parse(inputBytes);
+        var binding = RevisionService.LoadPackageBinding(
+            fixture.Root,
+            packageRevisions[package.UnitId],
+            feedbackBytes: null);
+        var initialized = AssessmentService.Initialize(
+            "component",
+            fixture.Root,
+            input,
+            inputBytes,
+            target.ComponentId,
+            [],
+            binding);
+        var leaks = new[]
+        {
+            new EvidenceProvenance(
+                EvidenceIdentity.VendorPublicDocumentation,
+                siblingInputs.Documentation.Single().Url,
+                "Read sibling documentation.",
+                "2026-09-02T21:00:00Z",
+                siblingInputs.Documentation.Single().ContentDigest,
+                "commitment-only"),
+            new EvidenceProvenance(
+                EvidenceIdentity.VendorSourceRepository,
+                $"source:{sibling.AllowedSourcePaths.Single()}",
+                "Read sibling source.",
+                "2026-09-02T21:01:00Z",
+                Hash("sibling-source"),
+                "commitment-only"),
+            new EvidenceProvenance(
+                EvidenceIdentity.OwnerSuppliedInternalEvidence,
+                siblingInputs.OwnerInputs.Single().Basename,
+                "Read sibling owner evidence.",
+                "2026-09-02T21:02:00Z",
+                siblingInputs.OwnerInputs.Single().ContentDigest,
+                "commitment-only"),
+            new EvidenceProvenance(
+                EvidenceIdentity.PackageArtifactMetadata,
+                siblingInputs.PackageSources.Single().Locator,
+                "Read sibling package entry.",
+                "2026-09-02T21:03:00Z",
+                Hash("sibling-package-entry"),
+                "commitment-only")
+        };
+        foreach (var leak in leaks)
+        {
+            var evidence = BuildEvidence(initialized.Identity, [leak]);
+            var assessment = Complete(initialized, evidence);
+            _ = Render(
+                fixture.Root,
+                inputPath,
+                assessment,
+                evidence,
+                Path.Combine(fixture.Root, target.RevisionRoot),
+                packageRevisions[package.UnitId]);
+            ExpectValidation(
+                () => LibraryService.Reconcile(
+                    fixture.Root,
+                    fixture.Inventory,
+                    fixture.InventoryBytes),
+                $"component sibling {leak.Kind} leakage");
+            Directory.Delete(Path.Combine(fixture.Root, target.RevisionRoot), recursive: true);
+        }
+    }
+
     private static void CreateComponentRevision(
         Fixture fixture,
         InventoryComponent component,
@@ -519,7 +863,7 @@ internal static class LibraryTests
             component.ComponentId,
             [],
             binding);
-        var evidence = BuildEvidence(initialized.Identity, component.RenderModes);
+        var evidence = BuildEvidence(initialized.Identity, component.RenderModes, input);
         var assessment = Complete(initialized, evidence);
         _ = Render(
             fixture.Root,
@@ -567,6 +911,12 @@ internal static class LibraryTests
         var manifest = LibraryService.Parse(runBytes);
         AssertEqual("complete", manifest.State, "complete library state");
         AssertEqual(6, manifest.Units.Count(unit => unit.State == "completed"), "all units completed");
+        Assert(
+            manifest.Units.All(unit =>
+                unit.StateReceiptPath is null &&
+                unit.StateReceiptDigest is null &&
+                unit.TransitionReason is null),
+            "completed validated revisions override transient receipt state");
         Assert(
             manifest.Units.Where(unit => unit.Kind == "component")
                 .All(unit => unit.PackageUnitId is not null &&
@@ -710,6 +1060,10 @@ internal static class LibraryTests
         {
             File.Copy(file, Path.Combine(root, "inputs", Path.GetFileName(file)));
         }
+        foreach (var file in Directory.GetFiles(fixture.Root, "*.owner.txt", SearchOption.TopDirectoryOnly))
+        {
+            File.Copy(file, Path.Combine(root, Path.GetFileName(file)));
+        }
 
         File.Copy(fixture.CandidatesPath, Path.Combine(root, "inventory-candidates.json"));
         var draft = Path.Combine(root, "inventory.draft.json");
@@ -772,12 +1126,84 @@ internal static class LibraryTests
             "--inventory", confirmed,
             "--run-manifest", run
         ]);
+        var inventory = InventoryService.Parse(File.ReadAllBytes(confirmed));
+        Process first;
+        Process second;
+        using (LibraryRunLock.Acquire(root, inventory.RunId!))
+        {
+            first = StartDll(dll, root, [
+                "library", "reconcile",
+                "--root", root,
+                "--inventory", confirmed,
+                "--run-manifest", run
+            ]);
+            second = StartDll(dll, root, [
+                "library", "reconcile",
+                "--root", root,
+                "--inventory", confirmed,
+                "--run-manifest", run
+            ]);
+            Thread.Sleep(250);
+            Assert(!first.HasExited && !second.HasExited, "concurrent reconciles wait for cross-process run lock");
+        }
+        WaitForProcess(first, "first concurrent reconcile");
+        WaitForProcess(second, "second concurrent reconcile");
+        first.Dispose();
+        second.Dispose();
+
+        Process reconcile;
+        Process index;
+        using (LibraryRunLock.Acquire(root, inventory.RunId!))
+        {
+            reconcile = StartDll(dll, root, [
+                "library", "reconcile",
+                "--root", root,
+                "--inventory", confirmed,
+                "--run-manifest", run
+            ]);
+            index = StartDll(dll, root, [
+                "library", "index",
+                "--root", root,
+                "--inventory", confirmed,
+                "--run-manifest", run,
+                "--json", json,
+                "--markdown", markdown
+            ]);
+            Thread.Sleep(250);
+            Assert(!reconcile.HasExited && !index.HasExited, "reconcile and index share the cross-process run lock");
+        }
+        WaitForProcess(reconcile, "concurrent reconcile");
+        WaitForProcess(index, "concurrent index");
+        reconcile.Dispose();
+        index.Dispose();
+        using (var indexDocument = JsonDocument.Parse(File.ReadAllBytes(json)))
+        {
+            var manifestDigest = ContractJson.RawDigest(File.ReadAllBytes(run)).Value;
+            var inventoryDigest = ContractJson.RawDigest(File.ReadAllBytes(confirmed)).Value;
+            AssertEqual(
+                manifestDigest,
+                indexDocument.RootElement.GetProperty("run_manifest_sha256").GetProperty("value").GetString(),
+                "JSON index binds final run manifest");
+            AssertEqual(
+                inventoryDigest,
+                indexDocument.RootElement.GetProperty("inventory_sha256").GetProperty("value").GetString(),
+                "JSON index binds final inventory");
+            var markdownText = File.ReadAllText(markdown);
+            Assert(
+                markdownText.Contains(manifestDigest, StringComparison.Ordinal) &&
+                markdownText.Contains(inventoryDigest, StringComparison.Ordinal) &&
+                markdownText.Contains(
+                    indexDocument.RootElement.GetProperty("generation_id").GetString()!,
+                    StringComparison.Ordinal),
+                "JSON and Markdown publish one coherent generation");
+        }
         Assert(File.Exists(json) && File.Exists(markdown), "CLI subprocess covers all six library commands");
     }
 
     private static EvidenceBundle BuildEvidence(
         ExactAssessmentIdentity identity,
-        IReadOnlyList<string> renderModes)
+        IReadOnlyList<string> renderModes,
+        InputManifest? input = null)
     {
         var modes = renderModes.Count == 0 ? new[] { "package-wide" } : renderModes;
         var drafts = modes.Select((mode, index) => new EvidenceRecordDraft(
@@ -803,7 +1229,55 @@ internal static class LibraryTests
                     Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
                         Encoding.UTF8.GetBytes($"{identity.Package.PackageId}\0{identity.ComponentId}\0{mode}")))),
                 "commitment-only"),
-            [])).ToArray();
+            [])).ToList();
+        if (identity.ComponentId is not null && input is not null)
+        {
+            drafts.Add(new EvidenceRecordDraft(
+                "The component-specific vendor documentation was reviewed.",
+                new EvidenceApplicability("component-specific", identity.ComponentId),
+                new EvidenceProvenance(
+                    EvidenceIdentity.VendorPublicDocumentation,
+                    input.Documentation.Single().Url,
+                    "Read component documentation.",
+                    "2026-09-02T22:00:00Z",
+                    input.Documentation.Single().ContentDigest,
+                    "commitment-only"),
+                []));
+            drafts.Add(new EvidenceRecordDraft(
+                "The component-specific allowed source path was reviewed.",
+                new EvidenceApplicability("component-specific", identity.ComponentId),
+                new EvidenceProvenance(
+                    EvidenceIdentity.VendorSourceRepository,
+                    $"source:{input.Components.Single().AllowedSourcePaths.Single()}",
+                    "Read component source.",
+                    "2026-09-02T22:01:00Z",
+                    Hash($"source:{identity.ComponentId}"),
+                    "commitment-only"),
+                []));
+            drafts.Add(new EvidenceRecordDraft(
+                "The component-specific owner evidence was reviewed.",
+                new EvidenceApplicability("component-specific", identity.ComponentId),
+                new EvidenceProvenance(
+                    EvidenceIdentity.OwnerSuppliedInternalEvidence,
+                    input.OwnerInputs.Single().Basename,
+                    "Read component owner evidence.",
+                    "2026-09-02T22:02:00Z",
+                    input.OwnerInputs.Single().ContentDigest,
+                    "commitment-only"),
+                []));
+            drafts.Add(new EvidenceRecordDraft(
+                "The exact component-specific package entry was reviewed.",
+                new EvidenceApplicability("component-specific", identity.ComponentId),
+                new EvidenceProvenance(
+                    EvidenceIdentity.PackageArtifactMetadata,
+                    input.PackageSources.Single().Locator,
+                    "Read exact component package entry.",
+                    "2026-09-02T22:03:00Z",
+                    input.PackageSources.Single().ContentDigest,
+                    "commitment-only"),
+                []));
+        }
+
         EvidenceSourceLedger ledger = identity.AssessmentKind == "component"
             ? EvidenceLedgerBuilder.BuildComponentLedger(identity, drafts)
             : EvidenceLedgerBuilder.BuildRepositoryLedger(
@@ -813,6 +1287,22 @@ internal static class LibraryTests
                     identity.InputManifestDigest,
                     null),
                 drafts);
+        return EvidenceLedgerBuilder.BuildBundle(
+            identity,
+            [ledger],
+            ledger.Records.Select(record => record.StableId).ToArray());
+    }
+
+    private static EvidenceBundle BuildEvidence(
+        ExactAssessmentIdentity identity,
+        IReadOnlyList<EvidenceProvenance> provenances)
+    {
+        var drafts = provenances.Select((provenance, index) => new EvidenceRecordDraft(
+            $"Selected component evidence record {index + 1}.",
+            new EvidenceApplicability("component-specific", identity.ComponentId),
+            provenance,
+            [])).ToArray();
+        var ledger = EvidenceLedgerBuilder.BuildComponentLedger(identity, drafts);
         return EvidenceLedgerBuilder.BuildBundle(
             identity,
             [ledger],
@@ -899,17 +1389,33 @@ internal static class LibraryTests
         return Path.Combine(revisionRoot, "0001");
     }
 
-    private static void Reconcile(Fixture fixture) =>
-        RunCli(
-            fixture,
-            [
-                "library", "reconcile",
-                "--root", fixture.Root,
-                "--inventory", fixture.ConfirmedPath,
-                "--run-manifest", fixture.RunPath
-            ]);
+    private static void Reconcile(Fixture fixture, LibraryStateUpdate? update = null)
+    {
+        var args = new List<string>
+        {
+            "library", "reconcile",
+            "--root", fixture.Root,
+            "--inventory", fixture.ConfirmedPath,
+            "--run-manifest", fixture.RunPath
+        };
+        if (update is not null)
+        {
+            var updatePath = Path.Combine(fixture.Root, "state-update.json");
+            File.WriteAllBytes(updatePath, LibraryStateReceiptService.SerializeUpdate(update));
+            args.Add("--state-update");
+            args.Add(updatePath);
+        }
+
+        RunCli(fixture, args);
+    }
 
     private static void RunCli(Fixture fixture, IReadOnlyList<string> args)
+    {
+        _ = fixture;
+        RunCliRaw(args);
+    }
+
+    private static void RunCliRaw(IReadOnlyList<string> args)
     {
         var output = new StringWriter();
         var error = new StringWriter();
@@ -976,6 +1482,39 @@ internal static class LibraryTests
         RunProcess(info, $"CLI subprocess {string.Join(' ', args.Take(2))}");
     }
 
+    private static Process StartDll(
+        string dll,
+        string workingDirectory,
+        IReadOnlyList<string> args)
+    {
+        var info = new ProcessStartInfo
+        {
+            FileName = "dotnet",
+            WorkingDirectory = workingDirectory,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false
+        };
+        info.ArgumentList.Add(dll);
+        foreach (var argument in args)
+        {
+            info.ArgumentList.Add(argument);
+        }
+
+        return Process.Start(info)
+            ?? throw new InvalidOperationException("Could not start concurrent CLI subprocess.");
+    }
+
+    private static void WaitForProcess(Process process, string name)
+    {
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert(
+            process.ExitCode == ExitCodes.Success,
+            $"{name} failed with {process.ExitCode}.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+    }
+
     private static void RunProcess(ProcessStartInfo info, string name)
     {
         using var process = Process.Start(info)
@@ -1002,15 +1541,39 @@ internal static class LibraryTests
         }
     }
 
-    private static void CreatePackage(string path, string id, string version)
+    private static void CreatePackage(
+        string path,
+        string id,
+        string version,
+        IReadOnlyList<string>? contentEntries = null)
     {
         using var archive = ZipFile.Open(path, ZipArchiveMode.Create);
         var entry = archive.CreateEntry($"{id}.nuspec", CompressionLevel.NoCompression);
         entry.LastWriteTime = new DateTimeOffset(2020, 1, 1, 0, 0, 0, TimeSpan.Zero);
-        using var stream = entry.Open();
-        using var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: false);
-        writer.Write($"<package><metadata><id>{id}</id><version>{version}</version></metadata></package>");
+        using (var stream = entry.Open())
+        using (var writer = new StreamWriter(stream, new UTF8Encoding(false), leaveOpen: false))
+        {
+            writer.Write($"<package><metadata><id>{id}</id><version>{version}</version></metadata></package>");
+        }
+
+        foreach (var contentEntry in contentEntries ?? [])
+        {
+            var content = archive.CreateEntry(contentEntry, CompressionLevel.NoCompression);
+            content.LastWriteTime = entry.LastWriteTime;
+            using var contentStream = content.Open();
+            using var contentWriter = new StreamWriter(
+                contentStream,
+                new UTF8Encoding(false),
+                leaveOpen: false);
+            contentWriter.Write($"Package entry {contentEntry}.");
+        }
     }
+
+    private static Sha256Digest Hash(string value) =>
+        new(
+            "sha256",
+            Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
+                Encoding.UTF8.GetBytes(value))));
 
     private static void ExpectValidation(Action action, string name)
     {
@@ -1043,7 +1606,13 @@ internal static class LibraryTests
         string Acquisition,
         string PackageInputPath,
         IReadOnlyList<InputComponent> Components,
-        IReadOnlyDictionary<string, string> ComponentInputPaths);
+        IReadOnlyDictionary<string, string> ComponentInputPaths,
+        IReadOnlyDictionary<string, ComponentInputs> ComponentInputs);
+
+    private sealed record ComponentInputs(
+        IReadOnlyList<InputDocument> Documentation,
+        IReadOnlyList<InputPackageSource> PackageSources,
+        IReadOnlyList<OwnerInput> OwnerInputs);
 
     private sealed record Fixture(
         string Root,
