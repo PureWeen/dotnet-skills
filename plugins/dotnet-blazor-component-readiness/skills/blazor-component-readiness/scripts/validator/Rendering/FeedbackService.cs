@@ -11,7 +11,8 @@ public static class FeedbackService
 
     public static AssessmentFeedback Parse(
         ReadOnlyMemory<byte> bytes,
-        ReadinessAssessment assessment)
+        ReadinessAssessment assessment,
+        IReadOnlyList<string>? associatedRequirementIds = null)
     {
         BoundedIO.EnsureLength(bytes.Length, ResourceLimits.SerializedArtifactBytes, "assessment feedback");
         string text;
@@ -54,7 +55,16 @@ public static class FeedbackService
         var knownIds = rubric.CoreRequirements.Select(row => row.Id)
             .Concat(rubric.Overlays.SelectMany(overlay => overlay.Requirements).Select(row => row.Id))
             .ToHashSet(StringComparer.Ordinal);
-        var selectedIds = assessment.SelectedIds.ToHashSet(StringComparer.Ordinal);
+        if (associatedRequirementIds is not null &&
+            assessment.AssessmentKind != "component")
+        {
+            throw new DeterministicValidationException(
+                "Only component feedback may reference requirements from an associated package assessment.");
+        }
+
+        var selectedIds = assessment.SelectedIds
+            .Concat(associatedRequirementIds ?? [])
+            .ToHashSet(StringComparer.Ordinal);
         var entries = new List<AssessmentFeedbackEntry>();
         foreach (var line in lines.Skip(4))
         {

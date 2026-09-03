@@ -1173,6 +1173,46 @@ internal static class AssessmentTests
         Assert(
             feedbackReport.Contains($"| `{ids[0]}`, `{ids[1]}` |{rawPayload}|", StringComparison.Ordinal),
             "feedback payload rendered verbatim");
+        var packageId = packageBinding.Assessment.Rows[0].Id;
+        var componentId = assessment.Rows[0].Id;
+        var mixedPayload = "  Preserve this package/component feedback as one owner-authored payload.  ";
+        var mixedFeedbackBytes = Encoding.UTF8.GetBytes(
+            "# Assessment feedback\n\n" +
+            "| Requirement IDs | Feedback |\n" +
+            "|---|---|\n" +
+            $"| `{componentId}`, `{packageId}` |{mixedPayload}|\n");
+        ExpectValidation(
+            () => FeedbackService.Parse(mixedFeedbackBytes, assessment),
+            "component feedback requires exact package association for package IDs");
+        var mixedFeedback = FeedbackService.Parse(
+            mixedFeedbackBytes,
+            assessment,
+            packageBinding.Assessment.SelectedIds);
+        AssertSequence(
+            new[] { componentId, packageId }.Order(StringComparer.Ordinal),
+            mixedFeedback.Entries.Single().RequirementIds,
+            "mixed package component feedback normalized ID set");
+        AssertEqual(
+            mixedPayload,
+            mixedFeedback.Entries.Single().RawPayload,
+            "mixed package component feedback raw payload");
+        var mixedFeedbackReport = Encoding.UTF8.GetString(
+            ReportService.RenderMarkdown(
+                assessment,
+                fixture.Confirmed,
+                evidence,
+                mixedFeedback));
+        Assert(
+            mixedFeedbackReport.Contains(
+                $"| `{string.Join("`, `", new[] { componentId, packageId }.Order(StringComparer.Ordinal))}` |{mixedPayload}|",
+                StringComparison.Ordinal),
+            "mixed package component feedback renders without copying package rows");
+        AssertEqual(
+            64,
+            mixedFeedbackReport.Split('\n').Count(line =>
+                line.StartsWith("| `", StringComparison.Ordinal) &&
+                line.Contains("| `component-specific` |", StringComparison.Ordinal)),
+            "mixed feedback does not duplicate package rows in component report");
         foreach (var invalid in new Dictionary<string, string>
                  {
                      ["unknown"] = "| `UNKNOWN-01` | unknown requirement |\n",

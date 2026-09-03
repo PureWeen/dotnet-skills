@@ -150,7 +150,10 @@ public static class RevisionService
         }
         else
         {
-            feedback = FeedbackService.Parse(feedbackBytes, assessment);
+            feedback = FeedbackService.Parse(
+                feedbackBytes,
+                assessment,
+                packageBinding?.Assessment.SelectedIds);
             if (feedback.Digest != manifest.FeedbackDigest)
             {
                 throw new DeterministicValidationException(

@@ -93,7 +93,10 @@ public static class ReportCommand
             packageBinding);
         var feedback = feedbackSnapshot is null
             ? null
-            : FeedbackService.Parse(feedbackSnapshot.Bytes, assessment);
+            : FeedbackService.Parse(
+                feedbackSnapshot.Bytes,
+                assessment,
+                packageBinding?.Assessment.SelectedIds);
         var outputRoot = Path.GetFullPath(options.Single("--output"));
         EnsureFeedbackOutsideRevisions(feedbackSnapshot, outputRoot);
         if (options.Optional("--package-revision") is { } packageRevision)
