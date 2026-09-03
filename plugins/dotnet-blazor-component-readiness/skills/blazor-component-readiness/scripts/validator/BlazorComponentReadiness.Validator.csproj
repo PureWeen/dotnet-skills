@@ -17,6 +17,7 @@
     <AssemblyName>BlazorComponentReadiness.Validator</AssemblyName>
     <RootNamespace>BlazorComponentReadiness.Validator</RootNamespace>
     <Version>1.0.0</Version>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <Import Project="$(MSBuildSDKsPath)/Microsoft.NET.Sdk/Sdk/Sdk.targets" />

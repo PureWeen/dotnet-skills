@@ -28,6 +28,12 @@ public static class CliApplication
           assessment revise  Validate an evidence-backed correction and render its next revision.
           report render      Render the next immutable deterministic revision.
           report verify      Verify report bytes and every validation-manifest binding.
+          inventory discover Canonicalize package/component library discovery candidates.
+          inventory confirm  Freeze one immutable confirmed library inventory.
+          inventory status   Report completed, pending, blocked, incomplete, or invalid work.
+          library reconcile  Reconstruct mutable run state from immutable validated revisions.
+          library validate   Prove every confirmed library work unit is accounted for.
+          library index      Write deterministic factual JSON and Markdown library indexes.
           help               Show this help.
 
         Run 'readiness-validator <command> --help' for command details.
@@ -78,6 +84,16 @@ public static class CliApplication
             if (string.Equals(args[0], "report", StringComparison.Ordinal))
             {
                 return ReportCommand.Run(args.Skip(1).ToArray(), output);
+            }
+
+            if (string.Equals(args[0], "inventory", StringComparison.Ordinal))
+            {
+                return InventoryCommand.Run(args.Skip(1).ToArray(), output);
+            }
+
+            if (string.Equals(args[0], "library", StringComparison.Ordinal))
+            {
+                return LibraryCommand.Run(args.Skip(1).ToArray(), output);
             }
 
             if (!string.Equals(args[0], "package", StringComparison.Ordinal))

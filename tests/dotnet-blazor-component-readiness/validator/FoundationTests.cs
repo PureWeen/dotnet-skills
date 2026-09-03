@@ -84,6 +84,9 @@ internal static class FoundationTests
             "validator assembly version matches the authoritative production project");
         Assert(!project.Contains("<PackageReference", StringComparison.Ordinal), "production project has no PackageReference");
         Assert(project.Contains("VerifyNoPackageReferences", StringComparison.Ordinal), "zero-package verification target");
+        Assert(
+            project.Contains("obj/**;bin/**", StringComparison.Ordinal),
+            "production source glob permanently excludes local build artifacts");
 
         var restoreConfig = File.ReadAllText(Path.Combine(validator, "restore-offline.config"));
         Assert(restoreConfig.Contains("<packageSources>", StringComparison.Ordinal), "restore config declares sources");
