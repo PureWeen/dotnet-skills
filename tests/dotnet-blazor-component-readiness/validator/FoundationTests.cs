@@ -604,7 +604,7 @@ internal static class FoundationTests
             return;
         }
 
-        var wrapperDirectory = Path.Combine(testRoot, "dotnet10-wrapper");
+        var wrapperDirectory = Path.Combine(testRoot, "wrong-sdk-wrapper");
         Directory.CreateDirectory(wrapperDirectory);
         var wrapper = Path.Combine(wrapperDirectory, "dotnet");
         File.WriteAllText(
