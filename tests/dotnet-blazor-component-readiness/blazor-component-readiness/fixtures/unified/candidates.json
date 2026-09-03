@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "acquisition": "published",
+  "package_origin": {"locator": "package.nupkg", "retrieval_method": "local-file"},
+  "source": {
+    "availability": "source-available",
+    "repository_uri": "https://code.example.test/synthetic/readiness",
+    "commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "mapping": "The package metadata maps to this synthetic source commit.",
+    "confidence": "high"
+  },
+  "retrieval_attempts": [
+    {"subject": "package", "locator": "package.nupkg", "retrieval_method": "local-file", "result": "succeeded", "detail": null}
+  ],
+  "documentation": [
+    {"url": "https://docs.example.test/synthetic/readiness", "content_path": "docs.html"}
+  ],
+  "package_sources": [
+    {"kind": "package-readme", "locator": "package:README.md", "content_path": "package-readme.md"}
+  ],
+  "owner_inputs": [
+    {"path": "owner-audit.txt", "provenance": "owner-supplied-internal-evidence"}
+  ],
+  "components": [
+    {"id": "grid", "display_name": "Grid", "render_modes": ["interactive-server", "static-ssr"], "allowed_source_paths": ["src/Grid.razor"]}
+  ],
+  "exclusions": []
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "acquisition": "published",
+  "package_origin": {"locator": "package.nupkg", "retrieval_method": "local-file"},
+  "source": {
+    "availability": "source-available",
+    "repository_uri": "https://code.example.test/library/controls",
+    "commit": "cccccccccccccccccccccccccccccccccccccccc",
+    "mapping": "The package maps to this synthetic source commit.",
+    "confidence": "high"
+  },
+  "retrieval_attempts": [
+    {"subject": "package", "locator": "package.nupkg", "retrieval_method": "local-file", "result": "succeeded", "detail": null}
+  ],
+  "documentation": [
+    {"url": "https://docs.example.test/library/chart", "content_path": "docs-chart.html"},
+    {"url": "https://docs.example.test/library/grid", "content_path": "docs-grid.html"}
+  ],
+  "package_sources": [],
+  "owner_inputs": [],
+  "components": [
+    {"id": "chart", "display_name": "Chart", "render_modes": ["interactive-webassembly"], "allowed_source_paths": ["src/Chart.razor"]},
+    {"id": "grid", "display_name": "Grid", "render_modes": ["interactive-server", "static-ssr"], "allowed_source_paths": ["src/Grid.razor"]}
+  ],
+  "exclusions": []
+}

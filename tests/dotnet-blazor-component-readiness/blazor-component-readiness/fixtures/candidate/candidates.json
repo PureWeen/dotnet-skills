@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "acquisition": "release-candidate",
+  "package_origin": {"locator": "package.nupkg", "retrieval_method": "local-file"},
+  "source": {
+    "availability": "source-available",
+    "repository_uri": "https://code.example.test/candidate/widget",
+    "commit": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "mapping": "The candidate build record maps to this synthetic commit.",
+    "confidence": "high"
+  },
+  "retrieval_attempts": [
+    {"subject": "package", "locator": "package.nupkg", "retrieval_method": "local-file", "result": "succeeded", "detail": null}
+  ],
+  "documentation": [],
+  "package_sources": [
+    {"kind": "package-readme", "locator": "candidate:release-notes", "content_path": "release-notes.md"}
+  ],
+  "owner_inputs": [],
+  "components": [
+    {"id": "candidate-grid", "display_name": "Candidate Grid", "render_modes": ["interactive-server"], "allowed_source_paths": ["src/CandidateGrid.razor"]}
+  ],
+  "exclusions": []
+}

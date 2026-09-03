@@ -1,0 +1,282 @@
+#!/usr/bin/env python3
+import argparse
+import base64
+import json
+from pathlib import Path
+
+
+STATUSES = [
+    "verified",
+    "gap",
+    "owner evidence required",
+    "not tested",
+    "not applicable",
+]
+
+
+def write_json(path, value):
+    text = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    for character, escaped in (
+        ("<", "\\u003C"),
+        (">", "\\u003E"),
+        ("&", "\\u0026"),
+        ("'", "\\u0027"),
+        ("`", "\\u0060"),
+    ):
+        text = text.replace(character, escaped)
+    Path(path).write_text(text, encoding="utf-8")
+
+
+def decode(args):
+    Path(args.output).write_bytes(base64.b64decode(Path(args.input).read_text().strip()))
+
+
+def evidence_inputs(args):
+    assessment = json.loads(Path(args.assessment).read_text(encoding="utf-8"))
+    identity = assessment["identity"]
+    write_json(args.identity, identity)
+    if assessment["assessment_kind"] != "component":
+        write_json(
+            args.subject,
+            {
+                "assessment_kind": identity["assessment_kind"],
+                "package": identity["package"],
+                "input_manifest_sha256": identity["input_manifest_sha256"],
+                "component_id": identity["component_id"],
+            },
+        )
+
+    component = identity["component_id"]
+    scope = "component-specific" if assessment["assessment_kind"] == "component" else "repository-wide"
+    records = [
+        {
+            "claim": args.claim,
+            "applicability": {"scope": scope, "component_id": component if scope == "component-specific" else None},
+            "provenance": {
+                "kind": args.provenance,
+                "locator": args.locator,
+                "method": "Captured the supplied synthetic fixture without external access.",
+                "captured_at_utc": "2026-09-02T20:00:00Z",
+                "content_sha256": {"algorithm": "sha256", "value": args.digest},
+                "retention": "commitment-only",
+            },
+            "supersedes": [],
+        }
+    ]
+    if args.second_claim:
+        records.append(
+            {
+                "claim": args.second_claim,
+                "applicability": {"scope": scope, "component_id": component if scope == "component-specific" else None},
+                "provenance": {
+                    "kind": args.second_provenance,
+                    "locator": args.second_locator,
+                    "method": "Captured the supplied owner-controlled synthetic record.",
+                    "captured_at_utc": "2026-09-02T20:01:00Z",
+                    "content_sha256": {"algorithm": "sha256", "value": args.second_digest},
+                    "retention": "commitment-only",
+                },
+                "supersedes": [],
+            }
+        )
+    write_json(args.draft, {"schema_version": 1, "records": records})
+
+
+def complete(args):
+    assessment = json.loads(Path(args.assessment).read_text(encoding="utf-8"))
+    ledger = json.loads(Path(args.ledger).read_text(encoding="utf-8"))
+    evidence_ids = [record["stable_id"] for record in ledger["records"]]
+    rows = assessment["rows"]
+    for row in rows:
+        row.update(
+            {
+                "status": "not applicable",
+                "observation": None,
+                "evidence_ids": [],
+                "owner_action": None,
+                "assessment_follow_up": None,
+                "not_applicable_rationale": "This bounded synthetic fixture does not exercise this requirement.",
+            }
+        )
+
+    if args.profile == "mixed":
+        rows[0].update(
+            status="gap",
+            observation="The supplied artifact bytes directly demonstrate this bounded product gap.",
+            evidence_ids=[evidence_ids[0]],
+            not_applicable_rationale=None,
+        )
+        rows[1].update(
+            status="owner evidence required",
+            observation="The supplied materials do not establish the retained owner-controlled release fact.",
+            owner_action="Supply the exact owner-controlled record for this package version.",
+            not_applicable_rationale=None,
+        )
+        rows[2].update(
+            status="not tested",
+            assessment_follow_up="Run the bounded runtime probe and retain its exact local result.",
+            not_applicable_rationale=None,
+        )
+        if len(evidence_ids) > 1:
+            rows[3].update(
+                status="verified",
+                observation="The supplied owner-controlled record directly establishes this synthetic fact.",
+                evidence_ids=[evidence_ids[1]],
+                not_applicable_rationale=None,
+            )
+    else:
+        rows[0].update(
+            status="verified",
+            observation="The supplied evidence directly establishes this bounded synthetic fact.",
+            evidence_ids=[evidence_ids[0]],
+            not_applicable_rationale=None,
+        )
+
+    assessment["completion_state"] = "complete"
+    if assessment["assessment_kind"] == "package":
+        assessment["summary_groups"] = []
+        for status in STATUSES:
+            matching = [row for row in rows if row["status"] == status]
+            if matching:
+                assessment["summary_groups"].append(
+                    {
+                        "name": status,
+                        "factual_summary": f"These package rows have the factual status '{status}'.",
+                        "requirement_ids": [row["id"] for row in matching],
+                        "evidence_ids": sorted(
+                            {evidence for row in matching for evidence in row["evidence_ids"]}
+                        ),
+                    }
+                )
+    write_json(args.output, assessment)
+
+
+def verify_revision(args):
+    revision = Path(args.revision)
+    assessments = list(revision.glob("*.assessment.json"))
+    validations = list(revision.glob("*.validation.json"))
+    reports = list(revision.glob("*.report.md"))
+    assert len(assessments) == len(validations) == len(reports) == 1
+    assessment = json.loads(assessments[0].read_text(encoding="utf-8"))
+    manifest = json.loads(validations[0].read_text(encoding="utf-8"))
+    assert assessment["assessment_kind"] == args.kind
+    assert len(assessment["rows"]) == args.rows
+    assert assessment["completion_state"] == "complete"
+    assert manifest["assessment_kind"] == args.kind
+    assert manifest["completion_state"] == "complete"
+    assert not (revision.parent.parent / "decision-guidance.md").exists()
+    print(f"VALID {args.kind} {args.rows}")
+
+
+def verify_library(args):
+    root = Path(args.root)
+    index = json.loads((root / "library-index.json").read_text(encoding="utf-8"))
+    markdown = (root / "library-index.md").read_text(encoding="utf-8").lower()
+    packages = index["packages"]
+    assert len(packages) == args.packages
+    assert sum(len(package["components"]) for package in packages) == args.components
+    assert "remediation priority" not in markdown
+    assert "release verdict" not in markdown
+    assert not (root / "decision-guidance.md").exists()
+    print(f"VALID library {args.packages} {args.components}")
+
+
+def inventory_candidates(args):
+    root = Path(args.root).resolve()
+    package_path = Path(args.package_manifest).resolve()
+    package = json.loads(package_path.read_text(encoding="utf-8"))
+    package_id = package["package"]["package_id"]
+    version = package["package"]["version"]
+    acquisition = package["acquisition"]
+    digest = package["package"]["nupkg_sha256"]["value"]
+    base = f"packages/{package_id}/{version}"
+    if acquisition == "release-candidate":
+        base += f"/candidates/{digest}"
+    components = []
+    for value in args.component:
+        component_id, manifest_path = value.split("=", 1)
+        component_path = Path(manifest_path).resolve()
+        manifest = json.loads(component_path.read_text(encoding="utf-8"))
+        item = manifest["components"][0]
+        assert item["id"] == component_id
+        components.append(
+            {
+                "component_id": component_id,
+                "input_manifest_path": component_path.relative_to(root).as_posix(),
+                "revision_root": f"{base}/components/{component_id}/revisions",
+                "render_modes": item["render_modes"],
+                "exclusions": [],
+            }
+        )
+    write_json(
+        args.output,
+        {
+            "schema_version": 1,
+            "packages": [
+                {
+                    "input_manifest_path": package_path.relative_to(root).as_posix(),
+                    "revision_root": f"{base}/revisions",
+                    "components": components,
+                    "exclusions": [],
+                }
+            ],
+        },
+    )
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(required=True)
+
+    command = sub.add_parser("decode")
+    command.add_argument("input")
+    command.add_argument("output")
+    command.set_defaults(func=decode)
+
+    command = sub.add_parser("evidence-inputs")
+    command.add_argument("--assessment", required=True)
+    command.add_argument("--identity", required=True)
+    command.add_argument("--subject", required=True)
+    command.add_argument("--draft", required=True)
+    command.add_argument("--claim", required=True)
+    command.add_argument("--provenance", default="vendor-public-documentation")
+    command.add_argument("--locator", default="https://docs.example.test/synthetic")
+    command.add_argument("--digest", default="b" * 64)
+    command.add_argument("--second-claim")
+    command.add_argument("--second-provenance", default="owner-supplied-internal-evidence")
+    command.add_argument("--second-locator", default="owner-audit.txt")
+    command.add_argument("--second-digest", default="c" * 64)
+    command.set_defaults(func=evidence_inputs)
+
+    command = sub.add_parser("complete")
+    command.add_argument("--assessment", required=True)
+    command.add_argument("--ledger", required=True)
+    command.add_argument("--output", required=True)
+    command.add_argument("--profile", choices=["default", "mixed"], default="default")
+    command.set_defaults(func=complete)
+
+    command = sub.add_parser("verify-revision")
+    command.add_argument("--revision", required=True)
+    command.add_argument("--kind", choices=["unified", "package", "component"], required=True)
+    command.add_argument("--rows", type=int, required=True)
+    command.set_defaults(func=verify_revision)
+
+    command = sub.add_parser("verify-library")
+    command.add_argument("--root", required=True)
+    command.add_argument("--packages", type=int, required=True)
+    command.add_argument("--components", type=int, required=True)
+    command.set_defaults(func=verify_library)
+
+    command = sub.add_parser("inventory-candidates")
+    command.add_argument("--root", required=True)
+    command.add_argument("--package-manifest", required=True)
+    command.add_argument("--component", action="append", required=True)
+    command.add_argument("--output", required=True)
+    command.set_defaults(func=inventory_candidates)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

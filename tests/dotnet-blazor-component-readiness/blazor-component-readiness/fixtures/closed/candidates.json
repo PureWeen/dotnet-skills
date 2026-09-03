@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "acquisition": "published",
+  "package_origin": {"locator": "package.nupkg", "retrieval_method": "local-file"},
+  "source": {"availability": "closed-source", "repository_uri": null, "commit": null, "mapping": null, "confidence": null},
+  "retrieval_attempts": [
+    {"subject": "package", "locator": "package.nupkg", "retrieval_method": "local-file", "result": "succeeded", "detail": null}
+  ],
+  "documentation": [
+    {"url": "https://docs.example.test/closed/widget", "content_path": "docs.html"}
+  ],
+  "package_sources": [],
+  "owner_inputs": [],
+  "components": [
+    {"id": "closed-grid", "display_name": "Closed Grid", "render_modes": ["interactive-server"], "allowed_source_paths": []}
+  ],
+  "exclusions": [{"subject": "Source inspection", "rationale": "The owner declares this package closed source."}]
+}
