@@ -175,6 +175,42 @@ stimuli:
       - Marks interrupted active work incomplete and resumes only unfinished units
       - Reconstructs and validates a complete run manifest before indexing
 
+  - name: Fail closed before a blind worker starts
+    prompt: |
+      Prepare the supplied raw package, source, retrieval, and toolchain files for an isolated blinded
+      accuracy run. Freeze the exact allowed-input manifest before launching any worker. One referenced
+      trim log is absent. Do not repair or infer it, do not start the worker, and write
+      ./out/comparison-blocker.json with stage "comparison-input-freeze", disposition "blocked", and
+      missing_input "missing-trim.bin".
+    environment:
+      files:
+        - src: fixtures/blind-input-gate
+          dest: fixture
+        - src: ../blazor-component-readiness/fixtures/fixture-tool.py
+          dest: fixture/fixture-tool.py
+      commands:
+        - python3 fixture/fixture-tool.py decode fixture/package.nupkg.b64 fixture/package.nupkg
+    graders:
+      - type: file-exists
+        config:
+          path: out/comparison-blocker.json
+      - type: file-not-exists
+        config:
+          path: out/worker-handoff.json
+      - type: file-not-exists
+        config:
+          path: out/revisions/**
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py verify-blind-blocked --root out
+          expected_exit_code: 0
+      - type: exit-success
+      - type: prompt
+    rubric:
+      - Validates the conclusion-free exact-input gate before delegation
+      - Fails closed on the missing raw probe input without launching a worker
+      - Reports the exact missing input rather than converting it into a product conclusion
+
   - name: Keep coordination local and factual
     prompt: |
       Create the verified local assessment for the supplied Blazor Grid package. Do not push, comment,

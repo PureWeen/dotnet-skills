@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "state": "draft",
+  "package": {
+    "package_id": "synthetic.readiness",
+    "version": "1.0.0",
+    "nupkg_input_id": "package",
+    "nupkg_sha256": {"algorithm": "sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+  },
+  "source": {
+    "availability": "source-available",
+    "repository_uri": "https://code.example.test/synthetic/readiness",
+    "commit": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "archive_input_id": "source"
+  },
+  "allowed_inputs": [
+    {"id": "package", "kind": "nupkg", "path": "package.nupkg"},
+    {"id": "retrieval", "kind": "retrieval-record", "path": "retrieval.bin"},
+    {"id": "sdk-version", "kind": "toolchain-identity", "path": "sdk.bin"},
+    {"id": "source", "kind": "source-archive", "path": "source.bin"},
+    {"id": "trim-log", "kind": "probe-log", "path": "missing-trim.bin"}
+  ],
+  "toolchains": [
+    {"id": "sdk", "name": "Synthetic .NET SDK", "version": "11.0.100", "disposition": "available", "blocker": null, "input_ids": ["sdk-version"]}
+  ],
+  "browsers": [],
+  "retrievals": [
+    {"id": "package-fetch", "subject": "Exact package retrieval", "locator": "https://packages.example.test/synthetic", "disposition": "available", "blocker": null, "toolchain_id": null, "browser_id": null, "input_ids": ["retrieval"]}
+  ],
+  "probes": [
+    {"id": "trim-probe", "subject": "Supported trim comparison", "locator": "local trim command", "disposition": "available", "blocker": null, "toolchain_id": "sdk", "browser_id": null, "input_ids": ["trim-log"]}
+  ]
+}

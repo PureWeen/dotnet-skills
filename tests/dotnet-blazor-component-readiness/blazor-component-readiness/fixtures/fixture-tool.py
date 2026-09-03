@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import base64
+import hashlib
 import json
 from pathlib import Path
 
@@ -55,7 +56,7 @@ def evidence_inputs(args):
             "provenance": {
                 "kind": args.provenance,
                 "locator": args.locator,
-                "method": "Captured the supplied synthetic fixture without external access.",
+                "method": args.method,
                 "captured_at_utc": "2026-09-02T20:00:00Z",
                 "content_sha256": {"algorithm": "sha256", "value": args.digest},
                 "retention": "commitment-only",
@@ -190,6 +191,87 @@ def verify_library(args):
     print(f"VALID library {args.packages} {args.components}")
 
 
+def assert_row_not_verified(args):
+    assessment = json.loads(Path(args.assessment).read_text(encoding="utf-8"))
+    row = next(row for row in assessment["rows"] if row["id"] == args.id)
+    assert row["status"] != "verified"
+    print(f"VALID {args.id} {row['status']}")
+
+
+def verify_dynamic(args):
+    root = Path(args.root)
+    manifest = json.loads((root / "input.confirmed.json").read_text(encoding="utf-8"))
+    component = next(item for item in manifest["components"] if item["id"] == "dynamic-group")
+    lifecycle = component["dynamic_child_lifecycle"]
+    assert lifecycle["applicability"] == "required"
+    assert lifecycle["triggers"]
+    inputs = {item["basename"]: item for item in manifest["evidence_inputs"]}
+    raw = [item for item in inputs.values() if item["kind"] == "raw-observation"]
+    assert len(raw) == 10
+    protocol_input = next(
+        item for item in inputs.values() if item["kind"] == "structured-protocol"
+    )
+    protocol_path = root / protocol_input["basename"]
+    protocol_bytes = protocol_path.read_bytes()
+    assert hashlib.sha256(protocol_bytes).hexdigest() == protocol_input["content_sha256"]["value"]
+    protocol = json.loads(protocol_bytes)
+    operations = protocol["operations"]
+    expected = [
+        "add-child",
+        "remove-child",
+        "keyed-reorder",
+        "disable-or-remove-selected-child",
+        "membership-reconciliation",
+        "propagated-name-default-value-state",
+        "focus-ownership-restoration",
+        "single-roving-tab-stop",
+        "callbacks-error-routing",
+        "cleanup-disposal",
+    ]
+    assert [item["operation"] for item in operations] == expected
+    for item in operations:
+        assert item["disposition"] in ("observed", "not-tested")
+        if item["disposition"] == "observed":
+            assert item["outcome"] in ("passed", "failed")
+            digest = item["raw_observation_sha256"]["value"]
+            raw_input = next(value for value in raw if value["content_sha256"]["value"] == digest)
+            raw_bytes = (root / raw_input["basename"]).read_bytes()
+            assert hashlib.sha256(raw_bytes).hexdigest() == digest
+            observation = json.loads(raw_bytes)
+            assert observation["operation"] == item["operation"]
+            assert observation["phase"] == "after-initial-render"
+        else:
+            assert item["not_tested_reason"]
+
+    revision = root / "revisions" / "0001"
+    assessment = json.loads((revision / "unified.assessment.json").read_text(encoding="utf-8"))
+    evidence = json.loads((revision / "unified.evidence.json").read_text(encoding="utf-8"))
+    record = next(
+        record
+        for ledger in evidence["source_ledgers"]
+        for record in ledger["ledger"]["records"]
+        if record["provenance"]["method"] == "protocol:dynamic-child-lifecycle-v1"
+    )
+    for row_id in ("A11Y-06", "A11Y-07", "A11Y-08", "BEQ-12", "BEQ-15"):
+        row = next(row for row in assessment["rows"] if row["id"] == row_id)
+        assert row["status"] in ("verified", "gap", "not tested")
+        assert record["stable_id"] in row["evidence_ids"]
+    verify = argparse.Namespace(revision=str(revision), kind="unified", rows=110)
+    verify_revision(verify)
+    print("VALID dynamic lifecycle 10")
+
+
+def verify_blind_blocked(args):
+    root = Path(args.root)
+    blocker = json.loads((root / "comparison-blocker.json").read_text(encoding="utf-8"))
+    assert blocker["stage"] == "comparison-input-freeze"
+    assert blocker["disposition"] == "blocked"
+    assert blocker["missing_input"] == "missing-trim.bin"
+    assert not (root / "worker-handoff.json").exists()
+    assert not (root / "revisions").exists()
+    print("VALID blind gate blocked")
+
+
 def inventory_candidates(args):
     root = Path(args.root).resolve()
     package_path = Path(args.package_manifest).resolve()
@@ -251,6 +333,10 @@ def main():
     command.add_argument("--provenance", default="vendor-public-documentation")
     command.add_argument("--locator", default="https://docs.example.test/synthetic")
     command.add_argument("--digest", default="b" * 64)
+    command.add_argument(
+        "--method",
+        default="Captured the supplied synthetic fixture without external access.",
+    )
     command.add_argument("--second-claim")
     command.add_argument("--second-provenance", default="owner-supplied-internal-evidence")
     command.add_argument("--second-locator", default="owner-audit.txt")
@@ -275,6 +361,19 @@ def main():
     command.add_argument("--packages", type=int, required=True)
     command.add_argument("--components", type=int, required=True)
     command.set_defaults(func=verify_library)
+
+    command = sub.add_parser("assert-row-not-verified")
+    command.add_argument("--assessment", required=True)
+    command.add_argument("--id", required=True)
+    command.set_defaults(func=assert_row_not_verified)
+
+    command = sub.add_parser("verify-dynamic")
+    command.add_argument("--root", required=True)
+    command.set_defaults(func=verify_dynamic)
+
+    command = sub.add_parser("verify-blind-blocked")
+    command.add_argument("--root", required=True)
+    command.set_defaults(func=verify_blind_blocked)
 
     command = sub.add_parser("inventory-candidates")
     command.add_argument("--root", required=True)

@@ -343,6 +343,130 @@ stimuli:
       - Does not create a ranked remediation artifact
       - Clearly separates factual limitations from deterministic structural validation
 
+  - name: Exercise post-initialization child mutations
+    prompt: |
+      Assess the supplied release-candidate Blazor selection group under ./out. It registers and selects
+      child items, so exercise its behavior after initial render when children are added, removed,
+      reordered, disabled, selected, focused, callback-faulted, and disposed. Produce and verify the
+      complete local record without external access.
+    environment:
+      files:
+        - src: fixtures/dynamic-group
+          dest: fixture
+        - src: fixtures/fixture-tool.py
+          dest: fixture/fixture-tool.py
+      commands:
+        - python3 fixture/fixture-tool.py decode fixture/package.nupkg.b64 fixture/package.nupkg
+    graders:
+      - type: file-exists
+        config:
+          path: out/revisions/0001/unified.validation.json
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py verify-dynamic --root out
+          expected_exit_code: 0
+          stdout_matches: VALID dynamic lifecycle 10
+      - type: exit-success
+      - type: prompt
+    rubric:
+      - Exercises child mutations after the initial render rather than checking only the initial group
+      - Retains a raw digest-bound observation or an operation-specific blocker for every applicable mutation
+      - Connects membership, propagated state, focus, keyboard, callback, and cleanup outcomes to the factual rows
+
+  - name: Bound third-party notice completeness
+    prompt: |
+      Produce the complete package-wide local record for the supplied Blazor package. The captured material
+      lists a license file and generated license sidecars, but it contains no dependency-to-bundled-asset
+      notice inventory. Do not use the network, and verify the result under ./out.
+    environment:
+      files:
+        - src: fixtures/evidence-boundaries
+          dest: fixture
+        - src: fixtures/fixture-tool.py
+          dest: fixture/fixture-tool.py
+      commands:
+        - python3 fixture/fixture-tool.py decode fixture/package.nupkg.b64 fixture/package.nupkg
+    graders:
+      - type: file-exists
+        config:
+          path: out/revisions/0001/package.validation.json
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py assert-row-not-verified --assessment out/revisions/0001/package.assessment.json --id LP-04
+          expected_exit_code: 0
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 46
+          expected_exit_code: 0
+      - type: exit-success
+      - type: prompt
+    rubric:
+      - Treats the listed files as presence evidence rather than proof of complete notice coverage
+      - Requests or leaves untested the missing dependency and bundled-asset mapping
+
+  - name: Bound embedded signing metadata
+    prompt: |
+      Produce the complete package-wide local record for the supplied Blazor package. The only assembly
+      signing material is captured metadata saying a PE certificate table and signer subject are present;
+      no file-digest, chain, timestamp, or revocation verification was supplied. Stay offline and verify
+      the result under ./out.
+    environment:
+      files:
+        - src: fixtures/evidence-boundaries
+          dest: fixture
+        - src: fixtures/fixture-tool.py
+          dest: fixture/fixture-tool.py
+      commands:
+        - python3 fixture/fixture-tool.py decode fixture/package.nupkg.b64 fixture/package.nupkg
+    graders:
+      - type: file-exists
+        config:
+          path: out/revisions/0001/package.validation.json
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py assert-row-not-verified --assessment out/revisions/0001/package.assessment.json --id PI-02
+          expected_exit_code: 0
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 46
+          expected_exit_code: 0
+      - type: exit-success
+      - type: prompt
+    rubric:
+      - Does not equate an embedded certificate table or signer subject with valid Authenticode
+      - Identifies the per-artifact verification evidence still required
+
+  - name: Bound accountable support ownership
+    prompt: |
+      Produce the complete package-wide local record for the supplied Blazor package. The captured metadata
+      names an organization, author, and public contact route, but it does not name the accountable support
+      role, current owner, backup, package scope, or escalation coverage. Stay offline and verify under ./out.
+    environment:
+      files:
+        - src: fixtures/evidence-boundaries
+          dest: fixture
+        - src: fixtures/fixture-tool.py
+          dest: fixture/fixture-tool.py
+      commands:
+        - python3 fixture/fixture-tool.py decode fixture/package.nupkg.b64 fixture/package.nupkg
+    graders:
+      - type: file-exists
+        config:
+          path: out/revisions/0001/package.validation.json
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py assert-row-not-verified --assessment out/revisions/0001/package.assessment.json --id SUP-01
+          expected_exit_code: 0
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 46
+          expected_exit_code: 0
+      - type: exit-success
+      - type: prompt
+    rubric:
+      - Does not equate organization, author, or contact metadata with accountable support ownership
+      - Identifies the missing owner, scope, backup, and escalation evidence
+
   - name: Stay dormant for ordinary component authoring
     prompt: Create a reusable Blazor date-range picker with keyboard navigation and form validation.
     expect_activation: false
