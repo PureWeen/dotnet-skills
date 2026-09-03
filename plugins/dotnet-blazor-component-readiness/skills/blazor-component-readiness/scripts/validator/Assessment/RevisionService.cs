@@ -38,7 +38,7 @@ public static class RevisionService
             feedbackBytes,
             packageBinding: null,
             validateChain: true,
-            allowMissingFeedback: false);
+            allowMissingFeedback: true);
         if (revision.Kind != "package" ||
             revision.Assessment.CompletionState != "complete" ||
             revision.Manifest.CompletionState != "complete")
@@ -285,6 +285,12 @@ public static class RevisionService
                 "Assessment corrections cannot change confirmed input-manifest bytes.");
         }
 
+        if (predecessor.Manifest.FeedbackDigest != replacement.Manifest.FeedbackDigest)
+        {
+            throw new DeterministicValidationException(
+                "Evidence-backed corrections must preserve the predecessor feedback digest exactly; feedback edits require a separate feedback-only revision.");
+        }
+
         var actual = predecessor.Assessment.Rows.Zip(
                 replacement.Assessment.Rows,
                 (before, after) => new
@@ -306,15 +312,17 @@ public static class RevisionService
 
         var beforeRows = predecessor.Assessment.Rows.ToDictionary(row => row.Id, StringComparer.Ordinal);
         var afterRows = replacement.Assessment.Rows.ToDictionary(row => row.Id, StringComparer.Ordinal);
+        var predecessorSelectedEvidence = predecessor.Manifest.SelectedEvidenceIds
+            .ToHashSet(StringComparer.Ordinal);
         foreach (var id in declared)
         {
             var before = beforeRows[id];
             var after = afterRows[id];
             if (before.Status != after.Status &&
-                !after.EvidenceIds.Except(before.EvidenceIds, StringComparer.Ordinal).Any())
+                !after.EvidenceIds.Except(predecessorSelectedEvidence, StringComparer.Ordinal).Any())
             {
                 throw new DeterministicValidationException(
-                    $"Status change for '{id}' requires added or changed evidence that explains the correction.");
+                    $"Status change for '{id}' requires evidence absent from the predecessor's entire selected-evidence set.");
             }
         }
 

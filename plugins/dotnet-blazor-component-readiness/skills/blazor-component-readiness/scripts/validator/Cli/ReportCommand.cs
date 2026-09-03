@@ -103,6 +103,7 @@ public static class ReportCommand
                 Path.GetDirectoryName(Path.GetFullPath(packageRevision))!);
         }
 
+        using var revisionRootLock = RevisionRootLock.Acquire(outputRoot);
         var nextSequence = NextSequence(outputRoot);
         var changedIds = ParseChangedIds(options.Optional("--changed-ids"));
         var predecessorText = options.Optional("--predecessor");
@@ -223,6 +224,23 @@ public static class ReportCommand
                         "Validated package revision changed while the component report was rendered.");
                 }
             }
+
+            EnsureRevisionRootUnchanged(outputRoot, nextSequence, staging);
+            if (predecessor is not null)
+            {
+                var currentPredecessor = RevisionService.VerifyRevision(
+                    root,
+                    predecessor.Directory,
+                    feedbackBytes: null,
+                    packageBinding,
+                    validateChain: true,
+                    allowMissingFeedback: true);
+                if (ContractJson.RawDigest(currentPredecessor.ManifestBytes) != predecessorDigest)
+                {
+                    throw new DeterministicValidationException(
+                        "The immediate predecessor manifest changed while the revision was rendered.");
+                }
+            }
         });
         return ExitCodes.Success;
     }
@@ -314,6 +332,11 @@ public static class ReportCommand
 
     private static int NextSequence(string outputRoot)
     {
+        return NextSequence(outputRoot, ignoredDirectory: null);
+    }
+
+    private static int NextSequence(string outputRoot, string? ignoredDirectory)
+    {
         if (!Directory.Exists(outputRoot))
         {
             return 1;
@@ -325,7 +348,10 @@ public static class ReportCommand
                 "Revision root cannot contain mutable files or a latest pointer.");
         }
 
+        var ignored = ignoredDirectory is null ? null : Path.GetFullPath(ignoredDirectory);
         var directories = Directory.GetDirectories(outputRoot)
+            .Where(path => ignored is null ||
+                !string.Equals(Path.GetFullPath(path), ignored, StringComparison.Ordinal))
             .Select(path => new
             {
                 Path = path,
@@ -344,6 +370,18 @@ public static class ReportCommand
         }
 
         return directories.Length + 1;
+    }
+
+    private static void EnsureRevisionRootUnchanged(
+        string outputRoot,
+        int expectedNextSequence,
+        string stagingDirectory)
+    {
+        if (NextSequence(outputRoot, stagingDirectory) != expectedNextSequence)
+        {
+            throw new DeterministicValidationException(
+                "Revision root sequence changed while the revision was rendered.");
+        }
     }
 
     private static IReadOnlyList<string> ParseChangedIds(string? value)

@@ -40,9 +40,12 @@ internal static class AssessmentTests
             TestStatusAndEvidenceBoundaries(fixture);
             TestCliAndRendering(fixture);
             TestCommit5Contracts(fixture, packageRevision, packageBinding);
+            TestRevisionIntegrityRegressions(fixture, packageRevision);
+            TestHistoricalPackageFeedbackBinding(fixture);
             TestCliSubprocess(fixture, pluginRoot);
             TestSnapshotMutation(root);
             TestReportInputMutationRaces(fixture);
+            TestRevisionPublishMutationRaces(fixture);
         }
         finally
         {
@@ -1558,6 +1561,292 @@ internal static class AssessmentTests
         Assert(!Directory.Exists(Path.Combine(revisions, "0003")), $"{name} writes no output");
     }
 
+    private static void TestRevisionIntegrityRegressions(
+        Fixture fixture,
+        string packageRevision)
+    {
+            var packageBinding = RevisionService.LoadPackageBinding(
+                fixture.Root,
+                packageRevision,
+                feedbackBytes: null);
+            var initialized = AssessmentService.Initialize(
+                "component",
+                fixture.Root,
+                fixture.Confirmed,
+                fixture.ConfirmedBytes,
+                "fancy-tree",
+                [],
+                packageBinding);
+            var baseEvidence = BuildEvidence(initialized.Identity);
+            var evidence = AddEvidence(baseEvidence);
+            var originalEvidenceId = baseEvidence.Selection.Single().EvidenceId;
+            var reassignedEvidenceId = BuildEvidence(initialized.Identity, alternate: true)
+                .Selection.Single().EvidenceId;
+            var completed = Complete(initialized, baseEvidence, "gap");
+            var rows = completed.Rows.ToArray();
+            rows[0] = rows[0] with { EvidenceIds = [originalEvidenceId] };
+            rows[1] = rows[1] with { EvidenceIds = [reassignedEvidenceId] };
+            var assessment = completed with { Rows = rows };
+            Validate(fixture, assessment, evidence, packageBinding);
+
+            var assessmentPath = Path.Combine(fixture.Root, "integrity.component.assessment.json");
+            var evidencePath = Path.Combine(fixture.Root, "integrity.component.evidence.json");
+            var feedbackPath = Path.Combine(fixture.Root, "integrity.component.feedback.md");
+            var revisions = Path.Combine(fixture.Root, "integrity-component-revisions");
+            var feedback1 = Encoding.UTF8.GetBytes(
+                "# Assessment feedback\n\n| Requirement IDs | Feedback |\n|---|---|\n" +
+                $"| `{assessment.Rows[0].Id}` | Preserve this feedback across the correction. |\n");
+            File.WriteAllBytes(assessmentPath, AssessmentService.Serialize(assessment));
+            File.WriteAllBytes(evidencePath, CanonicalEvidenceJson.SerializeBundle(evidence));
+            File.WriteAllBytes(feedbackPath, feedback1);
+            var output = new StringWriter();
+            var error = new StringWriter();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    [
+                        "report", "render",
+                        "--root", fixture.Root,
+                        "--input", fixture.ConfirmedPath,
+                        "--assessment", assessmentPath,
+                        "--evidence", evidencePath,
+                        "--output", revisions,
+                        "--feedback", feedbackPath,
+                        "--package-revision", packageRevision
+                    ],
+                    output,
+                    error),
+                $"integrity predecessor render: {error}");
+            var predecessorBytes = File.ReadAllBytes(
+                Path.Combine(revisions, "0001", "component.validation.json"));
+            var predecessor = ContractJson.RawDigest(predecessorBytes).Value;
+
+            var reassignedRows = assessment.Rows.ToArray();
+            reassignedRows[0] = reassignedRows[0] with
+            {
+                Status = "verified",
+                Observation = "Previously selected evidence from another row is reassigned here.",
+                EvidenceIds = new[] { originalEvidenceId, reassignedEvidenceId }
+                    .Order(StringComparer.Ordinal)
+                    .ToArray()
+            };
+            var reassignedPath = Path.Combine(
+                fixture.Root,
+                "reassigned-selected-evidence.component.assessment.json");
+            File.WriteAllBytes(
+                reassignedPath,
+                AssessmentService.Serialize(assessment with { Rows = reassignedRows }));
+            Validate(
+                fixture,
+                assessment with { Rows = reassignedRows },
+                evidence,
+                packageBinding);
+            AssertCorrectionFails(
+                fixture,
+                revisions,
+                packageRevision,
+                feedbackPath,
+                predecessor,
+                reassignedPath,
+                evidencePath,
+                assessment.Rows[0].Id,
+                "globally selected evidence reassignment",
+                output,
+                error);
+        Assert(
+                !Directory.Exists(Path.Combine(revisions, "0002")),
+                "globally selected evidence reassignment leaves no output");
+
+            var expandedEvidence = AddThirdEvidence(evidence);
+            var newEvidenceId = expandedEvidence.Selection
+                .Select(item => item.EvidenceId)
+                .Except(evidence.Selection.Select(item => item.EvidenceId), StringComparer.Ordinal)
+                .Single();
+            var correctedRows = assessment.Rows.ToArray();
+            correctedRows[0] = correctedRows[0] with
+            {
+                Status = "verified",
+                Observation = "New content-addressed evidence directly verifies this corrected requirement.",
+                EvidenceIds = new[] { originalEvidenceId, newEvidenceId }
+                    .Order(StringComparer.Ordinal)
+                    .ToArray()
+            };
+            var corrected = assessment with { Rows = correctedRows };
+            Validate(fixture, corrected, expandedEvidence, packageBinding);
+            var correctedPath = Path.Combine(fixture.Root, "integrity-corrected.component.assessment.json");
+            var expandedEvidencePath = Path.Combine(fixture.Root, "integrity-corrected.component.evidence.json");
+            File.WriteAllBytes(correctedPath, AssessmentService.Serialize(corrected));
+            File.WriteAllBytes(expandedEvidencePath, CanonicalEvidenceJson.SerializeBundle(expandedEvidence));
+
+            var feedback2 = Encoding.UTF8.GetBytes(
+                "# Assessment feedback\n\n| Requirement IDs | Feedback |\n|---|---|\n" +
+                $"| `{assessment.Rows[0].Id}` | This feedback edit must be a separate revision. |\n");
+            File.WriteAllBytes(feedbackPath, feedback2);
+            AssertCorrectionFails(
+                fixture,
+                revisions,
+                packageRevision,
+                feedbackPath,
+                predecessor,
+                correctedPath,
+                expandedEvidencePath,
+                assessment.Rows[0].Id,
+                "correction feedback digest mutation",
+                output,
+                error);
+        Assert(
+                !Directory.Exists(Path.Combine(revisions, "0002")),
+                "correction feedback digest mutation leaves no output");
+
+            File.WriteAllBytes(feedbackPath, feedback1);
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    [
+                        "assessment", "revise",
+                        "--root", fixture.Root,
+                        "--input", fixture.ConfirmedPath,
+                        "--assessment", correctedPath,
+                        "--evidence", expandedEvidencePath,
+                        "--output", revisions,
+                        "--feedback", feedbackPath,
+                        "--package-revision", packageRevision,
+                        "--predecessor", predecessor,
+                        "--changed-ids", assessment.Rows[0].Id
+                    ],
+                    output,
+                    error),
+                $"correction preserving feedback digest: {error}");
+            var correctedManifest = ReportService.ParseManifest(File.ReadAllBytes(
+                Path.Combine(revisions, "0002", "component.validation.json")));
+            AssertEqual(
+                FeedbackService.Parse(feedback1, assessment).Digest,
+                correctedManifest.FeedbackDigest,
+                "correction preserves predecessor feedback digest");
+        }
+
+    private static void TestHistoricalPackageFeedbackBinding(Fixture fixture)
+    {
+            var initialized = AssessmentService.Initialize(
+                "package",
+                fixture.Root,
+                fixture.Confirmed,
+                fixture.ConfirmedBytes,
+                null,
+                []);
+            var evidence = BuildEvidence(initialized.Identity);
+            var assessment = Complete(initialized, evidence, "gap");
+            var assessmentPath = Path.Combine(fixture.Root, "historical-package.assessment.json");
+            var evidencePath = Path.Combine(fixture.Root, "historical-package.evidence.json");
+            var feedbackPath = Path.Combine(fixture.Root, "historical-package.feedback.md");
+            var revisions = Path.Combine(fixture.Root, "historical-package-revisions");
+            var feedback1 = Encoding.UTF8.GetBytes(
+                "# Assessment feedback\n\n| Requirement IDs | Feedback |\n|---|---|\n" +
+                $"| `{assessment.Rows[0].Id}` | Package feedback F1. |\n");
+            var feedback2 = Encoding.UTF8.GetBytes(
+                "# Assessment feedback\n\n| Requirement IDs | Feedback |\n|---|---|\n" +
+                $"| `{assessment.Rows[0].Id}` | Package feedback F2. |\n");
+            File.WriteAllBytes(assessmentPath, AssessmentService.Serialize(assessment));
+            File.WriteAllBytes(evidencePath, CanonicalEvidenceJson.SerializeBundle(evidence));
+            File.WriteAllBytes(feedbackPath, feedback1);
+            var output = new StringWriter();
+            var error = new StringWriter();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    [
+                        "report", "render",
+                        "--root", fixture.Root,
+                        "--input", fixture.ConfirmedPath,
+                        "--assessment", assessmentPath,
+                        "--evidence", evidencePath,
+                        "--output", revisions,
+                        "--feedback", feedbackPath
+                    ],
+                    output,
+                    error),
+                $"package feedback F1 render: {error}");
+            var packageRevision1 = Path.Combine(revisions, "0001");
+            var packageBinding = RevisionService.LoadPackageBinding(
+                fixture.Root,
+                packageRevision1,
+                feedbackBytes: null);
+
+            var component = AssessmentService.Initialize(
+                "component",
+                fixture.Root,
+                fixture.Confirmed,
+                fixture.ConfirmedBytes,
+                "fancy-tree",
+                [],
+                packageBinding);
+            var componentEvidence = BuildEvidence(component.Identity);
+            var componentAssessment = Complete(component, componentEvidence, "gap");
+            var componentAssessmentPath = Path.Combine(
+                fixture.Root,
+                "historical-binding.component.assessment.json");
+            var componentEvidencePath = Path.Combine(
+                fixture.Root,
+                "historical-binding.component.evidence.json");
+            var componentRevisions = Path.Combine(fixture.Root, "historical-binding-component-revisions");
+            File.WriteAllBytes(
+                componentAssessmentPath,
+                AssessmentService.Serialize(componentAssessment));
+            File.WriteAllBytes(
+                componentEvidencePath,
+                CanonicalEvidenceJson.SerializeBundle(componentEvidence));
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    [
+                        "report", "render",
+                        "--root", fixture.Root,
+                        "--input", fixture.ConfirmedPath,
+                        "--assessment", componentAssessmentPath,
+                        "--evidence", componentEvidencePath,
+                        "--output", componentRevisions,
+                        "--package-revision", packageRevision1
+                    ],
+                    output,
+                    error),
+                $"component binding to package feedback F1: {error}");
+
+            var packageManifest1 = File.ReadAllBytes(
+                Path.Combine(packageRevision1, "package.validation.json"));
+            File.WriteAllBytes(feedbackPath, feedback2);
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    [
+                        "report", "render",
+                        "--root", fixture.Root,
+                        "--input", fixture.ConfirmedPath,
+                        "--assessment", assessmentPath,
+                        "--evidence", evidencePath,
+                        "--output", revisions,
+                        "--feedback", feedbackPath,
+                        "--predecessor", ContractJson.RawDigest(packageManifest1).Value
+                    ],
+                    output,
+                    error),
+                $"package feedback F2 render: {error}");
+            ExpectValidation(
+                () => RevisionService.LoadPackageBinding(fixture.Root, packageRevision1, feedback2),
+                "historical package binding rejects nonmatching supplied feedback");
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    [
+                        "report", "verify",
+                        "--root", fixture.Root,
+                        "--revision", Path.Combine(componentRevisions, "0001"),
+                        "--package-revision", packageRevision1
+                    ],
+                    output,
+                    error),
+                $"historical component verifies without reconstructing package feedback F1: {error}");
+    }
+
     private static void CopyDirectory(string source, string destination)
     {
         Directory.CreateDirectory(destination);
@@ -1793,6 +2082,117 @@ internal static class AssessmentTests
         }
     }
 
+    private static void TestRevisionPublishMutationRaces(Fixture fixture)
+    {
+            var initialized = AssessmentService.Initialize(
+                "unified",
+                fixture.Root,
+                fixture.Confirmed,
+                fixture.ConfirmedBytes,
+                "fancy-tree",
+                []);
+            var evidence = BuildEvidence(initialized.Identity);
+            var assessment = Complete(initialized, evidence, "gap");
+            var assessmentPath = Path.Combine(fixture.Root, "publish-race.assessment.json");
+            var evidencePath = Path.Combine(fixture.Root, "publish-race.evidence.json");
+            var revisions = Path.Combine(fixture.Root, "publish-race-revisions");
+            File.WriteAllBytes(assessmentPath, AssessmentService.Serialize(assessment));
+            File.WriteAllBytes(evidencePath, CanonicalEvidenceJson.SerializeBundle(evidence));
+            var output = new StringWriter();
+            var error = new StringWriter();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    [
+                        "report", "render",
+                        "--root", fixture.Root,
+                        "--input", fixture.ConfirmedPath,
+                        "--assessment", assessmentPath,
+                        "--evidence", evidencePath,
+                        "--output", revisions
+                    ],
+                    output,
+                    error),
+                $"publish-race predecessor render: {error}");
+            var predecessorBytes = File.ReadAllBytes(
+                Path.Combine(revisions, "0001", "unified.validation.json"));
+            var predecessor = ContractJson.RawDigest(predecessorBytes).Value;
+
+            foreach (var name in new[] { "unified.validation.json", "unified.report.md" })
+            {
+                var path = Path.Combine(revisions, "0001", name);
+                var original = File.ReadAllBytes(path);
+                ReportCommand.BeforePublishForTests = () =>
+                    File.AppendAllText(path, "mutation", new UTF8Encoding(false));
+                try
+                {
+                    AssertEqual(
+                        ExitCodes.ValidationFailure,
+                        CliApplication.Run(
+                            [
+                                "report", "render",
+                                "--root", fixture.Root,
+                                "--input", fixture.ConfirmedPath,
+                                "--assessment", assessmentPath,
+                                "--evidence", evidencePath,
+                                "--output", revisions,
+                                "--predecessor", predecessor
+                            ],
+                            output,
+                            error),
+                        $"predecessor {name} publish mutation");
+                    Assert(!Directory.Exists(Path.Combine(revisions, "0002")), $"{name} mutation publishes no revision");
+                    AssertNoStagingDirectories(revisions, $"{name} mutation");
+                }
+                finally
+                {
+                    ReportCommand.BeforePublishForTests = null;
+                    File.WriteAllBytes(path, original);
+                }
+            }
+
+            var concurrentRevision = Path.Combine(revisions, "0002");
+            ReportCommand.BeforePublishForTests = () =>
+                CopyDirectory(Path.Combine(revisions, "0001"), concurrentRevision);
+            try
+            {
+                AssertEqual(
+                    ExitCodes.ValidationFailure,
+                    CliApplication.Run(
+                        [
+                            "report", "render",
+                            "--root", fixture.Root,
+                            "--input", fixture.ConfirmedPath,
+                            "--assessment", assessmentPath,
+                            "--evidence", evidencePath,
+                            "--output", revisions,
+                            "--predecessor", predecessor
+                        ],
+                        output,
+                        error),
+                    "concurrent sequence insertion");
+                Assert(
+                    Directory.Exists(concurrentRevision),
+                    "concurrent writer output remains distinct from failed writer");
+                Assert(!Directory.Exists(Path.Combine(revisions, "0003")), "failed writer publishes no extra revision");
+                AssertNoStagingDirectories(revisions, "concurrent sequence insertion");
+            }
+            finally
+            {
+                ReportCommand.BeforePublishForTests = null;
+                if (Directory.Exists(concurrentRevision))
+                {
+                    Directory.Delete(concurrentRevision, recursive: true);
+                }
+            }
+        }
+
+    private static void AssertNoStagingDirectories(string revisions, string name) =>
+        Assert(
+            !Directory.Exists(revisions) ||
+            !Directory.EnumerateDirectories(revisions, "*.staging", SearchOption.TopDirectoryOnly).Any(),
+            $"{name} cleans staging directory");
+
     private static void TestCliSubprocess(Fixture fixture, string pluginRoot)
     {
         var validator = Path.Combine(
@@ -1930,6 +2330,30 @@ internal static class AssessmentTests
             [
                 CreateEvidenceDraft(identity, alternate: false),
                 CreateEvidenceDraft(identity, alternate: true)
+            ]);
+    }
+
+    private static EvidenceBundle AddThirdEvidence(EvidenceBundle evidence)
+    {
+        var identity = evidence.Assessment;
+        return BuildEvidence(
+            identity,
+            [
+                CreateEvidenceDraft(identity, alternate: false),
+                CreateEvidenceDraft(identity, alternate: true),
+                new EvidenceRecordDraft(
+                    "A retained accessibility trace records the corrected synthetic requirement.",
+                    identity.AssessmentKind == "component"
+                        ? new EvidenceApplicability("component-specific", identity.ComponentId)
+                        : new EvidenceApplicability("repository-wide", null),
+                    new EvidenceProvenance(
+                        EvidenceIdentity.ReproducedRuntimeObservation,
+                        "probe://sample-widgets/fancy-tree/accessibility",
+                        "Ran the bounded synthetic accessibility probe.",
+                        "2026-09-02T22:00:00Z",
+                        new Sha256Digest("sha256", new string('d', 64)),
+                        "commitment-only"),
+                    [])
             ]);
     }
 
