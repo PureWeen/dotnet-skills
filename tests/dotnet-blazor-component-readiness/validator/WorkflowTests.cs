@@ -194,10 +194,7 @@ internal static class WorkflowTests
                 "source activate",
                 "--legacy-evidence",
                 "--shared-row-projection",
-                "--producer-validator",
-                "PureWeen",
-                "Infragistics",
-                "Syncfusion"
+                "--producer-validator"
             })
             {
                 Assert(
