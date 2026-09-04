@@ -70,7 +70,6 @@ for stimulus_index, stimulus in enumerate(stimuli):
             "files": [],
             "commands": [],
             "additional_required_skills": ["blazor-component-readiness"],
-            "additional_required_agents": ["blazor-component-readiness-worker"],
         },
         "assertions": [],
         "rubric": stimulus.get("rubric", []),
@@ -172,11 +171,89 @@ fi
 RESULTS_ROOT="$results" python3 - <<'PY'
 import json
 import os
+import re
+import sqlite3
 from pathlib import Path
 
 results_root = Path(os.environ["RESULTS_ROOT"])
 result_files = sorted(results_root.glob("*/results.json"))
 if not result_files:
+    if os.environ.get("NO_JUDGE") == "1":
+        databases = sorted(results_root.glob("*/sessions.db"))
+        if not databases:
+            raise SystemExit("direct evaluation did not produce sessions.db")
+        connection = sqlite3.connect(databases[-1])
+        rows = connection.execute(
+            """
+            SELECT s.scenario_name, s.role, r.metrics_json
+            FROM sessions AS s
+            JOIN run_results AS r ON r.session_id = s.id
+            WHERE s.role LIKE 'with-agent-%'
+            ORDER BY s.scenario_name, s.role
+            """
+        ).fetchall()
+        if not rows:
+            raise SystemExit("expected at least one skilled agent arm")
+        for scenario_name, role, metrics_json in rows:
+            metrics = json.loads(metrics_json)
+            failed = [
+                result["message"]
+                for result in metrics.get("assertionResults", [])
+                if not result["passed"]
+            ]
+            if failed:
+                raise SystemExit(f"{role} assertion failures: {failed}")
+            nested = [
+                event
+                for event in metrics.get("events", [])
+                if event.get("type") in ("subagent.started", "subagent.completed")
+            ]
+            if nested:
+                raise SystemExit(f"{scenario_name} {role} used nested subagent events")
+        worker_rows = [
+            (role, json.loads(metrics_json))
+            for scenario_name, role, metrics_json in rows
+            if scenario_name == "Launch one writable component worker"
+        ]
+        if worker_rows:
+            if len(worker_rows) != 2:
+                raise SystemExit(
+                    f"expected two skilled worker-scenario arms, found {len(worker_rows)}"
+                )
+        for role, metrics in worker_rows:
+            launches = []
+            for event in metrics.get("events", []):
+                if event.get("type") != "tool.execution_start":
+                    continue
+                data = event.get("data", {})
+                if data.get("toolName") not in (
+                    "bash",
+                    "Bash",
+                    "execute",
+                    "run_shell_command",
+                ):
+                    continue
+                arguments = data.get("arguments", "")
+                try:
+                    command = json.loads(arguments).get("command", "")
+                except (json.JSONDecodeError, AttributeError):
+                    command = arguments
+                launches.extend(
+                    re.findall(
+                        r"(?m)(?:^|[;\n]|&&)\s*(?:\S*/)?copilot\s+"
+                        r"--agent\s+[^\s]*blazor-component-readiness-worker\b",
+                        command,
+                    )
+                )
+            if len(launches) != 1:
+                raise SystemExit(
+                    f"{role} launched the readiness worker {len(launches)} time(s)"
+                )
+        print(
+            "All skilled arms passed assertions without nested subagent dispatch; "
+            "worker-scenario arms made exactly one worker CLI attempt."
+        )
+        raise SystemExit(0)
     raise SystemExit("direct evaluation did not produce results.json")
 
 payload = json.loads(result_files[-1].read_text(encoding="utf-8"))

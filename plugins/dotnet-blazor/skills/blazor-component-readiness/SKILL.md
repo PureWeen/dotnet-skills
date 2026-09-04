@@ -7,7 +7,7 @@ description: >-
   "assess this Blazor package", "is this component/library ready to adopt or release?", vendor
   readiness scorecards. DO NOT USE FOR: ordinary Blazor authoring/debugging, first-party framework
   review, generic NuGet help, CI/PR/issue triage, implementation-only work, or certification.
-compatibility: Requires an active .NET 11 SDK. Full-library mode additionally requires a host that can launch isolated workers.
+compatibility: Requires an active .NET 11 SDK; full-library mode requires top-level writable worker sessions.
 ---
 
 # Blazor Component Readiness
@@ -108,10 +108,11 @@ environment/tool failure.
    all 110 core rows for one component/package in one isolated context.
 2. **Single package, split**: create one 46-row package assessment, then one 64-row component
    assessment per confirmed component, each bound to the package revision.
-3. **Full library**: create one package assessment per exact package/version and exactly one
-   isolated worker per confirmed component. If isolated workers are unavailable, fail before
-   inventory confirmation with `unsupported host: full-library assessment requires isolated
-   workers`; never use a shared-context or serialized fallback.
+3. **Full library**: create package assessments and exactly one top-level writable worker session
+   per confirmed component. Nested custom agents are not workers. If separate sessions are
+   unavailable, fail before inventory confirmation with
+   `unsupported host: full-library assessment requires isolated workers`; never use a shared-context
+   or serialized fallback.
 4. **Targeted follow-up**: only for named rows or a bounded correction. It is not a complete
    readiness result; record selection and exclusions using
    [targeted profiles](references/targeted-profiles.md).
@@ -251,10 +252,10 @@ directory, report path, validation-manifest path and SHA-256, plus blockers.
 
 ### 5. Coordinate a full library
 
-Follow [library assessment](references/library-assessment.md). Dispatch exactly one isolated worker
-for every confirmed package unit and exactly one isolated worker for every confirmed component
-unit; never place sibling source, docs, owner evidence, or reasoning in a component worker context.
-Validate every handoff path and digest before accepting it.
+Follow [worker execution](references/worker-execution.md) and
+[library assessment](references/library-assessment.md). Launch one top-level writable worker session
+per confirmed unit; nested agent/task invocations cannot produce artifacts. Exclude sibling inputs,
+then validate every returned path and digest before acceptance.
 
 After interruption, leave completed revisions untouched, mark active units incomplete, run:
 

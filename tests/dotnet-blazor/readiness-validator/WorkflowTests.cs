@@ -8,6 +8,7 @@ internal static class WorkflowTests
         "report-contract.md",
         "feedback-contract.md",
         "library-assessment.md",
+        "worker-execution.md",
         "artifact-acquisition.md",
         "documentation-discovery.md",
         "status-boundaries.md",
@@ -222,7 +223,6 @@ internal static class WorkflowTests
 
         AssertContains(coordinator, "user-invocable: true", "coordinator invocation");
         AssertContains(coordinator, "disable-model-invocation: true", "coordinator ambient routing");
-        AssertContains(coordinator, "  - blazor-component-readiness-worker", "worker registration");
         AssertContains(coordinator, "ask_user", "confirmation tool");
         AssertContains(
             coordinator,
@@ -230,12 +230,12 @@ internal static class WorkflowTests
             "local discovery before clarification");
         AssertContains(
             coordinator,
-            "explicitly requests isolated delegation",
+            "explicitly requests separate execution",
             "explicit single-unit worker override");
         foreach (var tool in new[]
         {
-            "\"agent\"", "\"skill\"", "\"read\"", "\"search\"", "\"edit\"", "\"execute\"",
-            "\"web_search\"", "\"web_fetch\"", "\"Task\"", "\"Skill\"", "\"Read\"", "\"Glob\"",
+            "\"skill\"", "\"read\"", "\"search\"", "\"edit\"", "\"execute\"",
+            "\"web_search\"", "\"web_fetch\"", "\"Skill\"", "\"Read\"", "\"Glob\"",
             "\"Grep\"", "\"Edit\"", "\"Write\"", "\"Bash\"", "\"read_file\"", "\"replace\"",
             "\"write_file\"", "\"glob\"", "\"grep_search\"", "\"run_shell_command\""
         })
@@ -243,13 +243,17 @@ internal static class WorkflowTests
             AssertContains(coordinator, tool, $"coordinator tool {tool}");
         }
 
-        AssertContains(coordinator, "exactly one `blazor-component-readiness-worker` for every confirmed package unit", "package-worker isolation");
-        AssertContains(coordinator, "exactly one for", "component-worker isolation");
+        Assert(!coordinator.Contains("\"agent\"", StringComparison.Ordinal), "coordinator must not expose nested agent dispatch");
+        Assert(!coordinator.Contains("\"Task\"", StringComparison.Ordinal), "coordinator must not expose nested task dispatch");
+        AssertContains(coordinator, "Never invoke the worker through a nested agent/task tool.", "nested worker prohibition");
+        AssertContains(coordinator, "exactly one top-level `blazor-component-readiness-worker` session", "top-level worker isolation");
         AssertContains(coordinator, "unsupported host: full-library assessment requires isolated workers", "coordinator unsupported-host stop");
         AssertContains(coordinator, "decision-guidance.md", "coordinator decision guidance");
         AssertContains(coordinator, "reconcile", "coordinator interruption recovery");
 
         AssertContains(worker, "user-invocable: false", "worker invocation");
+        AssertContains(worker, "selected as the top-level agent", "top-level worker requirement");
+        AssertContains(worker, "unsupported host: readiness worker requires a top-level writable session", "nested worker stop");
         Assert(Regex.IsMatch(worker, @"(?m)^tools:\s*\[(?!\s*\])"), "worker tools must be non-empty");
         AssertContains(worker, "exactly one coordinator-assigned", "worker single-unit scope");
         AssertContains(worker, "Do not discover or add components", "worker scope prohibition");
@@ -329,10 +333,16 @@ internal static class WorkflowTests
         var library = File.ReadAllText(Path.Combine(referencesRoot, "library-assessment.md"));
         AssertContains(library, "append-only state receipt", "library state receipts");
         AssertContains(library, "`pending`, `active`, `completed`, `blocked`, or `incomplete`", "library states");
-        AssertContains(library, "one isolated worker per unit", "library isolation");
+        AssertContains(library, "one top-level writable worker session per unit", "library isolation");
         AssertContains(library, "factual status counts", "factual library index");
         AssertContains(library, "current-generation.json", "generation index publication");
         AssertContains(library, "compatibility caches", "index cache recovery");
+
+        var workerExecution = File.ReadAllText(Path.Combine(referencesRoot, "worker-execution.md"));
+        AssertContains(workerExecution, "Nested custom agents are text-only", "nested agent boundary");
+        AssertContains(workerExecution, "--agent <plugin-name>:blazor-component-readiness-worker", "qualified CLI worker");
+        AssertContains(workerExecution, "Never add `--allow-all-paths`", "worker path sandbox");
+        AssertContains(workerExecution, "Recomputes the validation-manifest SHA-256", "worker digest acceptance");
     }
 
     private static void AssertContains(string value, string expected, string name) =>

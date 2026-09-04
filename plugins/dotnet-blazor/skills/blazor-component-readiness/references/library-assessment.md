@@ -2,9 +2,10 @@
 
 ## Capability gate
 
-Full-library work requires isolated worker execution. If unavailable, stop before inventory
-confirmation with `unsupported host: full-library assessment requires isolated workers`. Do not
-serialize all components through one shared model context.
+Full-library work requires separate top-level writable worker sessions. Nested custom agents are
+text-only and cannot own validator artifacts. If separate sessions are unavailable, stop before
+inventory confirmation with `unsupported host: full-library assessment requires isolated workers`.
+Do not serialize all components through one shared model context.
 
 ## Inventory and ownership
 
@@ -18,7 +19,7 @@ Create:
 - one package unit per exact package ID/version/nupkg digest, owning the 46 repository-wide rows;
 - one component unit per confirmed component, owning the 64 component-specific rows and every
   claimed mode;
-- exactly one isolated worker per unit.
+- exactly one top-level writable worker session per unit.
 
 A component handoff receives only its unit inputs and exact package revision. Reject sibling
 documents/source/evidence, duplicate unit IDs, changed package identities, missing modes, or
@@ -42,7 +43,7 @@ counts, and package-manifest binding when applicable. Never hand-edit these fiel
 3. Run `inventory status`.
 4. If the run manifest is missing/invalid or after interruption, run `library reconcile`.
 5. Recompute every completed manifest digest and accept only valid inventory-bound units.
-6. Resume pending, blocked-after-input, or incomplete units in fresh isolated workers.
+6. Resume pending, blocked-after-input, or incomplete units in fresh top-level worker sessions.
 7. Keep the library state `incomplete` until every confirmed unit validates.
 
 ## Completion

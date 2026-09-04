@@ -3,9 +3,7 @@ name: blazor-component-readiness
 description: Coordinates explicit vendor self-assessment, readiness, adoption, recommendation, or release evaluation of released or release-candidate Blazor component packages and full libraries. Produces local JSON-first evidence and validated reports. Not for ordinary Blazor work, first-party framework review, generic NuGet help, triage, implementation-only tasks, or certification.
 user-invocable: true
 disable-model-invocation: true
-tools: ["agent", "skill", "read", "search", "edit", "execute", "web_search", "web_fetch", "ask_user", "Task", "Skill", "Read", "Glob", "Grep", "Edit", "Write", "Bash", "read_file", "replace", "write_file", "glob", "grep_search", "run_shell_command"]
-agents:
-  - blazor-component-readiness-worker
+tools: ["skill", "read", "search", "edit", "execute", "web_search", "web_fetch", "ask_user", "Skill", "Read", "Glob", "Grep", "Edit", "Write", "Bash", "read_file", "replace", "write_file", "glob", "grep_search", "run_shell_command"]
 license: MIT
 ---
 
@@ -22,6 +20,8 @@ explicit coordinator surface; it does not replace the skill or the bundled valid
 - Describe results as a public-baseline self-assessment, never certification.
 - Separate structural validation from factual truth and organizational approval.
 - Require .NET 11; ask before machine-level installation.
+- Treat a worker as a separate top-level writable session with its own working directory. Nested
+  custom agents are text-only and cannot produce readiness revisions.
 
 ## Coordination workflow
 
@@ -36,29 +36,36 @@ explicit coordinator surface; it does not replace the skill or the bundled valid
    or correct it. Do not begin assessment probes from an unconfirmed manifest.
 4. Run the bundled CLI through the skill-relative Bash or PowerShell launcher. Keep build scratch
    outside the plugin and reviewed repository.
-5. For single unified work, use one bounded context unless the owner explicitly requests isolated
-   delegation. In that case, dispatch exactly one `blazor-component-readiness-worker` and leave
-   the substantive unit assessment to it. For split or library work, dispatch
-   exactly one `blazor-component-readiness-worker` for every confirmed package unit and exactly one
-   for every confirmed component unit.
-6. Give each worker only its confirmed unit ID, exact package record, component input manifest,
-   package revision binding, official component docs, allowed component source/artifact surface,
-   claimed modes, output root, and timebox. Never provide sibling component evidence.
+5. For single unified work, use one bounded context unless the owner explicitly requests separate
+   execution. For split or library work, launch exactly one top-level
+   `blazor-component-readiness-worker` session for every confirmed package unit and component unit.
+   Never invoke the worker through a nested agent/task tool.
+6. Create a dedicated writable working directory for each worker and copy in only its confirmed
+   unit ID, exact package record, component input manifest,
+   package revision binding and its package-wide validation-input closure, official component docs,
+   allowed component source/artifact surface, claimed modes, output root, and timebox. Never provide
+   sibling component source, documentation, candidates, or evidence. Follow the skill's
+   worker-execution reference for CLI/SDK launch and permission boundaries. Resolve the worker root
+   and plugin directory to absolute paths before launch. Do not retry a failed CLI launch within
+   the same unit attempt; reconciliation may create a fresh attempt in a new unit directory.
 7. Require each worker to exercise every claimed mode and return its unit ID, revision directory,
-   report path, validation-manifest path and digest, and blockers.
+   report path, validation-manifest path and digest, and blockers. A complete validated revision
+   has `blockers: []`; row-level `not tested` probe reasons remain in the assessment and report.
 8. For grouped, registered, selected, or composite child controls, require the canonical
    post-initialization lifecycle protocol. Reject a prose-only matrix or initial-state-only probe.
-9. Recompute and validate every returned manifest/digest and reject skipped modes, duplicate unit
-   ownership, sibling leakage, repository-wide rows in component records, or a wrong package
-   binding.
+9. Recompute and validate every returned manifest/digest and reject a changed assigned unit ID,
+   skipped modes, duplicate unit ownership, sibling leakage, repository-wide rows in component
+   records, or a wrong package binding. Store accepted handoff paths relative to the confirmed
+   output root, without `./` or the output-root directory name as a prefix.
 10. Reconcile the run manifest from immutable revisions, validate completion, and generate the
    factual library JSON/Markdown index.
 
 ## Isolation and interruption
 
-Full-library mode requires isolated workers. If this host cannot launch them, stop before
-confirmation with `unsupported host: full-library assessment requires isolated workers`. Never
-fall back to shared context or serial reasoning in one growing context.
+Full-library mode requires separate top-level writable worker sessions. A nested custom agent is
+not a worker. If this host cannot launch separate sessions, stop before confirmation with
+`unsupported host: full-library assessment requires isolated workers`. Never fall back to shared
+context or serial reasoning in one growing context.
 
 On interruption, do not edit completed revisions. Mark active units incomplete, reconcile the run
 manifest, report pending/blocked/incomplete units, and resume only those units in fresh isolated

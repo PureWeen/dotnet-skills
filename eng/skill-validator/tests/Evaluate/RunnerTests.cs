@@ -67,6 +67,46 @@ public class BuildSessionConfigTests
     }
 
     [Fact]
+    public async Task IsolationStagePreservesPluginManifestWithoutSiblingSkills()
+    {
+        var tmpBase = Path.Combine(Path.GetTempPath(), $"sv-plugin-stage-test-{Guid.NewGuid():N}");
+        var skillsRoot = Path.Combine(tmpBase, "skills");
+        var targetSkillDir = Path.Combine(skillsRoot, "my-skill");
+        var siblingSkillDir = Path.Combine(skillsRoot, "sibling-skill");
+        Directory.CreateDirectory(targetSkillDir);
+        Directory.CreateDirectory(siblingSkillDir);
+        File.WriteAllText(Path.Combine(tmpBase, "plugin.json"),
+            "{\"name\":\"test-plugin\",\"version\":\"1.2.3\",\"description\":\"Test\",\"skills\":\"./skills/\"}");
+        File.WriteAllText(Path.Combine(targetSkillDir, "SKILL.md"), "# My Skill");
+        File.WriteAllText(Path.Combine(siblingSkillDir, "SKILL.md"), "# Sibling Skill");
+
+        try
+        {
+            var skill = new SkillInfo(
+                "my-skill",
+                "A skill",
+                targetSkillDir,
+                Path.Combine(targetSkillDir, "SKILL.md"),
+                "# My Skill");
+
+            var config = await AgentRunner.BuildSessionConfig(skill, null, "gpt-4.1", "C:\\tmp\\work");
+
+            var stagedSkillsRoot = Assert.Single(config.SkillDirectories!);
+            var stagedPluginRoot = Directory.GetParent(stagedSkillsRoot)!.FullName;
+            Assert.Equal(
+                File.ReadAllText(Path.Combine(tmpBase, "plugin.json")),
+                File.ReadAllText(Path.Combine(stagedPluginRoot, "plugin.json")));
+            Assert.True(Directory.Exists(Path.Combine(stagedSkillsRoot, "my-skill")));
+            Assert.False(Directory.Exists(Path.Combine(stagedSkillsRoot, "sibling-skill")));
+        }
+        finally
+        {
+            try { Directory.Delete(tmpBase, true); } catch { }
+            try { await AgentRunner.CleanupWorkDirs(); } catch { }
+        }
+    }
+
+    [Fact]
     public async Task IsolatedStagingDoesNotExposeOriginalOrSiblingSkills()
     {
         // Create a skills root with a target skill and a sibling skill
@@ -129,6 +169,8 @@ public class BuildSessionConfigTests
         var noiseSkillDir = Path.Combine(tmpBase, "plugin-x", "skills", "noise-skill");
         var refsDir = Path.Combine(noiseSkillDir, "references");
         Directory.CreateDirectory(refsDir);
+        File.WriteAllText(Path.Combine(tmpBase, "plugin-x", "plugin.json"),
+            "{\"name\":\"plugin-x\",\"version\":\"1.0.0\",\"description\":\"Test\",\"skills\":\"./skills/\"}");
         File.WriteAllText(Path.Combine(noiseSkillDir, "SKILL.md"), "# Noise");
         File.WriteAllText(Path.Combine(refsDir, "guide.md"), "# Guide");
 
@@ -145,6 +187,8 @@ public class BuildSessionConfigTests
 
             var noiseStageDir = config.SkillDirectories![1];
             var stagedNoiseSkill = Path.Combine(noiseStageDir, "noise-skill");
+            var stagedPluginManifest = Path.Combine(Directory.GetParent(noiseStageDir)!.FullName, "plugin.json");
+            Assert.True(File.Exists(stagedPluginManifest));
             Assert.True(File.Exists(Path.Combine(stagedNoiseSkill, "SKILL.md")));
             Assert.True(File.Exists(Path.Combine(stagedNoiseSkill, "references", "guide.md")));
             Assert.Equal("# Guide", File.ReadAllText(Path.Combine(stagedNoiseSkill, "references", "guide.md")));
@@ -183,16 +227,17 @@ public class BuildSessionConfigTests
             var config = await AgentRunner.BuildSessionConfig(MockSkill, pluginRoot: null, "gpt-4.1", "C:\\tmp\\work",
                 additionalSkills: additionalSkills);
 
-            // Primary skill staged dir + one staging directory for additional skills
-            Assert.Equal(2, config.SkillDirectories!.Count);
+            // Primary skill staged dir + one isolated staging directory per additional skill
+            Assert.Equal(3, config.SkillDirectories!.Count);
             // First dir is the isolated skill staging directory
             Assert.StartsWith(Path.GetTempPath(), config.SkillDirectories[0]);
 
-            var stageDir = config.SkillDirectories[1];
-            Assert.StartsWith(Path.GetTempPath(), stageDir);
-
-            // Staging dir should contain links only for directories that have SKILL.md
-            var stagedEntries = Directory.GetDirectories(stageDir).Select(Path.GetFileName).OrderBy(n => n).ToArray();
+            var stagedEntries = config.SkillDirectories
+                .Skip(1)
+                .SelectMany(Directory.GetDirectories)
+                .Select(Path.GetFileName)
+                .OrderBy(name => name)
+                .ToArray();
             Assert.Equal(new[] { "skill-a", "skill-b" }, stagedEntries);
         }
         finally

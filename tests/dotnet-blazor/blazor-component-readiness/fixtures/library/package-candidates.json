@@ -13,14 +13,10 @@
     {"subject": "package", "locator": "package.nupkg", "retrieval_method": "local-file", "result": "succeeded", "detail": null}
   ],
   "documentation": [
-    {"url": "https://docs.example.test/library/chart", "content_path": "docs-chart.html"},
-    {"url": "https://docs.example.test/library/grid", "content_path": "docs-grid.html"}
+    {"url": "https://docs.example.test/library/package", "content_path": "docs-package.html"}
   ],
   "package_sources": [],
-  "source_artifacts": [
-    {"source_path": "src/Chart.razor", "content_path": "Chart.razor"},
-    {"source_path": "src/Grid.razor", "content_path": "Grid.razor"}
-  ],
+  "source_artifacts": [],
   "evidence_inputs": [],
   "owner_inputs": [],
   "components": [

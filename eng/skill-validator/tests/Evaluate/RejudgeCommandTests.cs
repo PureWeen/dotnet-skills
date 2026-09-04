@@ -113,6 +113,19 @@ public class RejudgeCommandTests
     }
 
     [Fact]
+    public void HasCompleteRunGroup_SupportsAgentRoles()
+    {
+        var sessions = new[]
+        {
+            Rec("b0", "baseline", 0, "K1"),
+            Rec("a0", "with-agent-isolated", 0, "K1"),
+            Rec("p0", "with-agent-plugin", 0, "K1"),
+        };
+
+        Assert.True(RejudgeCommand.HasCompleteRunGroup(sessions));
+    }
+
+    [Fact]
     public void ValidateCrossDirCompat_RejectsModelMismatch()
     {
         var (ok, effective, error) = RejudgeCommand.ValidateCrossDirCompat(

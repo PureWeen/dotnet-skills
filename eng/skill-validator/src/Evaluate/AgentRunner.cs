@@ -267,21 +267,15 @@ public static class AgentRunner
         var noiseDirs = new List<string>();
         if (additionalSkills is { Count: > 0 })
         {
-            var stageDir = Path.Combine(Path.GetTempPath(), $"sv-noise-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(stageDir);
-            _workDirs.Add(stageDir);
-
             foreach (var s in additionalSkills)
             {
                 var skillMdPath = Path.Combine(s.Path, "SKILL.md");
                 if (!File.Exists(skillMdPath))
                     continue;
 
-                var stagedSkillDir = Path.Combine(stageDir, Path.GetFileName(s.Path));
-                CopyDirectory(s.Path, stagedSkillDir);
+                var (discoveryDirectory, _) = StageSkillForIsolation(s, "sv-noise");
+                noiseDirs.Add(discoveryDirectory);
             }
-
-            noiseDirs.Add(stageDir);
         }
 
         // Convert MCPServerDef records to the SDK's McpServerConfig shape
@@ -355,21 +349,13 @@ public static class AgentRunner
             // only this skill — not every sibling that shares the same parent.
             // Copy the full directory tree (references/, scripts/, etc.) so that
             // relative links inside SKILL.md continue to resolve.
-            var isoStageDir = Path.Combine(Path.GetTempPath(), $"sv-iso-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(isoStageDir);
-            _workDirs.Add(isoStageDir);
-
-            var stagedSkillDir = Path.Combine(isoStageDir, Path.GetFileName(skill.Path));
-            if (Directory.Exists(skill.Path))
-                CopyDirectory(skill.Path, stagedSkillDir);
-            else
-                Directory.CreateDirectory(stagedSkillDir);
+            var (discoveryDirectory, stagedSkillDir) = StageSkillForIsolation(skill, "sv-iso");
 
             // Always write SKILL.md from the in-memory content (may differ from
             // the on-disk version when the validator applies transformations).
             File.WriteAllText(Path.Combine(stagedSkillDir, "SKILL.md"), skill.SkillMdContent);
 
-            skillDirs = [isoStageDir];
+            skillDirs = [discoveryDirectory];
         }
         else
         {
@@ -494,6 +480,51 @@ public static class AgentRunner
             Tools = agent.Tools?.ToList(),
         };
     }
+
+    private static (string DiscoveryDirectory, string StagedSkillDirectory) StageSkillForIsolation(
+        SkillInfo skill,
+        string prefix)
+    {
+        var stageRoot = Path.Combine(Path.GetTempPath(), $"{prefix}-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(stageRoot);
+        _workDirs.Add(stageRoot);
+
+        var sourceSkillDirectory = Path.GetFullPath(skill.Path);
+        var sourceSkillsDirectory = Directory.GetParent(sourceSkillDirectory);
+        var sourcePluginDirectory = sourceSkillsDirectory?.Parent;
+        var sourcePluginManifest = sourcePluginDirectory is null
+            ? null
+            : Path.Combine(sourcePluginDirectory.FullName, "plugin.json");
+
+        string discoveryDirectory;
+        string stagedSkillDirectory;
+        if (sourceSkillsDirectory is not null &&
+            sourcePluginManifest is not null &&
+            File.Exists(sourcePluginManifest))
+        {
+            discoveryDirectory = Path.Combine(stageRoot, sourceSkillsDirectory.Name);
+            stagedSkillDirectory = Path.Combine(discoveryDirectory, Path.GetFileName(sourceSkillDirectory));
+            Directory.CreateDirectory(discoveryDirectory);
+            File.Copy(sourcePluginManifest, Path.Combine(stageRoot, "plugin.json"));
+        }
+        else
+        {
+            discoveryDirectory = stageRoot;
+            stagedSkillDirectory = Path.Combine(stageRoot, Path.GetFileName(sourceSkillDirectory));
+        }
+
+        if (Directory.Exists(sourceSkillDirectory))
+        {
+            CopyDirectory(sourceSkillDirectory, stagedSkillDirectory);
+        }
+        else
+        {
+            Directory.CreateDirectory(stagedSkillDirectory);
+        }
+
+        return (discoveryDirectory, stagedSkillDirectory);
+    }
+
     /// <summary>
     /// Resolves the skill directories for a plugin by reading its plugin.json
     /// and returning the resolved skills path. The SDK scans this directory
