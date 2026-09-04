@@ -588,6 +588,9 @@ stimuli:
         config:
           path: '**/revisions/**'
       - type: exit-success
+    rubric:
+      - The readiness skill stayed dormant and did not perform a package or component readiness assessment
+      - The response directly addresses reusable Blazor component authoring
 
   - name: Stay dormant for application debugging
     prompt: My Blazor page throws after navigation when a scoped service is disposed. Help me debug it.
@@ -612,6 +615,9 @@ stimuli:
         config:
           path: '**/revisions/**'
       - type: exit-success
+    rubric:
+      - The readiness skill stayed dormant and did not perform a package or component readiness assessment
+      - The response directly addresses the scoped-service disposal failure
 
   - name: Stay dormant for framework pull request review
     prompt: Review this ASP.NET Core framework pull request for regressions in interactive server rendering.
@@ -633,6 +639,9 @@ stimuli:
         config:
           path: '**/library-index.*'
       - type: exit-success
+    rubric:
+      - The readiness skill stayed dormant because first-party framework pull request review is out of scope
+      - The response requests or uses the pull request evidence needed for an ordinary code review
 
   - name: Stay dormant for generic package creation
     prompt: Help me pack a class library with symbols, Source Link, and deterministic builds.
@@ -657,3 +666,6 @@ stimuli:
         config:
           path: '**/revisions/**'
       - type: exit-success
+    rubric:
+      - The readiness skill stayed dormant and did not perform a package or component readiness assessment
+      - The response directly addresses ordinary NuGet package creation

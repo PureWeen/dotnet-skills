@@ -3,13 +3,13 @@ name: blazor-component-readiness-validator
 on:
   pull_request:
     paths:
-      - "plugins/dotnet-blazor-component-readiness/**"
+      - "plugins/dotnet-blazor/**"
       - "tests/dotnet-blazor-component-readiness/**"
       - ".github/workflows/blazor-component-readiness-validator.yml"
   push:
     branches: [main]
     paths:
-      - "plugins/dotnet-blazor-component-readiness/**"
+      - "plugins/dotnet-blazor/**"
       - "tests/dotnet-blazor-component-readiness/**"
       - ".github/workflows/blazor-component-readiness-validator.yml"
   workflow_dispatch:
@@ -45,7 +45,7 @@ jobs:
           READINESS_ARTIFACTS: ${{ runner.temp }}/blazor-readiness-build
         run: |
           $validatorRoot = Join-Path $env:GITHUB_WORKSPACE (
-            'plugins/dotnet-blazor-component-readiness/skills/' +
+            'plugins/dotnet-blazor/skills/' +
             'blazor-component-readiness/scripts/validator')
           $restoreConfig = Join-Path $validatorRoot 'restore-offline.config'
           $projects = @(

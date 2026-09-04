@@ -8,7 +8,7 @@ scoring:
   threshold: 1.0
 environment:
   skills:
-    - ../../../plugins/dotnet-blazor-component-readiness/skills/blazor-component-readiness
+    - ../../../plugins/dotnet-blazor/skills/blazor-component-readiness
 stimuli:
   - name: Select the explicit coordinator for a vendor assessment
     prompt: |
@@ -188,7 +188,7 @@ stimuli:
           dest: fixture
         - src: ../blazor-component-readiness/fixtures/fixture-tool.py
           dest: fixture/fixture-tool.py
-        - src: ../../../plugins/dotnet-blazor-component-readiness/skills/blazor-component-readiness/scripts/validator
+        - src: ../../../plugins/dotnet-blazor/skills/blazor-component-readiness/scripts/validator
           dest: fixture/validator
       commands:
         - python3 fixture/fixture-tool.py decode fixture/package.nupkg.b64 fixture/package.nupkg

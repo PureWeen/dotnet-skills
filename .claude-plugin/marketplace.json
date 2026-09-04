@@ -85,12 +85,7 @@
     {
       "name": "dotnet-blazor",
       "source": "./plugins/dotnet-blazor",
-      "description": "Skills for Blazor development: component authoring, interactivity, and web application patterns."
-    },
-    {
-      "name": "dotnet-blazor-component-readiness",
-      "source": "./plugins/dotnet-blazor-component-readiness",
-      "description": "Vendor self-assessment for released or release-candidate Blazor component packages using a versioned public rubric and local deterministic validation."
+      "description": "Skills and agents for Blazor development, including component authoring, interactivity, web application patterns, and explicit released component-package readiness assessments."
     },
     {
       "name": "dotnet11",

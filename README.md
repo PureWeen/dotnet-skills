@@ -26,8 +26,7 @@ This repository contains the .NET team's curated set of core skills and custom a
 | [dotnet-test](plugins/dotnet-test/) | Skills for running, generating, analyzing, and improving .NET tests: test execution, filtering, platform detection, coverage, testability, and MSTest workflows. |
 | [dotnet-test-migration](plugins/dotnet-test-migration/) | Skills and an orchestrator agent for migrating .NET test frameworks and platforms: MSTest and xUnit version upgrades, xUnit-to-MSTest conversion, and VSTest to Microsoft.Testing.Platform. |
 | [dotnet-aspnetcore](plugins/dotnet-aspnetcore/) | ASP.NET Core web development skills including middleware, endpoints, real-time communication, and API patterns. |
-| [dotnet-blazor](plugins/dotnet-blazor/) | Skills for Blazor development: component authoring, interactivity, and web application patterns. |
-| [dotnet-blazor-component-readiness](plugins/dotnet-blazor-component-readiness/) | Vendor self-assessment for released or release-candidate Blazor component packages using a versioned public rubric and local deterministic validation. |
+| [dotnet-blazor](plugins/dotnet-blazor/) | Skills and agents for Blazor development, including component authoring, interactivity, web application patterns, and explicit released component-package readiness assessments. |
 | [dotnet11](plugins/dotnet11/) | Skills for new .NET 11 APIs and language features. |
 
 ## Installation
@@ -56,6 +55,11 @@ This repository contains the .NET team's curated set of core skills and custom a
    ```
    /plugin update <plugin>@dotnet-agent-skills
    ```
+
+> [!NOTE]
+> If you installed the preview `dotnet-blazor-component-readiness` plugin, remove it with your
+> client's plugin manager before installing or updating `dotnet-blazor`. Keeping both installations
+> can register duplicate `blazor-component-readiness` skill and agent identities.
 
 ### VS Code / VS Code Insiders (Preview)
 

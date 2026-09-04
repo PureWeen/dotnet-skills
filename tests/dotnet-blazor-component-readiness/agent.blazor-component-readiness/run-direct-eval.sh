@@ -133,7 +133,7 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1
 
 args=(
   evaluate
-  "$repo/plugins/dotnet-blazor-component-readiness/agents/blazor-component-readiness.agent.md"
+  "$repo/plugins/dotnet-blazor/agents/blazor-component-readiness.agent.md"
   --tests-dir "$scratch/tests"
   --results-dir "$results"
   --model "$model"

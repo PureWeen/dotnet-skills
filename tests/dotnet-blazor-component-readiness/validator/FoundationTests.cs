@@ -395,7 +395,7 @@ internal static class FoundationTests
     private static void TestLaunchers(string pluginRoot, string testRoot, string package)
     {
         var hostileRoot = Path.Combine(testRoot, "hostile-parent");
-        var copiedPlugin = Path.Combine(hostileRoot, "plugins", "dotnet-blazor-component-readiness");
+        var copiedPlugin = Path.Combine(hostileRoot, "plugins", "dotnet-blazor");
         CopyDirectory(pluginRoot, copiedPlugin);
         WriteHostileAmbientFiles(hostileRoot);
         MakeReadOnly(copiedPlugin);
@@ -923,7 +923,7 @@ internal static class FoundationTests
             bashInvocations[1].Contains(
                 Path.Combine(
                     "plugins",
-                    "dotnet-blazor-component-readiness",
+                    "dotnet-blazor",
                     "skills",
                     "blazor-component-readiness",
                     "scripts",

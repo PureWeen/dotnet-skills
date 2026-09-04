@@ -4,7 +4,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 
 var root = FindRepositoryRoot();
-var plugin = Path.Combine(root, "plugins", "dotnet-blazor-component-readiness");
+var plugin = Path.Combine(root, "plugins", "dotnet-blazor");
+var standalonePlugin = Path.Combine(root, "plugins", "dotnet-blazor-component-readiness");
 var references = Path.Combine(plugin, "skills", "blazor-component-readiness", "references");
 
 using var rubricDocument = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(references, "rubric.json")));
@@ -117,13 +118,34 @@ var manifestBytes = manifestPaths.Select(File.ReadAllBytes).ToArray();
 Assert(manifestBytes.Skip(1).All(bytes => bytes.SequenceEqual(manifestBytes[0])), "plugin manifests must be byte-identical");
 using (var manifest = JsonDocument.Parse(manifestBytes[0]))
 {
-    AssertEqual("dotnet-blazor-component-readiness", manifest.RootElement.GetProperty("name").GetString(), "plugin name");
-    AssertEqual("0.1.0", manifest.RootElement.GetProperty("version").GetString(), "initial plugin version");
+    AssertEqual("dotnet-blazor", manifest.RootElement.GetProperty("name").GetString(), "plugin name");
+    AssertEqual("0.1.1", manifest.RootElement.GetProperty("version").GetString(), "plugin version");
+    AssertSequence(["./skills/"], Strings(manifest.RootElement.GetProperty("skills")), "plugin skills");
     AssertSequence(
         ["./agents/blazor-component-readiness.agent.md", "./agents/blazor-component-readiness-worker.agent.md"],
         Strings(manifest.RootElement.GetProperty("agents")),
         "plugin agents");
 }
+
+Assert(!Directory.Exists(standalonePlugin), "standalone readiness plugin must not remain installable");
+AssertSequence(
+    [Path.Combine(plugin, "skills", "blazor-component-readiness")],
+    Directory.GetDirectories(
+        Path.Combine(root, "plugins"),
+        "blazor-component-readiness",
+        SearchOption.AllDirectories),
+    "repository readiness skill registration must be unique");
+AssertSequence(
+    [
+        Path.Combine(plugin, "agents", "blazor-component-readiness-worker.agent.md"),
+        Path.Combine(plugin, "agents", "blazor-component-readiness.agent.md")
+    ],
+    Directory.GetFiles(
+            Path.Combine(root, "plugins"),
+            "blazor-component-readiness*.agent.md",
+            SearchOption.AllDirectories)
+        .Order(StringComparer.Ordinal),
+    "repository readiness agent registrations must be unique");
 
 using (var version = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(plugin, "version.json"))))
 {
@@ -135,7 +157,7 @@ using (var version = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(plugin, "
 }
 
 const string marketplaceDescription =
-    "Vendor self-assessment for released or release-candidate Blazor component packages using a versioned public rubric and local deterministic validation.";
+    "Skills and agents for Blazor development, including component authoring, interactivity, web application patterns, and explicit released component-package readiness assessments.";
 var marketplacePaths = new[]
 {
     Path.Combine(root, ".github", "plugin", "marketplace.json"),
@@ -147,20 +169,37 @@ foreach (var marketplacePath in marketplacePaths)
 {
     using var marketplace = JsonDocument.Parse(File.ReadAllBytes(marketplacePath));
     var entries = marketplace.RootElement.GetProperty("plugins").EnumerateArray()
-        .Where(entry => entry.GetProperty("name").GetString() == "dotnet-blazor-component-readiness")
+        .Where(entry => entry.GetProperty("name").GetString() == "dotnet-blazor")
         .ToArray();
     AssertEqual(1, entries.Length, $"marketplace entry count in {marketplacePath}");
-    AssertEqual("./plugins/dotnet-blazor-component-readiness", entries[0].GetProperty("source").GetString(), "marketplace source");
+    AssertEqual("./plugins/dotnet-blazor", entries[0].GetProperty("source").GetString(), "marketplace source");
     AssertEqual(marketplaceDescription, entries[0].GetProperty("description").GetString(), "marketplace description");
+    Assert(
+        !marketplace.RootElement.GetProperty("plugins").EnumerateArray()
+            .Any(entry => entry.GetProperty("name").GetString() == "dotnet-blazor-component-readiness"),
+        $"standalone marketplace entry in {marketplacePath}");
 }
 
+var readme = File.ReadAllText(Path.Combine(root, "README.md"));
 Assert(
-    File.ReadAllText(Path.Combine(root, "README.md")).Contains(
-        $"| [dotnet-blazor-component-readiness](plugins/dotnet-blazor-component-readiness/) | {marketplaceDescription} |",
+    readme.Contains(
+        $"| [dotnet-blazor](plugins/dotnet-blazor/) | {marketplaceDescription} |",
         StringComparison.Ordinal),
-    "README plugin row");
+    "README Blazor plugin row");
+Assert(
+    !readme.Contains("plugins/dotnet-blazor-component-readiness/", StringComparison.Ordinal),
+    "README standalone plugin row must be removed");
+Assert(
+    readme.Contains("remove it with your", StringComparison.Ordinal) &&
+    readme.Contains(
+        "client's plugin manager before installing or updating `dotnet-blazor`",
+        StringComparison.Ordinal),
+    "legacy standalone plugin migration instruction");
 var codeowners = File.ReadAllText(Path.Combine(root, ".github", "CODEOWNERS"));
-Assert(codeowners.Contains("/plugins/dotnet-blazor-component-readiness/ @dotnet/aspnet", StringComparison.Ordinal), "plugin CODEOWNERS entry");
+Assert(codeowners.Contains("/plugins/dotnet-blazor/ @dotnet/aspnet", StringComparison.Ordinal), "plugin CODEOWNERS entry");
+Assert(
+    !codeowners.Contains("/plugins/dotnet-blazor-component-readiness/", StringComparison.Ordinal),
+    "standalone plugin CODEOWNERS entry must be removed");
 Assert(codeowners.Contains("/tests/dotnet-blazor-component-readiness/ @dotnet/aspnet", StringComparison.Ordinal), "tests CODEOWNERS entry");
 
 var worker = File.ReadAllText(Path.Combine(plugin, "agents", "blazor-component-readiness-worker.agent.md"));

@@ -21,8 +21,8 @@
 
   <ItemGroup>
     <Compile
-      Include="../../../plugins/dotnet-blazor-component-readiness/skills/blazor-component-readiness/scripts/validator/**/*.cs"
-      Exclude="../../../plugins/dotnet-blazor-component-readiness/skills/blazor-component-readiness/scripts/validator/Program.cs;../../../plugins/dotnet-blazor-component-readiness/skills/blazor-component-readiness/scripts/validator/obj/**/*.cs;../../../plugins/dotnet-blazor-component-readiness/skills/blazor-component-readiness/scripts/validator/bin/**/*.cs"
+      Include="../../../plugins/dotnet-blazor/skills/blazor-component-readiness/scripts/validator/**/*.cs"
+      Exclude="../../../plugins/dotnet-blazor/skills/blazor-component-readiness/scripts/validator/Program.cs;../../../plugins/dotnet-blazor/skills/blazor-component-readiness/scripts/validator/obj/**/*.cs;../../../plugins/dotnet-blazor/skills/blazor-component-readiness/scripts/validator/bin/**/*.cs"
       LinkBase="ValidatorSource" />
   </ItemGroup>
 
