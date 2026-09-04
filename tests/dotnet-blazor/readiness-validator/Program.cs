@@ -200,7 +200,7 @@ Assert(codeowners.Contains("/plugins/dotnet-blazor/ @dotnet/aspnet", StringCompa
 Assert(
     !codeowners.Contains("/plugins/dotnet-blazor-component-readiness/", StringComparison.Ordinal),
     "standalone plugin CODEOWNERS entry must be removed");
-Assert(codeowners.Contains("/tests/dotnet-blazor-component-readiness/ @dotnet/aspnet", StringComparison.Ordinal), "tests CODEOWNERS entry");
+Assert(codeowners.Contains("/tests/dotnet-blazor/ @dotnet/aspnet", StringComparison.Ordinal), "tests CODEOWNERS entry");
 
 var worker = File.ReadAllText(Path.Combine(plugin, "agents", "blazor-component-readiness-worker.agent.md"));
 Assert(

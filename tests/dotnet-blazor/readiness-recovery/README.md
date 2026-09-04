@@ -25,22 +25,21 @@ manifest has SHA-256
   readiness agents.
 - Marketplace manifests and the root plugin table expose only
   `dotnet-blazor`; the retired standalone plugin is not installable.
-- Dedicated readiness tests remain under
-  `tests/dotnet-blazor-component-readiness` so their scope and CI ownership
-  stay explicit.
+- Readiness evals and deterministic tests live under `tests/dotnet-blazor`
+  so repository discovery, CI ownership, and the workload plugin agree.
 
 ## Deterministic contract traceability
 
 | Boundary | Primary deterministic coverage |
 |---|---|
-| Plugin manifests, marketplace registration, retired-plugin absence, rubric IDs and scope | `validator/Program.cs` |
-| Skill activation boundaries, required references, coordinator and worker wiring | `validator/WorkflowTests.cs` |
-| Historical schema-v1 verification and schema-v2 assessment identity | `validator/EvidenceTests.cs`, `validator/AssessmentTests.cs` |
-| Path resolution, aliases, external artifact roots, launcher parity, .NET 11 guard | `validator/FoundationTests.cs` |
-| Typed provenance, stable IDs, package digest binding, bundle selection and ambiguity | `validator/EvidenceTests.cs` |
-| Status/evidence ownership, report byte binding, revision integrity, feedback preservation and mutation races | `validator/AssessmentTests.cs` |
-| Dynamic lifecycle applicability, direct-failure/public-absence boundaries, toolchain disposition and blind input gate | `validator/EnforcementTests.cs` |
-| Package/component isolation, interrupted-run recovery, revision chaining and index publication | `validator/LibraryTests.cs` |
+| Plugin manifests, marketplace registration, retired-plugin absence, rubric IDs and scope | `../readiness-validator/Program.cs` |
+| Skill activation boundaries, required references, coordinator and worker wiring | `../readiness-validator/WorkflowTests.cs` |
+| Historical schema-v1 verification and schema-v2 assessment identity | `../readiness-validator/EvidenceTests.cs`, `../readiness-validator/AssessmentTests.cs` |
+| Path resolution, aliases, external artifact roots, launcher parity, .NET 11 guard | `../readiness-validator/FoundationTests.cs` |
+| Typed provenance, stable IDs, package digest binding, bundle selection and ambiguity | `../readiness-validator/EvidenceTests.cs` |
+| Status/evidence ownership, report byte binding, revision integrity, feedback preservation and mutation races | `../readiness-validator/AssessmentTests.cs` |
+| Dynamic lifecycle applicability, direct-failure/public-absence boundaries, toolchain disposition and blind input gate | `../readiness-validator/EnforcementTests.cs` |
+| Package/component isolation, interrupted-run recovery, revision chaining and index publication | `../readiness-validator/LibraryTests.cs` |
 | Positive activation, explicit coordinator/worker behavior, blind gates and ordinary-work dormancy | `agent.blazor-component-readiness/eval.yaml`, `blazor-component-readiness/eval.yaml` |
 
 Every integrity boundary keeps positive acceptance coverage and fail-closed

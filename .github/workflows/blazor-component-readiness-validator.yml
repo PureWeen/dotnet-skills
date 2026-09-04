@@ -4,13 +4,19 @@ on:
   pull_request:
     paths:
       - "plugins/dotnet-blazor/**"
-      - "tests/dotnet-blazor-component-readiness/**"
+      - "tests/dotnet-blazor/blazor-component-readiness/**"
+      - "tests/dotnet-blazor/agent.blazor-component-readiness/**"
+      - "tests/dotnet-blazor/readiness-validator/**"
+      - "tests/dotnet-blazor/readiness-recovery/**"
       - ".github/workflows/blazor-component-readiness-validator.yml"
   push:
     branches: [main]
     paths:
       - "plugins/dotnet-blazor/**"
-      - "tests/dotnet-blazor-component-readiness/**"
+      - "tests/dotnet-blazor/blazor-component-readiness/**"
+      - "tests/dotnet-blazor/agent.blazor-component-readiness/**"
+      - "tests/dotnet-blazor/readiness-validator/**"
+      - "tests/dotnet-blazor/readiness-recovery/**"
       - ".github/workflows/blazor-component-readiness-validator.yml"
   workflow_dispatch:
 
@@ -55,7 +61,7 @@ jobs:
             },
             @{
               Path = Join-Path $env:GITHUB_WORKSPACE (
-                'tests/dotnet-blazor-component-readiness/validator/' +
+                'tests/dotnet-blazor/readiness-validator/' +
                 'BlazorComponentReadiness.ContractTests.csproj')
               Artifacts = Join-Path $env:READINESS_ARTIFACTS 'tests'
             }

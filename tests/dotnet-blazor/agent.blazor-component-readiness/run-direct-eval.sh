@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo="$(cd "$(dirname "$0")/../../.." && pwd)"
-source_eval="$repo/tests/dotnet-blazor-component-readiness/agent.blazor-component-readiness/eval.yaml"
+source_eval="$repo/tests/dotnet-blazor/agent.blazor-component-readiness/eval.yaml"
 scratch="$repo/artifacts/blazor-readiness-agent-eval"
 tests="$scratch/tests/agent.blazor-component-readiness"
 results="${RESULTS_DIR:-$scratch/results}"
