@@ -24,6 +24,12 @@ one exact status or an incomplete value, factual observation, selected evidence 
 assessment follow-up, and a rationale when not applicable. Findings and summary groups are factual,
 unranked, and traceable to selected rows/evidence.
 
+New assessments use schema version 2 and enforce the current typed public-absence/source-proof
+rules. Schema-version-1 assessments remain parseable and verifiable with their legacy evidence
+rules so immutable historical revisions and predecessor chains do not retroactively fail. Revision
+chains may upgrade from v1 to v2 during an evidence-backed correction, but cannot downgrade or skip
+schema generations.
+
 The generated report includes:
 
 1. completion state and exact package/component/rubric identity;

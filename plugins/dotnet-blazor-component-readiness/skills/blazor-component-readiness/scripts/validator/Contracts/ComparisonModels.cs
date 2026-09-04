@@ -38,11 +38,25 @@ public sealed record ComparisonRawRecord(
     string? BrowserId,
     IReadOnlyList<string> InputIds);
 
+public sealed record ComparisonCoverageBinding(
+    string Role,
+    string InputId,
+    string OriginKind,
+    string OriginId);
+
+public sealed record ComparisonCoverageSurface(
+    string Id,
+    string Disposition,
+    string? Blocker,
+    IReadOnlyList<ComparisonCoverageBinding> Bindings);
+
 public sealed record ComparisonInputManifest(
     int SchemaVersion,
     string State,
+    IReadOnlyList<string> AssessmentKinds,
     ComparisonPackageIdentity Package,
     IReadOnlyList<ComparisonSourceIdentity> Sources,
+    IReadOnlyList<ComparisonCoverageSurface> Coverage,
     IReadOnlyList<ComparisonAllowedInput> AllowedInputs,
     IReadOnlyList<ComparisonExecutionIdentity> Toolchains,
     IReadOnlyList<ComparisonExecutionIdentity> Browsers,

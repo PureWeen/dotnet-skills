@@ -15,5 +15,10 @@ Use `gap` for reproducible semantic, keyboard, focus, announcement, localization
 failure. Use `owner evidence required` for private formal assessment or support-matrix records. Use
 `not tested` when an applicable interaction or assistive-technology probe was not run.
 
+Keep private conformance evidence separate from reproducible behavior: an unrun screen-reader or
+live-region probe is `not tested`, not automatically owner evidence required. A row conditioned on
+an RTL claim is `not applicable` when RTL is explicitly unclaimed; unknown claim coverage remains
+`not tested`.
+
 Source ARIA does not establish computed semantics or conformance. An automated scanner pass does
 not override a deterministic browser or assistive-technology failure.

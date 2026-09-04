@@ -168,12 +168,29 @@ Assert(
     Regex.IsMatch(worker, @"(?m)^tools:\s*\[(?!\s*\])"),
     "nested worker tools frontmatter must be present and non-empty");
 
-FoundationTests.Run(root, plugin);
-EvidenceTests.Run(root, plugin);
-AssessmentTests.Run(root, plugin);
-LibraryTests.Run(root, plugin);
-WorkflowTests.Run(plugin);
-EnforcementTests.Run(root, plugin);
+var testGroups = new Dictionary<string, Action>(StringComparer.Ordinal)
+{
+    ["foundation"] = () => FoundationTests.Run(root, plugin),
+    ["evidence"] = () => EvidenceTests.Run(root, plugin),
+    ["assessment"] = () => AssessmentTests.Run(root, plugin),
+    ["library"] = () => LibraryTests.Run(root, plugin),
+    ["workflow"] = () => WorkflowTests.Run(plugin),
+    ["enforcement"] = () => EnforcementTests.Run(root, plugin)
+};
+var selectedGroups = args.Length == 0
+    ? testGroups.Keys.ToArray()
+    : args;
+if (selectedGroups.Distinct(StringComparer.Ordinal).Count() != selectedGroups.Length ||
+    selectedGroups.Any(group => !testGroups.ContainsKey(group)))
+{
+    throw new InvalidOperationException(
+        $"Test groups must be unique values from: {string.Join(", ", testGroups.Keys)}.");
+}
+
+foreach (var group in selectedGroups)
+{
+    testGroups[group]();
+}
 
 Console.WriteLine("All Blazor component readiness Commit 1 through Commit 8 tests passed.");
 

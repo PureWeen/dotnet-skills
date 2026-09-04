@@ -2549,12 +2549,27 @@ internal static class AssessmentTests
         info.Environment["READINESS_TEMP"] = external;
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException("Could not start validator CLI subprocess.");
-        var standardOutput = process.StandardOutput.ReadToEnd();
-        var standardError = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var standardOutput = process.StandardOutput.ReadToEndAsync();
+        var standardError = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(milliseconds: 180_000))
+        {
+            process.Kill(entireProcessTree: true);
+            _ = process.WaitForExit(milliseconds: 5_000);
+            _ = Task.WaitAll(new Task[] { standardOutput, standardError }, millisecondsTimeout: 5_000);
+            throw new TimeoutException(
+                "Validator CLI subprocess did not exit within three minutes.");
+        }
+
+        if (!Task.WaitAll(
+                new Task[] { standardOutput, standardError },
+                millisecondsTimeout: 5_000))
+        {
+            throw new TimeoutException(
+                "Validator CLI subprocess streams did not drain within five seconds.");
+        }
         Assert(
             process.ExitCode == ExitCodes.Success,
-            $"CLI subprocess failed.\nstdout:\n{standardOutput}\nstderr:\n{standardError}");
+            $"CLI subprocess failed.\nstdout:\n{standardOutput.Result}\nstderr:\n{standardError.Result}");
         Assert(
             File.Exists(Path.Combine(
                 external,

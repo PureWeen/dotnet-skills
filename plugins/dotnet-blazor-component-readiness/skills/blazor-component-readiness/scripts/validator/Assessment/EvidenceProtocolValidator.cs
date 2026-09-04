@@ -13,6 +13,9 @@ public static class EvidenceProtocolValidator
     public const string AuthenticodeMethod = "protocol:authenticode-verification-v1";
     public const string SupportOwnershipMethod = "protocol:support-ownership-v1";
     public const string ToolchainMethod = "protocol:toolchain-probe-v1";
+    public const string SourceProofMethod = "protocol:source-proof-v1";
+    public const string PublicAbsenceMethod = "protocol:public-absence-v1";
+    public const string DirectFailureMethod = "protocol:direct-failure-v1";
 
     private static readonly string[] LifecycleOperations =
     [
@@ -56,12 +59,35 @@ public static class EvidenceProtocolValidator
             ["BEQ-12"] = ["callbacks-error-routing"],
             ["BEQ-15"] = ["cleanup-disposal"]
         };
+    private static readonly IReadOnlyDictionary<string, string> SourceProofKinds =
+        new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["BEQ-12"] = "async-callback-not-awaited",
+            ["BEQ-15"] = "async-cleanup-not-awaited"
+        };
+    private static readonly IReadOnlyDictionary<string, PublicAbsenceRequirement> PublicAbsenceRequirements =
+        new Dictionary<string, PublicAbsenceRequirement>(StringComparer.Ordinal)
+        {
+            ["SUP-03"] = new("public-support-corpus", "support-response-sla"),
+            ["SUP-05"] = new("public-support-corpus", "security-patch-cadence"),
+            ["SUP-06"] = new("public-support-corpus", "eol-advance-notice"),
+            ["BEQ-05"] = new("public-document-corpus", "static-ssr-contract"),
+            ["CI-09"] = new("sample-inventory", "behavioral-assertions")
+        };
+    private static readonly IReadOnlyDictionary<string, DirectFailureRequirement> DirectFailureRequirements =
+        new Dictionary<string, DirectFailureRequirement>(StringComparer.Ordinal)
+        {
+            ["CI-09"] = new(
+                "sample-compilation-failed",
+                "sample-compilation-result")
+        };
 
     public static void Validate(
         string root,
         ReadinessAssessment assessment,
         InputManifest input,
-        EvidenceBundle evidence)
+        EvidenceBundle evidence,
+        bool enforceCurrentProtocols)
     {
         var selected = evidence.Selection
             .Select(selection => selection.EvidenceId)
@@ -77,14 +103,25 @@ public static class EvidenceProtocolValidator
         {
             if (!protocols.TryAdd(
                     record.StableId,
-                    ParseProtocol(root, input, record)))
+                    ParseProtocol(root, input, assessment.Identity, record)))
             {
                 throw new DeterministicValidationException(
                     $"Evidence protocol '{record.StableId}' is duplicated.");
             }
         }
 
-        ValidateLifecycle(assessment, input, records, protocols);
+        ValidateDirectedGapProtocols(assessment, protocols);
+        if (enforceCurrentProtocols)
+        {
+            RequireTypedProtocolForGapRows(assessment, protocols);
+        }
+
+        ValidateLifecycle(
+            assessment,
+            input,
+            records,
+            protocols,
+            enforceCurrentProtocols);
         RequireProtocolForOutcomeRow(
             assessment,
             records,
@@ -113,6 +150,7 @@ public static class EvidenceProtocolValidator
     private static ParsedProtocol ParseProtocol(
         string root,
         InputManifest input,
+        ExactAssessmentIdentity assessmentIdentity,
         EvidenceRecord record)
     {
         var bytes = ReadProtocolBytes(root, input, record);
@@ -123,6 +161,18 @@ public static class EvidenceProtocolValidator
             AuthenticodeMethod => ParseAuthenticode(root, bytes, input),
             SupportOwnershipMethod => ParseSupportOwnership(bytes),
             ToolchainMethod => ParseToolchain(bytes, input),
+            SourceProofMethod => ParseSourceProof(
+                bytes,
+                input,
+                assessmentIdentity,
+                record),
+            PublicAbsenceMethod => ParsePublicAbsence(root, bytes, input),
+            DirectFailureMethod => ParseDirectFailure(
+                root,
+                bytes,
+                input,
+                assessmentIdentity,
+                record),
             _ => throw new DeterministicValidationException(
                 $"Evidence '{record.StableId}' uses unknown structured method '{record.Provenance.Method}'.")
         };
@@ -221,6 +271,434 @@ public static class EvidenceProtocolValidator
             LifecycleMethod,
             operations.ToDictionary(item => item.Operation, StringComparer.Ordinal),
             null);
+    }
+
+    private static ParsedProtocol ParseSourceProof(
+        ReadOnlyMemory<byte> bytes,
+        InputManifest input,
+        ExactAssessmentIdentity assessmentIdentity,
+        EvidenceRecord record)
+    {
+        using var document = StrictJson.Parse(
+            bytes,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "source proof protocol");
+        var root = document.RootElement;
+        ContractJson.RequireProperties(
+            root,
+            "schema_version",
+            "protocol",
+            "requirement_id",
+            "proof_kind",
+            "result",
+            "source_path",
+            "source_sha256");
+        RequireProtocolHeader(root, "source-proof");
+        var requirementId = ContractJson.String(root, "requirement_id");
+        var proofKind = ContractJson.String(root, "proof_kind");
+        if (!SourceProofKinds.TryGetValue(requirementId, out var expectedProofKind) ||
+            proofKind != expectedProofKind ||
+            ContractJson.String(root, "result") != "failed")
+        {
+            throw new DeterministicValidationException(
+                "Source proof protocol has an unsupported requirement, proof kind, or result.");
+        }
+
+        var sourcePath = Canonicalization.RelativePath(
+            ContractJson.String(root, "source_path"),
+            "source proof path");
+        var sourceDigest = ContractJson.Digest(ContractJson.Object(root, "source_sha256"));
+        var componentId = assessmentIdentity.ComponentId
+            ?? throw new DeterministicValidationException(
+                "Source proof protocol requires a component assessment identity.");
+        var component = input.Components.SingleOrDefault(item => item.Id == componentId)
+            ?? throw new DeterministicValidationException(
+                "Source proof protocol component is absent from the confirmed input.");
+        if (!input.SourceArtifacts.Any(item =>
+                item.SourcePath == sourcePath &&
+                item.ContentDigest == sourceDigest) ||
+            !component.AllowedSourcePaths.Contains(sourcePath, StringComparer.Ordinal) ||
+            component.DynamicChildLifecycle.Applicability != "required" ||
+            record.Applicability.Scope != "component-specific" ||
+            record.Applicability.ComponentId != componentId)
+        {
+            throw new DeterministicValidationException(
+                "Source proof protocol must bind the assessed lifecycle-required component and one of its allowed confirmed source artifacts.");
+        }
+
+        var canonical = StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", 1);
+            writer.WriteString("protocol", "source-proof");
+            writer.WriteString("requirement_id", requirementId);
+            writer.WriteString("proof_kind", proofKind);
+            writer.WriteString("result", "failed");
+            writer.WriteString("source_path", sourcePath);
+            ContractJson.WriteDigest(writer, "source_sha256", sourceDigest);
+            writer.WriteEndObject();
+        });
+        ContractJson.RequireCanonical(bytes.Span, canonical, "source proof protocol");
+        return new ParsedProtocol(SourceProofMethod, null, "failed", requirementId);
+    }
+
+    private static ParsedProtocol ParsePublicAbsence(
+        string root,
+        ReadOnlyMemory<byte> bytes,
+        InputManifest input)
+    {
+        using var document = StrictJson.Parse(
+            bytes,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "public absence protocol");
+        var value = document.RootElement;
+        ContractJson.RequireProperties(
+            value,
+            "schema_version",
+            "protocol",
+            "requirement_id",
+            "corpus_kind",
+            "result",
+            "corpus_sha256");
+        RequireProtocolHeader(value, "public-absence");
+        var requirementId = ContractJson.String(value, "requirement_id");
+        var corpusKind = ContractJson.String(value, "corpus_kind");
+        if (!PublicAbsenceRequirements.TryGetValue(requirementId, out var requirement) ||
+            corpusKind != requirement.CorpusKind ||
+            ContractJson.String(value, "result") != "absent")
+        {
+            throw new DeterministicValidationException(
+                "Public absence protocol has an unsupported requirement, corpus kind, or result.");
+        }
+
+        var corpusDigest = ContractJson.Digest(ContractJson.Object(value, "corpus_sha256"));
+        var corpusInputs = input.EvidenceInputs.Where(item =>
+                item.Kind == corpusKind &&
+                item.ContentDigest == corpusDigest)
+            .ToArray();
+        if (corpusInputs.Length != 1)
+        {
+            throw new DeterministicValidationException(
+                "Public absence protocol must bind exactly one confirmed typed public corpus.");
+        }
+        ValidatePublicCorpus(
+            root,
+            corpusInputs[0],
+            requirement.RequiredMarker);
+
+        var canonical = StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", 1);
+            writer.WriteString("protocol", "public-absence");
+            writer.WriteString("requirement_id", requirementId);
+            writer.WriteString("corpus_kind", corpusKind);
+            writer.WriteString("result", "absent");
+            ContractJson.WriteDigest(writer, "corpus_sha256", corpusDigest);
+            writer.WriteEndObject();
+        });
+        ContractJson.RequireCanonical(bytes.Span, canonical, "public absence protocol");
+        return new ParsedProtocol(PublicAbsenceMethod, null, "absent", requirementId);
+    }
+
+    private static ParsedProtocol ParseDirectFailure(
+        string root,
+        ReadOnlyMemory<byte> bytes,
+        InputManifest input,
+        ExactAssessmentIdentity assessmentIdentity,
+        EvidenceRecord record)
+    {
+        using var document = StrictJson.Parse(
+            bytes,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "direct failure protocol");
+        var value = document.RootElement;
+        ContractJson.RequireProperties(
+            value,
+            "schema_version",
+            "protocol",
+            "requirement_id",
+            "cause_kind",
+            "result",
+            "evidence_sha256");
+        RequireProtocolHeader(value, "direct-failure");
+        var requirementId = ContractJson.String(value, "requirement_id");
+        var causeKind = ContractJson.String(value, "cause_kind");
+        if (!DirectFailureRequirements.TryGetValue(requirementId, out var requirement) ||
+            causeKind != requirement.CauseKind ||
+            ContractJson.String(value, "result") != "failed")
+        {
+            throw new DeterministicValidationException(
+                "Direct failure protocol has an unsupported requirement, cause kind, or result.");
+        }
+
+        var evidenceDigest = ContractJson.Digest(
+            ContractJson.Object(value, "evidence_sha256"));
+        var evidenceInputs = input.EvidenceInputs.Where(item =>
+                item.Kind == requirement.EvidenceKind &&
+                item.ContentDigest == evidenceDigest)
+            .ToArray();
+        if (evidenceInputs.Length != 1)
+        {
+            throw new DeterministicValidationException(
+                "Direct failure protocol must bind exactly one confirmed typed failure artifact.");
+        }
+
+        ValidateDirectFailureArtifact(
+            root,
+            evidenceInputs[0],
+            input,
+            assessmentIdentity,
+            record,
+            requirementId,
+            causeKind);
+        var canonical = StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", 1);
+            writer.WriteString("protocol", "direct-failure");
+            writer.WriteString("requirement_id", requirementId);
+            writer.WriteString("cause_kind", causeKind);
+            writer.WriteString("result", "failed");
+            ContractJson.WriteDigest(writer, "evidence_sha256", evidenceDigest);
+            writer.WriteEndObject();
+        });
+        ContractJson.RequireCanonical(bytes.Span, canonical, "direct failure protocol");
+        return new ParsedProtocol(DirectFailureMethod, null, "failed", requirementId);
+    }
+
+    private static void ValidateDirectFailureArtifact(
+        string root,
+        InputEvidenceArtifact evidenceInput,
+        InputManifest input,
+        ExactAssessmentIdentity assessmentIdentity,
+        EvidenceRecord record,
+        string requirementId,
+        string causeKind)
+    {
+        var bytes = BoundedIO.ReadAllBytes(
+            SafePath.ResolveUnderRoot(
+                root,
+                evidenceInput.Basename,
+                requireExisting: true,
+                requireFile: true),
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "typed direct failure artifact");
+        using var document = StrictJson.Parse(
+            bytes,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "typed direct failure artifact");
+        var value = document.RootElement;
+        ContractJson.RequireProperties(
+            value,
+            "schema_version",
+            "evidence_kind",
+            "package_sha256",
+            "component_id",
+            "requirement_id",
+            "cause_kind",
+            "sample_source_path",
+            "sample_source_sha256",
+            "toolchain_sha256",
+            "raw_log_sha256",
+            "required_surface_present",
+            "outcome");
+        var componentId = assessmentIdentity.ComponentId;
+        var samplePath = Canonicalization.RelativePath(
+            ContractJson.String(value, "sample_source_path"),
+            "direct failure sample source path");
+        var sampleDigest = ContractJson.Digest(
+            ContractJson.Object(value, "sample_source_sha256"));
+        var toolchainDigest = ContractJson.Digest(
+            ContractJson.Object(value, "toolchain_sha256"));
+        var rawLogDigest = ContractJson.Digest(
+            ContractJson.Object(value, "raw_log_sha256"));
+        var component = componentId is null
+            ? null
+            : input.Components.SingleOrDefault(item => item.Id == componentId);
+        if (ContractJson.Int32(value, "schema_version") != 1 ||
+            ContractJson.String(value, "evidence_kind") != evidenceInput.Kind ||
+            ContractJson.Digest(
+                ContractJson.Object(value, "package_sha256")) !=
+                assessmentIdentity.Package.NupkgDigest ||
+            ContractJson.NullableString(value, "component_id") != componentId ||
+            ContractJson.String(value, "requirement_id") != requirementId ||
+            ContractJson.String(value, "cause_kind") != causeKind ||
+            value.GetProperty("required_surface_present").ValueKind != JsonValueKind.True ||
+            ContractJson.String(value, "outcome") != "failed" ||
+            component is null ||
+            !component.AllowedSourcePaths.Contains(samplePath, StringComparer.Ordinal) ||
+            !input.SourceArtifacts.Any(item =>
+                item.SourcePath == samplePath &&
+                item.ContentDigest == sampleDigest) ||
+            input.EvidenceInputs.Count(item =>
+                item.Kind == "toolchain-identity" &&
+                item.ContentDigest == toolchainDigest) != 1 ||
+            input.EvidenceInputs.Count(item =>
+                item.Kind == "sample-compilation-log" &&
+                item.ContentDigest == rawLogDigest) != 1 ||
+            record.Applicability.Scope != "component-specific" ||
+            record.Applicability.ComponentId != componentId)
+        {
+            throw new DeterministicValidationException(
+                "Typed direct failure artifact does not match the assessed component, package, input, sample, toolchain, raw log, requirement, and cause.");
+        }
+
+        var canonical = StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", 1);
+            writer.WriteString("evidence_kind", evidenceInput.Kind);
+            ContractJson.WriteDigest(
+                writer,
+                "package_sha256",
+                assessmentIdentity.Package.NupkgDigest);
+            writer.WriteString("component_id", componentId);
+            writer.WriteString("requirement_id", requirementId);
+            writer.WriteString("cause_kind", causeKind);
+            writer.WriteString("sample_source_path", samplePath);
+            ContractJson.WriteDigest(writer, "sample_source_sha256", sampleDigest);
+            ContractJson.WriteDigest(writer, "toolchain_sha256", toolchainDigest);
+            ContractJson.WriteDigest(writer, "raw_log_sha256", rawLogDigest);
+            writer.WriteBoolean("required_surface_present", true);
+            writer.WriteString("outcome", "failed");
+            writer.WriteEndObject();
+        });
+        ContractJson.RequireCanonical(
+            bytes.AsSpan(),
+            canonical,
+            "typed direct failure artifact");
+    }
+
+    private static void ValidatePublicCorpus(
+        string root,
+        InputEvidenceArtifact corpusInput,
+        string requiredMarker)
+    {
+        var bytes = BoundedIO.ReadAllBytes(
+            SafePath.ResolveUnderRoot(
+                root,
+                corpusInput.Basename,
+                requireExisting: true,
+                requireFile: true),
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "typed public corpus");
+        using var document = StrictJson.Parse(
+            bytes,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "typed public corpus");
+        var value = document.RootElement;
+        ContractJson.RequireProperties(
+            value,
+            "schema_version",
+            "corpus_kind",
+            "owner_controlled",
+            "complete",
+            "covered_markers",
+            "present_markers");
+        var corpusKind = ContractJson.String(value, "corpus_kind");
+        if (ContractJson.Int32(value, "schema_version") != 1 ||
+            corpusKind != corpusInput.Kind ||
+            value.GetProperty("owner_controlled").ValueKind != JsonValueKind.True ||
+            value.GetProperty("complete").ValueKind != JsonValueKind.True)
+        {
+            throw new DeterministicValidationException(
+                "Typed public corpus must be owner-controlled and complete schema version 1.");
+        }
+
+        var covered = CanonicalMarkers(
+            ContractJson.StringArray(value, "covered_markers"),
+            "covered public-corpus marker");
+        var present = CanonicalMarkers(
+            ContractJson.StringArray(value, "present_markers"),
+            "present public-corpus marker");
+        if (!covered.Contains(requiredMarker, StringComparer.Ordinal) ||
+            present.Contains(requiredMarker, StringComparer.Ordinal) ||
+            present.Except(covered, StringComparer.Ordinal).Any())
+        {
+            throw new DeterministicValidationException(
+                $"Typed public corpus does not establish required marker '{requiredMarker}' as absent.");
+        }
+
+        var canonical = StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", 1);
+            writer.WriteString("corpus_kind", corpusKind);
+            writer.WriteBoolean("owner_controlled", true);
+            writer.WriteBoolean("complete", true);
+            WriteStrings(writer, "covered_markers", covered);
+            WriteStrings(writer, "present_markers", present);
+            writer.WriteEndObject();
+        });
+        ContractJson.RequireCanonical(bytes.AsSpan(), canonical, "typed public corpus");
+    }
+
+    private static void ValidateDirectedGapProtocols(
+        ReadinessAssessment assessment,
+        IReadOnlyDictionary<string, ParsedProtocol> protocols)
+    {
+        foreach (var (evidenceId, protocol) in protocols.Where(item =>
+                     item.Value.Method is SourceProofMethod or PublicAbsenceMethod or DirectFailureMethod))
+        {
+            var row = assessment.Rows.SingleOrDefault(item =>
+                item.Id == protocol.RequirementId);
+            if (row?.Status != "gap" ||
+                !row.EvidenceIds.Contains(evidenceId, StringComparer.Ordinal))
+            {
+                throw new DeterministicValidationException(
+                    $"Protocol '{protocol.Method}' for '{protocol.RequirementId}' must be cited by that row with status 'gap'.");
+            }
+        }
+
+        foreach (var group in protocols
+                     .Where(item =>
+                         item.Value.Method is
+                             SourceProofMethod or
+                             PublicAbsenceMethod or
+                             DirectFailureMethod)
+                     .GroupBy(item => item.Value.RequirementId, StringComparer.Ordinal))
+        {
+            var citedFamilies = group
+                .Where(item =>
+                    assessment.Rows.Single(row => row.Id == group.Key)
+                        .EvidenceIds.Contains(item.Key, StringComparer.Ordinal))
+                .Select(item => item.Value.Method)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            if (citedFamilies.Length > 1)
+            {
+                throw new DeterministicValidationException(
+                    $"Requirement '{group.Key}' cannot cite mutually exclusive directed-gap protocol families: " +
+                    $"{string.Join(", ", citedFamilies)}.");
+            }
+        }
+    }
+
+    private static void RequireTypedProtocolForGapRows(
+        ReadinessAssessment assessment,
+        IReadOnlyDictionary<string, ParsedProtocol> protocols)
+    {
+        foreach (var requirementId in PublicAbsenceRequirements.Keys)
+        {
+            var row = assessment.Rows.SingleOrDefault(item => item.Id == requirementId);
+            if (row?.Status != "gap")
+            {
+                continue;
+            }
+
+            if (!row.EvidenceIds.Any(id =>
+                    protocols.TryGetValue(id, out var protocol) &&
+                    protocol.RequirementId == requirementId &&
+                    (protocol.Method == PublicAbsenceMethod &&
+                     protocol.Result == "absent" ||
+                     protocol.Method == DirectFailureMethod &&
+                     protocol.Result == "failed")))
+            {
+                throw new DeterministicValidationException(
+                    $"Schema-v2 row '{requirementId}' gap requires a matching typed public-absence or direct-failure protocol.");
+            }
+        }
     }
 
     private static LifecycleOperation ParseLifecycleOperation(JsonElement element)
@@ -552,7 +1030,8 @@ public static class EvidenceProtocolValidator
         ReadinessAssessment assessment,
         InputManifest input,
         IReadOnlyDictionary<string, EvidenceRecord> records,
-        IReadOnlyDictionary<string, ParsedProtocol> protocols)
+        IReadOnlyDictionary<string, ParsedProtocol> protocols,
+        bool enforceCurrentProtocols)
     {
         if (assessment.Identity.ComponentId is null)
         {
@@ -601,6 +1080,11 @@ public static class EvidenceProtocolValidator
             }
 
             var relevant = operationNames.Select(name => operations[name]).ToArray();
+            var hasSourceProof = row.EvidenceIds.Any(id =>
+                protocols.TryGetValue(id, out var protocol) &&
+                protocol.Method == SourceProofMethod &&
+                protocol.RequirementId == rowId &&
+                protocol.Result == "failed");
             switch (row.Status)
             {
                 case "verified" when relevant.Any(item =>
@@ -608,9 +1092,16 @@ public static class EvidenceProtocolValidator
                     throw new DeterministicValidationException(
                         $"Lifecycle row '{rowId}' cannot be verified without passed raw observations for every applicable operation.");
                 case "gap" when !relevant.Any(item =>
-                    item.Disposition == "observed" && item.Outcome == "failed"):
+                    item.Disposition == "observed" && item.Outcome == "failed") &&
+                    relevant.All(item =>
+                        item.Disposition == "observed" && item.Outcome == "passed"):
                     throw new DeterministicValidationException(
-                        $"Lifecycle row '{rowId}' cannot be a gap without an observed failed operation.");
+                        $"Lifecycle row '{rowId}' source gap contradicts a passed mapped lifecycle operation.");
+                case "gap" when !relevant.Any(item =>
+                    item.Disposition == "observed" && item.Outcome == "failed") &&
+                    (!enforceCurrentProtocols || !hasSourceProof):
+                    throw new DeterministicValidationException(
+                        $"Lifecycle row '{rowId}' cannot be a gap without an observed failed operation or matching source-proof protocol.");
                 case "not tested" when !relevant.Any(item =>
                     item.Disposition == "not-tested"):
                     throw new DeterministicValidationException(
@@ -752,6 +1243,51 @@ public static class EvidenceProtocolValidator
         value is not null &&
         ContractJson.NormalizeText(value, "structured evidence value", 4096).Length >= minimumLength;
 
+    private static string[] CanonicalMarkers(
+        IReadOnlyList<string> values,
+        string name)
+    {
+        var result = values
+            .Select(value => value.Trim().ToLowerInvariant())
+            .Distinct(StringComparer.Ordinal)
+            .Order(StringComparer.Ordinal)
+            .ToArray();
+        if (result.Length != values.Count ||
+            result.Any(value =>
+                value.Length is 0 or > 128 ||
+                value.Any(character =>
+                    character is not (>= 'a' and <= 'z') and
+                    not (>= '0' and <= '9') and
+                    not '-')))
+        {
+            throw new DeterministicValidationException(
+                $"{name} values must be unique, sorted canonical IDs.");
+        }
+
+        if (!values.SequenceEqual(result, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"{name} values must be canonically sorted.");
+        }
+
+        return result;
+    }
+
+    private static void WriteStrings(
+        Utf8JsonWriter writer,
+        string property,
+        IReadOnlyList<string> values)
+    {
+        writer.WritePropertyName(property);
+        writer.WriteStartArray();
+        foreach (var value in values)
+        {
+            writer.WriteStringValue(value);
+        }
+
+        writer.WriteEndArray();
+    }
+
     private static void WriteDigest(
         Utf8JsonWriter writer,
         string property,
@@ -805,5 +1341,14 @@ public static class EvidenceProtocolValidator
     private sealed record ParsedProtocol(
         string Method,
         IReadOnlyDictionary<string, LifecycleOperation>? Operations,
-        string? Result);
+        string? Result,
+        string? RequirementId = null);
+
+    private sealed record PublicAbsenceRequirement(
+        string CorpusKind,
+        string RequiredMarker);
+
+    private sealed record DirectFailureRequirement(
+        string CauseKind,
+        string EvidenceKind);
 }

@@ -40,6 +40,12 @@ the local capture. Component and unified evidence may select only confirmed sour
 also appear in that component's `allowed_source_paths`; package evidence may use any confirmed
 repository-wide source artifact.
 
+For a source-available component, build an implementation closure rather than selecting only the
+public wrapper. Include the component API/wrapper, inherited base/runtime types, referenced browser
+interop handlers and modules, package-owned style/theme assets, and the component tests and samples.
+Record an exact blocker for any missing category. In a blinded comparison, bind those categories to
+the schema-v2 coverage surfaces before worker launch.
+
 Selected evidence is re-bound during every assessment validation:
 
 - official documentation requires the exact confirmed URL and content digest;

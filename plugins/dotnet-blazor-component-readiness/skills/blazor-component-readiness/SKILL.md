@@ -64,7 +64,7 @@ stop with an environment limitation; do not weaken the launcher isolation.
 2. `references/checklist.md` is only the generated human-readable view. Never edit or derive IDs
    from it independently.
 3. Use exactly: `verified`, `gap`, `owner evidence required`, `not tested`,
-   `not applicable`. See [status boundaries](references/status-boundaries.md).
+   `not applicable`. Follow [status boundaries](references/status-boundaries.md).
 4. Select overlays only when the confirmed deliverable contains that feature. Read
    [conditional families](references/area-conditional-families.md) and the selected
    [scaffolder](references/overlay-scaffolder.md) or
@@ -135,10 +135,12 @@ environment/tool failure.
    `interactive-webassembly`, `interactive-auto`, or `standalone-webassembly`).
 5. For each component, declare whether grouped, registered, selected, or composite children make
    the dynamic-child lifecycle matrix required. Do not infer not-applicable from a missing probe.
-6. Show package/version/digest, acquisition mode, source mapping/availability, official documents,
+6. For source-available components, capture wrapper/API, inherited runtime, browser interop,
+   styles/assets, tests, and samples. A source archive alone is not closure.
+7. Show package/version/digest, acquisition mode, source mapping/availability, official documents,
    owner inputs, component inventory, claimed modes, and exclusions. Ask the owner to correct and
    confirm the draft.
-7. Canonicalize and freeze the manifest:
+8. Canonicalize and freeze the manifest:
 
    ```text
    <launcher> inputs discover --root <output> --nupkg <exact.nupkg> --candidates <candidates.json> --output <input.draft.json>
@@ -160,16 +162,13 @@ Apply the precedence and ownership rules in
 reproduced probes, exact mapped source, current public source/configuration, then documentation or
 owner evidence. Lower-ranked evidence cannot override contradictory higher-ranked evidence.
 
-- Build immutable repository and component ledgers, then select only cited `EV1-` records into the
-  assessment bundle.
-- Reuse repository-wide evidence only for the same exact package ID, normalized version, nupkg
-  digest, and source commit when present.
+- Build immutable ledgers and select only cited `EV1-` records into the assessment bundle.
+- Reuse repository evidence only for the same package ID, version, nupkg digest, and source commit.
 - Keep component evidence within its confirmed component and allowed source paths.
-- Bind selected documentation, package metadata, source captures, and owner inputs to exact
-  locators and SHA-256 values in the confirmed input manifest. A source retrieval failure leaves
-  source `unresolved`; it never implies `closed-source`.
-- Owner-supplied evidence may support `verified` when directly applicable, digest-bound, and
-  labeled `owner-supplied-internal-evidence` or `owner-supplied-public-evidence`.
+- Bind inputs to confirmed-manifest locators and SHA-256 values. Failed source retrieval stays
+  `unresolved`; it never implies `closed-source`.
+- Owner evidence may verify when direct, digest-bound, and labeled
+  `owner-supplied-public-evidence` or `owner-supplied-internal-evidence`.
 - An owner declaration can establish `owner-declared-closed-source` or
   `owner-declared-unavailable`; it cannot substitute for unrelated runtime or artifact proof.
 - Use the canonical verified-boundary protocols in
@@ -177,6 +176,20 @@ owner evidence. Lower-ranked evidence cannot override contradictory higher-ranke
   [support/lifecycle](references/area-support-lifecycle.md). Notice sidecars, certificate-table
   presence, signer subjects, organization names, authors, and contact routes are weak hints, not
   sufficient `verified` evidence for `LP-04`, `PI-02`, or `SUP-01`.
+- Apply the status order; keep public absence, owner-only facts, unrun probes, and inapplicable
+  surfaces distinct.
+- Use `public-absence-v1` for public-corpus gaps, `source-proof-v1` for lifecycle-bound source gaps,
+  and `direct-failure-v1` for assertion-present `CI-09` compilation failures.
+- Complete package/release inventories with no published SBOM/provenance make `PI-06`, `PI-07`,
+  `PI-10`, and `PI-11` gaps. `PI-08`/`PI-09` need direct incomplete representation evidence.
+- Outcomes do not prove mechanisms. Complete source with no component-owned repeated identity
+  surface makes `PERF-02` not applicable; otherwise absent `@key` proof is `not tested`.
+- Release boundaries: same-job source build plus privileged signing/publishing is a gap; verifying
+  and pushing one mutable path is not a digest-bound immutable handoff.
+- Any component assignment through a public `[Parameter]` setter is mutation, including
+  conditional/event-handler paths.
+- A mutable cascade proves `PERF-05` applicability, not a gap. Without descendant render
+  evidence, use `not tested`.
 
 Use exact grouped commands:
 
@@ -222,7 +235,8 @@ Initialize the appropriate row ownership:
 <launcher> assessment init --kind component --root <output> --input <component.input.confirmed.json> --component <component-id> --package-revision <package-revision> --output <component.assessment.json>
 ```
 
-Populate every selected row from evidence. Follow [report contract](references/report-contract.md).
+Populate every selected row from evidence. New assessments use schema version 2; legacy v1
+revisions retain legacy verification. Follow [report contract](references/report-contract.md).
 Validate before rendering:
 
 ```text
@@ -294,7 +308,8 @@ Only for an explicit blinded accuracy/replay request, follow
 [blinded comparison](references/blinded-comparison.md). Freeze and validate the exact allowed raw
 input set before launching the blind worker. The worker fails closed on a missing or stale input and
 never receives statuses, findings, recommendations, scorecards, feedback, or oracle conclusions.
-This comparison gate does not add requirements to ordinary readiness runs.
+Schema version 2 requires typed `available` or `blocked` accounting for every fixed vendor-neutral
+coverage surface. This gate does not add requirements to ordinary readiness runs.
 
 ```text
 <launcher> comparison inputs-freeze --root <bundle-root> --draft <comparison-inputs.draft.json> --output <comparison-inputs.confirmed.json>
@@ -317,7 +332,7 @@ Run automatically; do not report completion until all applicable checks pass:
 9. For lifecycle-required components, verify all ten operation dispositions and raw observation
    bindings.
 10. For blinded comparisons, revalidate the confirmed comparison-input manifest before worker
-    launch and reject any undefined final disposition.
+    launch, reconcile every required coverage surface, and reject any undefined final disposition.
 
 If any check fails, preserve valid immutable revisions, mark the unit blocked/incomplete, and
 report the exact command, exit code, and smallest next action. Never claim readiness from an

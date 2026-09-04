@@ -30,6 +30,8 @@ explicit coordinator surface; it does not replace the skill or the bundled valid
    source availability/mapping, component inventory, claimed render modes, owner evidence, and
    exclusions. Inspect every supplied local artifact before asking for missing information. Default
    a published package to the latest stable version only as a draft.
+   For source-available components, include wrapper/API, inherited runtime, browser interop,
+   styles/assets, tests, and samples in the allowed source/artifact closure.
 3. Present the complete draft package/document/source/inventory record and ask the owner to confirm
    or correct it. Do not begin assessment probes from an unconfirmed manifest.
 4. Run the bundled CLI through the skill-relative Bash or PowerShell launcher. Keep build scratch
@@ -64,7 +66,8 @@ workers.
 
 For an explicitly requested blinded comparison, freeze and validate the separate conclusion-free
 comparison-input manifest before launching a worker. Give the worker only that confirmed manifest
-and its exact allowed files. Fail closed on missing, stale, revealing, or unresolved inputs.
+and its exact allowed files. Require schema-v2 accounting for every fixed coverage surface and fail
+closed on missing, stale, revealing, unresolved, or omitted coverage.
 
 ## Feedback, corrections, and guidance
 

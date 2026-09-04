@@ -1697,24 +1697,52 @@ internal static class LibraryTests
 
     private static void WaitForProcess(Process process, string name)
     {
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(milliseconds: 180_000))
+        {
+            process.Kill(entireProcessTree: true);
+            _ = process.WaitForExit(milliseconds: 5_000);
+            _ = Task.WaitAll(new Task[] { stdout, stderr }, millisecondsTimeout: 5_000);
+            throw new TimeoutException($"{name} did not exit within three minutes.");
+        }
+
+        if (!Task.WaitAll(
+                new Task[] { stdout, stderr },
+                millisecondsTimeout: 5_000))
+        {
+            throw new TimeoutException(
+                $"{name} output streams did not drain within five seconds.");
+        }
         Assert(
             process.ExitCode == ExitCodes.Success,
-            $"{name} failed with {process.ExitCode}.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+            $"{name} failed with {process.ExitCode}.\nstdout:\n{stdout.Result}\nstderr:\n{stderr.Result}");
     }
 
     private static void RunProcess(ProcessStartInfo info, string name)
     {
         using var process = Process.Start(info)
             ?? throw new InvalidOperationException($"Could not start {name}.");
-        var stdout = process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
-        process.WaitForExit();
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(milliseconds: 180_000))
+        {
+            process.Kill(entireProcessTree: true);
+            _ = process.WaitForExit(milliseconds: 5_000);
+            _ = Task.WaitAll(new Task[] { stdout, stderr }, millisecondsTimeout: 5_000);
+            throw new TimeoutException($"{name} did not exit within three minutes.");
+        }
+
+        if (!Task.WaitAll(
+                new Task[] { stdout, stderr },
+                millisecondsTimeout: 5_000))
+        {
+            throw new TimeoutException(
+                $"{name} output streams did not drain within five seconds.");
+        }
         Assert(
             process.ExitCode == ExitCodes.Success,
-            $"{name} failed with {process.ExitCode}.\nstdout:\n{stdout}\nstderr:\n{stderr}");
+            $"{name} failed with {process.ExitCode}.\nstdout:\n{stdout.Result}\nstderr:\n{stderr.Result}");
     }
 
     private static void CopyDirectory(string source, string destination)

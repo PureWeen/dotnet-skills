@@ -90,6 +90,15 @@ internal static class WorkflowTests
         AssertContains(skill, "dynamic_child_lifecycle.applicability", "conditional lifecycle gate");
         AssertContains(skill, "comparison inputs-freeze", "blinded comparison freeze");
         AssertContains(skill, "comparison inputs-validate", "blinded comparison validation");
+        AssertContains(skill, "coverage surface", "blinded comparison evidence-surface coverage");
+        AssertContains(skill, "`source-proof-v1`", "structured source proof");
+        AssertContains(skill, "`public-absence-v1`", "typed public absence proof");
+        AssertContains(skill, "`direct-failure-v1`", "typed direct failure proof");
+        AssertContains(skill, "same-job source build plus privileged signing/publishing is a gap", "release job trust boundary");
+        AssertContains(skill, "one mutable path is not a digest-bound immutable handoff", "immutable artifact boundary");
+        AssertContains(skill, "component assignment through a public `[Parameter]` setter is mutation", "parameter mutation boundary");
+        AssertContains(skill, "mutable cascade proves `PERF-05` applicability, not a gap", "cascading rerender measurement boundary");
+        AssertContains(skill, "legacy v1", "legacy assessment verification");
         AssertContains(skill, "Single component, unified", "unified mode");
         AssertContains(skill, "Single package, split", "split mode");
         AssertContains(skill, "Full library", "library mode");
@@ -246,6 +255,14 @@ internal static class WorkflowTests
         AssertContains(worker, "Do not discover or add components", "worker scope prohibition");
         AssertContains(worker, "every claimed render mode", "worker mode coverage");
         AssertContains(worker, "comparison inputs-validate", "blind worker input gate");
+        AssertContains(worker, "browser interop, styles/assets, tests, and samples", "worker source closure");
+        AssertContains(worker, "`source-proof-v1`", "worker structured source proof");
+        AssertContains(worker, "`public-absence-v1`", "worker public absence proof");
+        AssertContains(worker, "`direct-failure-v1`", "worker direct failure proof");
+        AssertContains(worker, "privileged job that executes source build steps", "worker release job trust boundary");
+        AssertContains(worker, "one mutable workspace path", "worker immutable artifact boundary");
+        AssertContains(worker, "component-owned assignment through a public `[Parameter]` setter", "worker parameter mutation boundary");
+        AssertContains(worker, "require direct descendant render evidence for a gap", "worker cascading rerender measurement boundary");
         AssertContains(worker, "unit_id:", "worker handoff unit");
         AssertContains(worker, "revision_path:", "worker handoff revision");
         AssertContains(worker, "report_path:", "worker handoff report");
@@ -269,6 +286,45 @@ internal static class WorkflowTests
         AssertContains(report, "outside `revisions/`", "guidance placement");
         AssertContains(report, "unbound, regenerable", "guidance binding boundary");
         AssertContains(report, "Replace it only after another explicit guidance request.", "guidance replacement");
+        AssertContains(report, "Schema-version-1 assessments remain parseable and verifiable", "legacy assessment policy");
+
+        var status = File.ReadAllText(Path.Combine(referencesRoot, "status-boundaries.md"));
+        AssertContains(status, "direct-evidence-satisfies", "verified decision boundary");
+        AssertContains(status, "direct-evidence-conflicts", "gap decision boundary");
+        AssertContains(status, "owner-held-evidence-only", "owner decision boundary");
+        AssertContains(status, "applicable-evidence-not-obtained", "not-tested decision boundary");
+        AssertContains(status, "confirmed-not-applicable", "not-applicable decision boundary");
+        AssertContains(status, "New assessments use schema version 2", "current assessment schema");
+        AssertContains(status, "Schema version 1 is retained only for immutable", "legacy assessment schema");
+        AssertContains(status, "only one directed-gap protocol family", "directed-gap exclusivity");
+        AssertContains(status, "A keyed reorder behavior probe passes", "mechanism/outcome boundary example");
+        AssertContains(status, "confirmed complete public-policy corpus", "public-absence boundary example");
+
+        var ciRelease = File.ReadAllText(Path.Combine(referencesRoot, "area-ci-release.md"));
+        AssertContains(ciRelease, "actual release job graph", "CI-07 job graph rule");
+        AssertContains(ciRelease, "path equality and in-place ordering are not an immutable handoff", "CI-08 path identity rule");
+
+        var runtime = File.ReadAllText(Path.Combine(referencesRoot, "area-blazor-runtime.md"));
+        AssertContains(runtime, "event handlers, callbacks, conditional branches", "BEQ-09 assignment coverage");
+
+        var performance = File.ReadAllText(Path.Combine(referencesRoot, "area-trim-performance.md"));
+        AssertContains(performance, "no repeated identity surface", "PERF-02 applicability boundary");
+        AssertContains(performance, "missing `IsFixed` establishes an applicable rerender risk", "PERF-05 source risk boundary");
+        AssertContains(performance, "Without descendant render counts", "PERF-05 measurement requirement");
+
+        var provenance = File.ReadAllText(Path.Combine(referencesRoot, "area-provenance-integrity.md"));
+        AssertContains(provenance, "For `PI-06`, `PI-07`, `PI-10`, and `PI-11`, publication is the required surface", "SBOM/provenance absence boundary");
+        AssertContains(provenance, "the absence is direct evidence, not an unrun probe", "SBOM/provenance direct evidence");
+        AssertContains(provenance, "For `PI-08` and `PI-09`, missing SBOM bytes alone are insufficient", "asset/notice representation boundary");
+
+        var comparison = File.ReadAllText(Path.Combine(referencesRoot, "blinded-comparison.md"));
+        AssertContains(comparison, "Schema version 2", "comparison schema version");
+        AssertContains(comparison, "browser-interop-and-style-assets", "browser interop coverage");
+        AssertContains(comparison, "performance-measurements", "performance coverage");
+        AssertContains(comparison, "`browser-interop-source`", "typed browser interop role");
+        AssertContains(comparison, "`component-source-closure`", "typed component source role");
+        AssertContains(comparison, "`origin_kind`", "coverage provenance origin");
+        AssertContains(comparison, "Schema-version-1 confirmed comparison manifests remain canonical", "legacy comparison gate");
 
         var library = File.ReadAllText(Path.Combine(referencesRoot, "library-assessment.md"));
         AssertContains(library, "append-only state receipt", "library state receipts");

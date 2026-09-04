@@ -25,6 +25,7 @@ internal static class FoundationTests
 
         if (Directory.Exists(testRoot))
         {
+            MakeWritable(testRoot);
             Directory.Delete(testRoot, recursive: true);
         }
 
@@ -1330,10 +1331,18 @@ internal static class FoundationTests
         if (!process.WaitForExit(milliseconds: 180_000))
         {
             process.Kill(entireProcessTree: true);
+            _ = process.WaitForExit(milliseconds: 5_000);
+            _ = Task.WaitAll(new Task[] { standardOutput, standardError }, millisecondsTimeout: 5_000);
             throw new TimeoutException($"{executable} did not exit within three minutes.");
         }
 
-        Task.WaitAll(standardOutput, standardError);
+        if (!Task.WaitAll(
+                new Task[] { standardOutput, standardError },
+                millisecondsTimeout: 5_000))
+        {
+            throw new TimeoutException(
+                $"{executable} output streams did not drain within five seconds.");
+        }
         var result = new ProcessResult(process.ExitCode, standardOutput.Result, standardError.Result);
         if (expectedExitCode is not null && result.ExitCode != expectedExitCode)
         {

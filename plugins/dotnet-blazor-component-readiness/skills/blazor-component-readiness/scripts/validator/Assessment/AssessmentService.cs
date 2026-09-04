@@ -9,7 +9,8 @@ namespace BlazorComponentReadiness.Validator.Assessment;
 
 public static class AssessmentService
 {
-    public const int SchemaVersion = 1;
+    public const int SchemaVersion = 2;
+    public const int LegacySchemaVersion = 1;
     public static readonly IReadOnlyList<string> CompletionStates = ["incomplete", "targeted", "complete"];
 
     public static ReadinessAssessment Initialize(
@@ -118,7 +119,7 @@ public static class AssessmentService
         EvidenceBundle evidence,
         PackageRevisionBinding? packageBinding = null)
     {
-        if (assessment.SchemaVersion != SchemaVersion ||
+        if (assessment.SchemaVersion is not (LegacySchemaVersion or SchemaVersion) ||
             assessment.AssessmentKind is not ("unified" or "package" or "component") ||
             assessment.AssessmentKind != assessment.Identity.AssessmentKind)
         {
@@ -240,7 +241,12 @@ public static class AssessmentService
         }
 
         EvidenceInputBindingValidator.Validate(root, assessment, input, evidence);
-        EvidenceProtocolValidator.Validate(root, assessment, input, evidence);
+        EvidenceProtocolValidator.Validate(
+            root,
+            assessment,
+            input,
+            evidence,
+            enforceCurrentProtocols: assessment.SchemaVersion == SchemaVersion);
         ValidateCompletion(assessment);
         BoundedIO.EnsureLength(assessmentBytes.Length, ResourceLimits.SerializedArtifactBytes, "assessment");
     }

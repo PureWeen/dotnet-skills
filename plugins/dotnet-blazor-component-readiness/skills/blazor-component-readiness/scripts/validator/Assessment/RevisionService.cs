@@ -379,6 +379,13 @@ public static class RevisionService
     {
         var before = predecessor.Assessment;
         var after = replacement.Assessment;
+        if (after.SchemaVersion < before.SchemaVersion ||
+            after.SchemaVersion - before.SchemaVersion > 1)
+        {
+            throw new DeterministicValidationException(
+                "Revision chains cannot downgrade or skip assessment schema generations.");
+        }
+
         if (predecessor.Kind != replacement.Kind ||
             before.Identity != after.Identity ||
             before.RubricVersion != after.RubricVersion ||

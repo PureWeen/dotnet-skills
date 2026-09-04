@@ -1275,10 +1275,27 @@ internal static class EvidenceTests
 
         using var process = Process.Start(startInfo)
             ?? throw new InvalidOperationException($"Could not start {executable}.");
-        var standardOutput = process.StandardOutput.ReadToEnd();
-        var standardError = process.StandardError.ReadToEnd();
-        process.WaitForExit();
-        var result = new ProcessResult(process.ExitCode, standardOutput, standardError);
+        var standardOutput = process.StandardOutput.ReadToEndAsync();
+        var standardError = process.StandardError.ReadToEndAsync();
+        if (!process.WaitForExit(milliseconds: 180_000))
+        {
+            process.Kill(entireProcessTree: true);
+            _ = process.WaitForExit(milliseconds: 5_000);
+            _ = Task.WaitAll(new Task[] { standardOutput, standardError }, millisecondsTimeout: 5_000);
+            throw new TimeoutException($"{executable} did not exit within three minutes.");
+        }
+
+        if (!Task.WaitAll(
+                new Task[] { standardOutput, standardError },
+                millisecondsTimeout: 5_000))
+        {
+            throw new TimeoutException(
+                $"{executable} output streams did not drain within five seconds.");
+        }
+        var result = new ProcessResult(
+            process.ExitCode,
+            standardOutput.Result,
+            standardError.Result);
         Assert(
             result.ExitCode == expectedExitCode,
             $"{executable} exit code: expected {expectedExitCode}, actual {result.ExitCode}.\n{result}");

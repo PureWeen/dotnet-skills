@@ -24,11 +24,6 @@ stimuli:
         config:
           pattern: (?i)(signature|signed).*(SBOM|software bill)
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Separates what the release configuration intends from what the captured package bytes prove
-      - Does not report signing or an SBOM as established when neither artifact is present
-      - States the smallest additional artifact needed to resolve each uncertainty
 
   - name: Classify three different evidence boundaries
     prompt: |
@@ -66,10 +61,164 @@ stimuli:
           expected_exit_code: 0
           stdout_matches: VALID unified 110
       - type: exit-success
-      - type: prompt
-    rubric:
-      - The contradictory artifact fact, unavailable owner-controlled fact, and unrun probe receive different factual classifications
-      - The response distinguishes deterministic file validation from confidence in the underlying claims
+
+  - name: Apply the four status boundaries precisely
+    prompt: |
+      Create a targeted row-decision worksheet for a synthetic Blazor package without using the network:
+
+      - The confirmed complete owner-controlled public policy corpus contains no general support
+        response commitment.
+      - A private pre-release threat model was not supplied, and that row does not require publication.
+      - Selection announcements apply, but no screen-reader or live-region probe was run.
+      - The owner explicitly confirms that optional telemetry is not offered, and the complete
+        component source/runtime inventory exposes no telemetry option or consent surface.
+
+      Classify SUP-03, SEC-01, A11Y-09, and SEC-11 with the exact status and explain the matching
+      evidence-state boundary. Do not create a full report.
+    graders:
+      - type: output-matches
+        config:
+          pattern: (?is)SUP-03.{0,300}\bgap\b
+      - type: output-matches
+        config:
+          pattern: (?is)SEC-01.{0,300}owner evidence required
+      - type: output-matches
+        config:
+          pattern: (?is)A11Y-09.{0,300}not tested
+      - type: output-matches
+        config:
+          pattern: (?is)SEC-11.{0,300}not applicable
+      - type: output-matches
+        config:
+          pattern: (?is)((complete|confirmed).{0,250}public.{0,250}(absent|missing|contains no)|(absent|missing|contains no).{0,250}public.{0,250}(complete|confirmed))
+      - type: output-matches
+        config:
+          pattern: (?is)(screen-reader|live-region).{0,200}(not run|unrun|missing probe|not tested)
+      - type: exit-success
+
+  - name: Separate implementation proof from outcome proxies
+    prompt: |
+      Perform a targeted source-boundary review for three synthetic component rows. A keyed reorder
+      browser operation passed, but no admitted Razor or component/base source shows whether @key is
+      used. Separately, exact source implements only IDisposable and synchronously discards the Task
+      returned by browser cleanup; the browser handler removes listeners only after that cleanup
+      message is processed.
+
+      Classify PERF-02, BEQ-15, and BEQ-16 with exact statuses and evidence-state boundaries.
+      Explain why the reorder outcome cannot prove the implementation mechanism. Do not run new
+      probes.
+    graders:
+      - type: output-matches
+        config:
+          pattern: (?is)PERF-02.{0,300}\bnot tested\b
+      - type: output-matches
+        config:
+          pattern: (?is)(reorder|behavior).{0,200}(does not|cannot).{0,200}(prove|establish).{0,100}@key
+      - type: output-matches
+        config:
+          pattern: (?is)BEQ-15.{0,300}\bgap\b
+      - type: output-matches
+        config:
+          pattern: (?is)BEQ-16.{0,300}\bgap\b
+      - type: exit-success
+
+  - name: Enforce release and parameter trust boundaries
+    prompt: |
+      Classify three targeted rows for a synthetic Blazor package without using the network:
+
+      - CI-07: Pull-request CI is separate, but the release job has OIDC and protected-environment
+        privileges from job start. That same job checks out repository source, runs npm install
+        scripts and the package build, then authenticates, signs, and publishes.
+      - CI-08: The release job signs a nupkg, verifies it, runs another action, then pushes the same
+        mutable workspace path. It records no artifact digest and has no immutable artifact handoff
+        into a separate privileged publishing stage.
+      - BEQ-09: The component normally stores incoming Value in a backing field, but one conditional
+        event-handler path executes `this.Value = newValue;` before invoking ValueChanged.
+      - PERF-05: Complete source shows a CascadingValue whose value can change and that does not set
+        IsFixed. No runtime capture counts descendant renders before or after a representative
+        parent update.
+
+      Write the exact statuses as one JSON object at `out/targeted-decisions.json`, mapping each
+      requirement ID directly to its status string. Include PERF-05 with the other three IDs. Then
+      explain the decisive boundary for each in your response. Do not create a full report.
+    graders:
+      - type: file-exists
+        config:
+          path: out/targeted-decisions.json
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py verify-targeted-decisions --input out/targeted-decisions.json
+          expected_exit_code: 0
+          stdout_matches: VALID targeted decisions CI-07 CI-08 BEQ-09 PERF-05
+      - type: output-matches
+        config:
+          pattern: (?is)(same job|same-job).{0,250}(build|untrusted).{0,250}(sign|publish|privileg)
+      - type: output-matches
+        config:
+          pattern: (?is)(mutable path|path equality|same path).{0,250}(not|isn.t|does not).{0,200}(immutable|digest|byte)
+      - type: output-matches
+        config:
+          pattern: (?is)(Value|parameter setter|public parameter).{0,250}(assign|mutat)
+      - type: output-matches
+        config:
+          pattern: (?is)PERF-05.{0,300}\bnot tested\b
+      - type: output-matches
+        config:
+          pattern: (?is)(CascadingValue|IsFixed|cascading).{0,250}(risk|applicab).{0,250}(does not|cannot|not enough).{0,200}(prove|establish|demonstrate).{0,100}(rerender|gap)
+      - type: exit-success
+    environment:
+      files:
+        - src: fixtures/fixture-tool.py
+          dest: fixture/fixture-tool.py
+
+  - name: Classify published artifact absence and mechanism applicability
+    prompt: |
+      Classify seven rows for a synthetic released Blazor package without using the network:
+
+      - The confirmed complete exact nupkg inventory and public release-asset inventory contain no
+        SPDX or CycloneDX SBOM and no provenance attestation. The complete release workflow builds,
+        signs, and publishes the package but performs no SBOM or provenance generation/publication.
+        The nupkg contains third-party assets, but no admitted evidence establishes whether every
+        asset is represented. Separately, the complete notice map pairs only a subset of those
+        assets and omits the admitted dependency inventory.
+      - Complete component and inherited-renderer source proves the component only forwards
+        consumer-owned ChildContent. It owns no repeated collection, rendered loop, or other
+        identity-stability surface where @key could apply.
+
+      Write one JSON object at `out/provenance-decisions.json`, mapping PI-06 through PI-11 and
+      PERF-02 directly to exact status strings. Keep missing SBOM bytes distinct from direct
+      incomplete asset/notice representation. Explain why a behavior result is unnecessary when
+      complete source proves the mechanism has no applicable owned surface. Do not create a full
+      report.
+    graders:
+      - type: file-exists
+        config:
+          path: out/provenance-decisions.json
+      - type: run-command
+        config:
+          command: python3 fixture/fixture-tool.py verify-provenance-decisions --input out/provenance-decisions.json
+          expected_exit_code: 0
+          stdout_matches: VALID provenance decisions PI-06 PI-07 PI-08 PI-09 PI-10 PI-11 PERF-02
+      - type: output-matches
+        config:
+          pattern: (?is)(PI-06|PI-07|PI-10|PI-11).{0,350}\bgap\b
+      - type: output-matches
+        config:
+          pattern: (?is)PI-08.{0,300}\bnot tested\b
+      - type: output-matches
+        config:
+          pattern: (?is)PI-09.{0,300}\bgap\b
+      - type: output-matches
+        config:
+          pattern: (?is)PERF-02.{0,300}not applicable
+      - type: output-matches
+        config:
+          pattern: (?is)(no component-owned|owns no).{0,250}(collection|loop|identity).{0,250}(not applicable|no applicable)
+      - type: exit-success
+    environment:
+      files:
+        - src: fixtures/fixture-tool.py
+          dest: fixture/fixture-tool.py
 
   - name: Select only owner-controlled documentation
     prompt: |
@@ -91,11 +240,6 @@ stimuli:
         config:
           substring: https://community.example.test/widget-review
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Includes every supplied owner-controlled documentation source
-      - Excludes the supplied third-party review from the official source set
-      - Does not invent additional URLs or claim that discovery contacted external services
 
   - name: Use a bounded internal owner record
     prompt: |
@@ -127,11 +271,6 @@ stimuli:
           command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 110
           expected_exit_code: 0
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Uses the internal record only for claims it directly supports
-      - Preserves a clear owner-supplied internal provenance label
-      - Does not equate a valid local manifest with independent approval of the evidence
 
   - name: Assess a package with no public source
     prompt: |
@@ -162,11 +301,6 @@ stimuli:
         config:
           pattern: (?i)(clone|source repository).*(required|must)
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Completes a bounded assessment without requiring a source repository
-      - Records the owner-declared source boundary without turning it into a retrieval failure
-      - Keeps source-dependent conclusions appropriately limited
 
   - name: Produce one complete component record
     prompt: |
@@ -194,10 +328,6 @@ stimuli:
           expected_exit_code: 0
           stdout_matches: VALID unified 110
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Produces one complete record with no missing, duplicated, or independently invented requirements
-      - Reports the exact local report and validation-manifest paths
 
   - name: Bind package and component records
     prompt: |
@@ -232,10 +362,6 @@ stimuli:
           path: out/grid-revisions/0001/component.assessment.json
           value: '"package_reference":{'
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Package-wide and component-specific requirements are separated into the correct complete records
-      - The component result is bound to the exact validated package revision rather than a loose package name
 
   - name: Preserve supplied candidate identity
     prompt: |
@@ -268,10 +394,6 @@ stimuli:
           command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 110
           expected_exit_code: 0
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Uses the supplied candidate bytes without replacing them with a different build
-      - Reports the normalized package ID, prerelease version, and digest from the exact file
 
   - name: Complete an isolated two-control library
     prompt: |
@@ -303,11 +425,6 @@ stimuli:
           expected_exit_code: 0
           stdout_matches: VALID library 1 2
       - type: exit-success
-      - type: prompt
-    rubric:
-      - The confirmed inventory accounts for the exact package and both controls
-      - Each control has its own bounded evidence and result while sharing only the validated package record
-      - The final index accurately reports completion, modes, status counts, and local report links
 
   - name: Keep the generated output factual
     prompt: |
@@ -337,11 +454,6 @@ stimuli:
           command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 110
           expected_exit_code: 0
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Produces the requested factual assessment without adding an unsolicited decision
-      - Does not create a ranked remediation artifact
-      - Clearly separates factual limitations from deterministic structural validation
 
   - name: Exercise post-initialization child mutations
     prompt: |
@@ -367,11 +479,6 @@ stimuli:
           expected_exit_code: 0
           stdout_matches: VALID dynamic lifecycle 10
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Exercises child mutations after the initial render rather than checking only the initial group
-      - Retains a raw digest-bound observation or an operation-specific blocker for every applicable mutation
-      - Connects membership, propagated state, focus, keyboard, callback, and cleanup outcomes to the factual rows
 
   - name: Bound third-party notice completeness
     prompt: |
@@ -399,10 +506,6 @@ stimuli:
           command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 46
           expected_exit_code: 0
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Treats the listed files as presence evidence rather than proof of complete notice coverage
-      - Requests or leaves untested the missing dependency and bundled-asset mapping
 
   - name: Bound embedded signing metadata
     prompt: |
@@ -431,10 +534,6 @@ stimuli:
           command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 46
           expected_exit_code: 0
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Does not equate an embedded certificate table or signer subject with valid Authenticode
-      - Identifies the per-artifact verification evidence still required
 
   - name: Bound accountable support ownership
     prompt: |
@@ -462,30 +561,57 @@ stimuli:
           command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 46
           expected_exit_code: 0
       - type: exit-success
-      - type: prompt
-    rubric:
-      - Does not equate organization, author, or contact metadata with accountable support ownership
-      - Identifies the missing owner, scope, backup, and escalation evidence
 
+  # Vally 0.14 does not enforce expect_activation during execution. The adapter
+  # consumes it after the run as activation-contract metadata; the deterministic
+  # graders below independently score the requested off-target behavior.
   - name: Stay dormant for ordinary component authoring
     prompt: Create a reusable Blazor date-range picker with keyboard navigation and form validation.
     expect_activation: false
     graders:
-      - type: prompt
-    rubric:
-      - Did not attempt a package readiness assessment and responds as an ordinary Blazor component-authoring task
-      - Does not request package evidence, create readiness artifacts, or claim certification
-      - Provides implementation guidance appropriate to the requested date-range picker
+      - type: output-matches
+        config:
+          pattern: (?i)(date[- ]?range|DateRange)
+      - type: output-matches
+        config:
+          pattern: (?i)(keyboard|ArrowLeft|ArrowRight|Home|End)
+      - type: output-matches
+        config:
+          pattern: (?i)(validation|EditForm|ValidationMessage|InputBase)
+      - type: output-not-matches
+        config:
+          pattern: (?i)(readiness assessment|evidence ledger|certification)
+      - type: file-not-exists
+        config:
+          path: '**/input.confirmed.json'
+      - type: file-not-exists
+        config:
+          path: '**/revisions/**'
+      - type: exit-success
 
   - name: Stay dormant for application debugging
     prompt: My Blazor page throws after navigation when a scoped service is disposed. Help me debug it.
     expect_activation: false
     graders:
-      - type: prompt
-    rubric:
-      - Did not attempt a vendor readiness workflow and diagnoses the application lifetime or disposal problem
-      - Does not request package inventory, evidence ledgers, or readiness output paths
-      - Provides a bounded debugging direction for the scoped-service failure
+      - type: output-matches
+        config:
+          pattern: (?i)(scoped|service lifetime|scope)
+      - type: output-matches
+        config:
+          pattern: (?i)(dispose|ObjectDisposedException|navigation)
+      - type: output-matches
+        config:
+          pattern: (?i)(debug|diagnos|trace|check|lifetime)
+      - type: output-not-matches
+        config:
+          pattern: (?i)(readiness assessment|evidence ledger|certification)
+      - type: file-not-exists
+        config:
+          path: '**/input.confirmed.json'
+      - type: file-not-exists
+        config:
+          path: '**/revisions/**'
+      - type: exit-success
 
   - name: Stay dormant for framework pull request review
     prompt: Review this ASP.NET Core framework pull request for regressions in interactive server rendering.
@@ -493,7 +619,10 @@ stimuli:
     graders:
       - type: output-matches
         config:
-          pattern: (?i)(provide|share|need|which).*(pull request|PR|URL|diff)
+          pattern: (?is)(provide|share|need|which).*(pull request|PR|URL|diff)
+      - type: output-not-matches
+        config:
+          pattern: (?i)(readiness assessment|evidence ledger|certification)
       - type: file-not-exists
         config:
           path: '**/input.confirmed.json'
@@ -504,17 +633,27 @@ stimuli:
         config:
           path: '**/library-index.*'
       - type: exit-success
-    rubric:
-      - Stays outside the package-readiness workflow
-      - Requests the missing pull request or diff needed to perform the first-party review
-      - Does not create readiness artifacts
 
   - name: Stay dormant for generic package creation
     prompt: Help me pack a class library with symbols, Source Link, and deterministic builds.
     expect_activation: false
     graders:
-      - type: prompt
-    rubric:
-      - Did not attempt a Blazor readiness assessment and answers the generic packaging request
-      - Does not request component inventories, render-mode probes, or readiness evidence
-      - Gives relevant symbols, Source Link, and deterministic-build guidance
+      - type: output-matches
+        config:
+          pattern: (?i)(IncludeSymbols|SymbolPackageFormat|snupkg|symbols)
+      - type: output-matches
+        config:
+          pattern: (?i)(Source Link|PublishRepositoryUrl|EmbedUntrackedSources|Microsoft\.SourceLink)
+      - type: output-matches
+        config:
+          pattern: (?i)(ContinuousIntegrationBuild|Deterministic)
+      - type: output-not-matches
+        config:
+          pattern: (?i)(readiness assessment|component inventory|evidence ledger|certification)
+      - type: file-not-exists
+        config:
+          path: '**/input.confirmed.json'
+      - type: file-not-exists
+        config:
+          path: '**/revisions/**'
+      - type: exit-success

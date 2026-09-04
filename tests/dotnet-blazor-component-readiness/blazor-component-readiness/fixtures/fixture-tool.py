@@ -198,6 +198,31 @@ def assert_row_not_verified(args):
     print(f"VALID {args.id} {row['status']}")
 
 
+def verify_targeted_decisions(args):
+    decisions = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    assert decisions == {
+        "CI-07": "gap",
+        "CI-08": "gap",
+        "BEQ-09": "gap",
+        "PERF-05": "not tested",
+    }
+    print("VALID targeted decisions CI-07 CI-08 BEQ-09 PERF-05")
+
+
+def verify_provenance_decisions(args):
+    decisions = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    assert decisions == {
+        "PI-06": "gap",
+        "PI-07": "gap",
+        "PI-08": "not tested",
+        "PI-09": "gap",
+        "PI-10": "gap",
+        "PI-11": "gap",
+        "PERF-02": "not applicable",
+    }
+    print("VALID provenance decisions PI-06 PI-07 PI-08 PI-09 PI-10 PI-11 PERF-02")
+
+
 def verify_dynamic(args):
     root = Path(args.root)
     manifest = json.loads((root / "input.confirmed.json").read_text(encoding="utf-8"))
@@ -271,7 +296,10 @@ def verify_blind_gate(args):
         for item in draft["allowed_inputs"]
         if not (fixture / item["path"]).is_file()
     ]
-    assert len(missing_paths) == 1
+    assert not missing_paths
+    coverage_ids = {item["id"] for item in draft["coverage"]}
+    missing_surface = "browser-interop-and-style-assets"
+    assert missing_surface not in coverage_ids
 
     preflight = root / "preflight"
     command = (preflight / "command.txt").read_text(encoding="utf-8").strip()
@@ -282,11 +310,11 @@ def verify_blind_gate(args):
     assert "comparison-inputs.draft.json" in command
     assert exit_code != 0
     assert "validation error:" in stderr.lower()
-    assert missing_paths[0] in stdout + stderr
+    assert missing_surface in stdout + stderr
     assert not (root / "comparison-inputs.confirmed.json").exists()
     assert not (root / "worker-handoff.json").exists()
     assert not (root / "revisions").exists()
-    print(f"VALID blind gate rejected {missing_paths[0]}")
+    print(f"VALID blind gate rejected missing coverage surface {missing_surface}")
 
 
 def inventory_candidates(args):
@@ -383,6 +411,14 @@ def main():
     command.add_argument("--assessment", required=True)
     command.add_argument("--id", required=True)
     command.set_defaults(func=assert_row_not_verified)
+
+    command = sub.add_parser("verify-targeted-decisions")
+    command.add_argument("--input", required=True)
+    command.set_defaults(func=verify_targeted_decisions)
+
+    command = sub.add_parser("verify-provenance-decisions")
+    command.add_argument("--input", required=True)
+    command.set_defaults(func=verify_provenance_decisions)
 
     command = sub.add_parser("verify-dynamic")
     command.add_argument("--root", required=True)
