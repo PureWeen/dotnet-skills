@@ -119,7 +119,7 @@ Assert(manifestBytes.Skip(1).All(bytes => bytes.SequenceEqual(manifestBytes[0]))
 using (var manifest = JsonDocument.Parse(manifestBytes[0]))
 {
     AssertEqual("dotnet-blazor", manifest.RootElement.GetProperty("name").GetString(), "plugin name");
-    AssertEqual("0.1.1", manifest.RootElement.GetProperty("version").GetString(), "plugin version");
+    AssertEqual("0.1.2", manifest.RootElement.GetProperty("version").GetString(), "plugin version");
     AssertSequence(["./skills/"], Strings(manifest.RootElement.GetProperty("skills")), "plugin skills");
     AssertSequence(
         ["./agents/blazor-component-readiness.agent.md", "./agents/blazor-component-readiness-worker.agent.md"],
