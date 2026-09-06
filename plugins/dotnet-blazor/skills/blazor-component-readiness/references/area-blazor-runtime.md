@@ -106,3 +106,56 @@ and its warm full-document revisit must observe the WebAssembly renderer as dist
 identities. Identical DOM, downloaded WebAssembly assets, or an unchanged `interactive-auto`
 label are not renderer identity evidence; if the identities cannot be observed, use `not tested`
 or `gap` according to the status boundaries.
+
+### Interactive Auto evidence protocol
+
+Retain one canonical `structured-protocol` input for the protocol and one canonical
+`raw-observation` input for each visit. The protocol shape is:
+
+```json
+{
+  "schema_version": 1,
+  "protocol": "auto-renderer-transition",
+  "component_id": "Example.Calendar",
+  "cold": {
+    "visit": "cold",
+    "expected_identity": "server",
+    "observed_identity": "server",
+    "raw_observation_sha256": {
+      "algorithm": "sha256",
+      "value": "<cold-capture-sha256>"
+    }
+  },
+  "warm": {
+    "visit": "warm",
+    "expected_identity": "webassembly",
+    "observed_identity": "webassembly",
+    "raw_observation_sha256": {
+      "algorithm": "sha256",
+      "value": "<warm-capture-sha256>"
+    }
+  }
+}
+```
+
+Each referenced raw visit is canonical JSON with this shape:
+
+```json
+{
+  "schema_version": 1,
+  "observation": "auto-renderer-visit",
+  "component_id": "Example.Calendar",
+  "visit": "cold",
+  "mode": "interactive-auto",
+  "observed_identity": "server"
+}
+```
+
+Use `visit: "warm"` and `observed_identity: "webassembly"` for the second capture. The
+`component_id`, visit, mode, and observed identity must agree across the protocol and its raw
+capture. The protocol digest must equal the `structured-protocol` input digest, each raw digest
+must equal its `raw-observation` input digest, and the selected evidence record must use
+`protocol:auto-renderer-transition-v1` with the protocol basename as locator. Populate
+`observed_identity` from the retained browser/console/network capture of that visit; never copy
+`expected_identity` into the observed field. The validator binds these digests and identities but
+does not turn a declaration into independent real-world proof.
