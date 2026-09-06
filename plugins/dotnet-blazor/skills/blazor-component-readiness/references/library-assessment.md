@@ -16,8 +16,8 @@ and confirmation.
 
 Create:
 
-- one package unit per exact package ID/version/nupkg digest, owning the 46 repository-wide rows;
-- one component unit per confirmed component, owning the 64 component-specific rows and every
+- one package unit per exact package ID/version/nupkg digest, owning the 60 repository-wide/conditional rows;
+- one component unit per confirmed component, owning the 61 component-specific rows and every
   claimed mode;
 - exactly one top-level writable worker session per unit.
 

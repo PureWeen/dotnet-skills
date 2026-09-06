@@ -24,7 +24,8 @@ internal static class WorkflowTests
         "area-support-lifecycle.md",
         "area-conditional-families.md",
         "overlay-scaffolder.md",
-        "overlay-ai-skill.md"
+        "overlay-ai-skill.md",
+        "docx-crosswalk.md"
     ];
 
     private static readonly string[] Statuses =
@@ -81,8 +82,8 @@ internal static class WorkflowTests
         AssertContains(skill, "certification", "certification boundary");
         AssertContains(skill, "Requires an active .NET 11 SDK", ".NET 11 prerequisite");
         AssertContains(skill, "structural validation", "structural/factual boundary");
-        AssertContains(skill, "110-row public baseline", "core count");
-        AssertContains(skill, "46 `repository-wide` / 64 `component-specific`", "scope ownership");
+        AssertContains(skill, "121-ID operational crosswalk", "core count");
+        AssertContains(skill, "60 `repository-wide` / 61 `component-specific`", "scope ownership");
         AssertContains(skill, "`source-available`, `closed-source`, or `unresolved`", "source availability");
         AssertContains(skill, "owner-supplied-internal-evidence", "owner evidence");
         AssertContains(skill, "owner-supplied-public-evidence", "public owner evidence");
@@ -171,13 +172,14 @@ internal static class WorkflowTests
             .EnumerateArray()
             .Select(row => row.GetProperty("id").GetString()!)
             .ToArray();
-        Assert(ids.Length == 110, "rubric.json remains the sole 110-ID source");
+        Assert(ids.Length == 121 && ids.Distinct(StringComparer.Ordinal).Count() == 121,
+            "rubric.json remains the sole current 121-ID source");
 
         var checklist = File.ReadAllText(Path.Combine(referencesRoot, "checklist.md"));
         AssertContains(checklist, "Generated from rubric.json. Do not edit by hand.", "generated checklist marker");
         foreach (var path in Directory.GetFiles(referencesRoot, "*.md"))
         {
-            if (Path.GetFileName(path) == "checklist.md")
+            if (Path.GetFileName(path) is "checklist.md" or "checklist.v1.3.0.md")
             {
                 continue;
             }

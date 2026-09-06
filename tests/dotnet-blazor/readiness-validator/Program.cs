@@ -8,7 +8,8 @@ var plugin = Path.Combine(root, "plugins", "dotnet-blazor");
 var standalonePlugin = Path.Combine(root, "plugins", "dotnet-blazor-component-readiness");
 var references = Path.Combine(plugin, "skills", "blazor-component-readiness", "references");
 
-using var rubricDocument = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(references, "rubric.json")));
+// The historical corpus and golden renderer contract must remain verifiable unchanged.
+using var rubricDocument = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(references, "rubric.v1.3.0.json")));
 var rubric = rubricDocument.RootElement;
 var core = rubric.GetProperty("core").GetProperty("requirements").EnumerateArray().ToArray();
 var overlays = rubric.GetProperty("overlays").EnumerateArray().ToArray();
@@ -105,7 +106,7 @@ AssertSequence(
     SelectIds(core, overlays, ["scaffolder", "ai-skill"]),
     "both-overlay selection");
 
-var checklistPath = Path.Combine(references, "checklist.md");
+var checklistPath = Path.Combine(references, "checklist.v1.3.0.md");
 AssertEqual(RenderChecklist(rubric), File.ReadAllText(checklistPath), "rubric/checklist generated-view parity");
 
 var manifestPaths = new[]
@@ -212,6 +213,8 @@ var testGroups = new Dictionary<string, Action>(StringComparer.Ordinal)
     ["foundation"] = () => FoundationTests.Run(root, plugin),
     ["evidence"] = () => EvidenceTests.Run(root, plugin),
     ["assessment"] = () => AssessmentTests.Run(root, plugin),
+    ["normative"] = () => NormativeContractTests.Run(root, plugin),
+    ["reader"] = () => ReaderTests.Run(root, plugin),
     ["library"] = () => LibraryTests.Run(root, plugin),
     ["workflow"] = () => WorkflowTests.Run(plugin),
     ["enforcement"] = () => EnforcementTests.Run(root, plugin)

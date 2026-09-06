@@ -1,178 +1,227 @@
 <!-- Generated from rubric.json. Do not edit by hand. -->
 # Blazor component readiness checklist
 
-**Rubric version:** 1.3.0
-**Scope schema version:** 1
+**Rubric version:** 2.0.0
 
-A public, versioned vendor self-assessment baseline. It is not certification or a Microsoft acceptance requirement.
+**Scope schema version:** 2
 
-## Status vocabulary
+This checklist is the operational index of [rubric.json](rubric.json). The exact
+normative quotations and source DOCX SHA-256 are in
+[docx-crosswalk.json](docx-crosswalk.json). Read the [crosswalk rules](docx-crosswalk.md)
+before treating an observation as a partner obligation. Deterministic validation
+does not establish certification, factual truth, or Microsoft approval.
 
-- `verified`
-- `gap`
-- `owner evidence required`
-- `not tested`
-- `not applicable`
+## Inventory and assessment rules
+
+There are **121 canonical IDs: 60 package/conditional and 61 component rows**.
+Every ID appears exactly once across the split assessment. The twelve conditional
+rows are always present in the package assessment: score them, or record `not
+applicable` with a substantive rationale. Absence is never completion. Repository
+templates require a deliberate scaffolder-scope decision; no AI deliverable normally
+means explicit AI not-applicable rows.
+
+`SEC-01` through `SEC-03` belong only to the package assessment, matching their
+library-level meaning and evidence. Use **one shared package security review
+action and evidence packet** supporting three conclusions. Component assessments
+contain neither duplicated conclusions nor pointer rows for these IDs.
+
+Statuses remain `verified`, `gap`, `owner evidence required`, `not tested`, and
+`not applicable`. Status is an assessment conclusion, not work status or partner
+disposition. Existing published wording therefore needs no lossy status migration.
+
+Basis legend: **D** direct obligation; **E** decomposition evidence check;
+**C** conditional obligation; **X** versioned operational extension. X rows retain
+canonical inventory slots but are **not DOCX defects or vendor remediation demands
+without separate policy approval**. Their DOCX clause is context, not authority for
+the stronger control. Exact operational basis is versioned in rubric.json.
 
 ## Licensing and provenance
 
-- **LP-01** (`repository-wide`) Uses an OSI-approved, non-copyleft license.
-- **LP-02** (`repository-wide`) Public source repository for shipped versions.
-- **LP-03** (`repository-wide`) Acceptable licenses for all direct and transitive dependencies.
-- **LP-04** (`repository-wide`) Required third-party notices preserved.
-- **LP-05** (`repository-wide`) NuGet `PackageLicenseExpression`.
-- **LP-06** (`repository-wide`) NuGet `RepositoryUrl`.
-- **LP-07** (`repository-wide`) NuGet `RepositoryCommit`.
-- **LP-08** (`repository-wide`) NuGet `Authors`.
-- **LP-09** (`repository-wide`) NuGet `ProjectUrl`.
-- **LP-10** (`repository-wide`) Released package maps to an exact public source commit.
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| LP-01 | Package | 1.1 | D | OSI-approved, non-copyleft license. |
+| LP-02 | Package | 1.2 | D | Public source for shipped versions. |
+| LP-03 | Package | 1.3 | D | OSI-approved, non-copyleft direct/transitive licenses. |
+| LP-04 | Package | 2.12 | E | Preserve required license/notice files. |
+| LP-05 | Package | 1.4 | E | PackageLicenseExpression. |
+| LP-06 | Package | 1.4 | E | RepositoryUrl. |
+| LP-07 | Package | 1.4 | E | RepositoryCommit SHA. |
+| LP-08 | Package | 1.4 | E | Authors. |
+| LP-09 | Package | 1.4 | E | ProjectUrl. |
+| LP-10 | Package | 2.5 | E | Every binary attributable to public partner source or clear NuGet/npm upstream; exact partner source mapping. |
 
 ## Package integrity, SBOM, and provenance
 
-- **PI-01** (`repository-wide`) Every shipped assembly is strong-name signed.
-- **PI-02** (`repository-wide`) Every shipped assembly is Authenticode signed with the maintainer's release identity.
-- **PI-03** (`repository-wide`) NuGet package has a valid author signature.
-- **PI-04** (`repository-wide`) NuGet.org repository signature is present where expected.
-- **PI-05** (`repository-wide`) OIDC/trusted publishing is used instead of long-lived publish secrets.
-- **PI-06** (`repository-wide`) SPDX or CycloneDX SBOM is published for every release.
-- **PI-07** (`repository-wide`) SBOM includes direct and transitive NuGet/npm dependencies.
-- **PI-08** (`repository-wide`) Bundled JS, CSS, fonts, themes, and other third-party assets are represented.
-- **PI-09** (`repository-wide`) Required third-party license notices are represented.
-- **PI-10** (`repository-wide`) SBOM and provenance bind to the exact final signed NuGet package digest.
-- **PI-11** (`repository-wide`) Build provenance connects source SHA, workflow, dependencies, signatures, and publication.
-- **PI-12** (`repository-wide`) Release evidence is retained long enough for validation and incident response.
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| PI-01 | Package | 2.1 | E | Strong-name every assembly. |
+| PI-02 | Package | 2.1 | E | Authenticode every assembly with verified publisher identity. |
+| PI-03 | Package | 2.2 | D | NuGet-sign every shipped .nupkg. |
+| PI-04 | Package | 2.2 | X | Separate NuGet.org repository signature expectation. |
+| PI-05 | Package | 2.3 | D | OIDC/trusted publishing, no long-lived secrets. |
+| PI-06 | Package | 2.4 | D | SPDX/CycloneDX SBOM every release. |
+| PI-07 | Package | 2.4 | E | Direct and transitive dependency inventory. |
+| PI-08 | Package | 2.12 | E | Bundled third-party JS/CSS upstream and version in SBOM. |
+| PI-09 | Package | 2.12 | E | Preserve bundled third-party notices. |
+| PI-10 | Package | 2.4 | X | Final signed package digest binding. |
+| PI-11 | Package | 2.5 | X | Source/workflow/dependencies/signatures/publication provenance. |
+| PI-12 | Package | 8.3 | X | Release evidence retention policy. |
 
 ## Security and vulnerability management
 
-- **SEC-01** (`component-specific`) Documented threat model covers .NET, JS, browser, host page, render modes, and release pipeline.
-- **SEC-02** (`component-specific`) Security review is completed before release.
-- **SEC-03** (`component-specific`) Findings are resolved or accepted with documented rationale.
-- **SEC-04** (`repository-wide`) `SECURITY.md` provides a private reporting channel.
-- **SEC-05** (`repository-wide`) Coordinated disclosure process exists.
-- **SEC-06** (`repository-wide`) Dependency vulnerability scanning runs for every release.
-- **SEC-07** (`repository-wide`) No known unpatched High/Critical vulnerabilities at release time.
-- **SEC-08** (`repository-wide`) Vulnerability servicing aligns with the supported .NET cadence.
-- **SEC-09** (`repository-wide`) Emergency out-of-band release capability exists for exploited critical issues.
-- **SEC-10** (`component-specific`) No unexpected default telemetry, phone-home behavior, or remote asset loading.
-- **SEC-11** (`component-specific`) Optional telemetry is opt-in and documented.
-- **SEC-12** (`component-specific`) Static SSR and Interactive Server trust boundaries are reviewed.
-- **SEC-13** (`component-specific`) Browser event/input values are not represented as server authorization evidence.
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| SEC-01 | Package | 2.6 | E | Library threat model; shared package action. |
+| SEC-02 | Package | 2.6 | E | Library security review before release; same action. |
+| SEC-03 | Package | 2.6 | E | Address or document acceptance of findings before release; same action. |
+| SEC-04 | Package | 2.7 | E | SECURITY.md private disclosure contact. |
+| SEC-05 | Package | 2.7 | E | Report/fix privately; disclose after fix. |
+| SEC-06 | Package | 2.9 | E | Release dependency scanning; PR scanning optional. |
+| SEC-07 | Package | 2.9 | E | No known unpatched High/Critical direct/transitive CVEs at ship. |
+| SEC-08 | Package | 2.8 | E | .NET monthly servicing cadence after fix readiness. |
+| SEC-09 | Package | 2.8 | C | Exploited critical issues may warrant an out-of-band release. |
+| SEC-10 | Component | 2.10 | E | No default phone-home, telemetry, or remote assets. |
+| SEC-11 | Component | 2.10 | C | Telemetry opt-in and documented if present. |
+| SEC-12 | Component | 2.11 | D | Static SSR and Interactive Server threat mitigation. |
+| SEC-13 | Component | 2.11 | E | Browser input is not authorization evidence. |
 
 ## Accessibility
 
-- **A11Y-01** (`component-specific`) WCAG 2.2 AA conformance for the supported configuration.
-- **A11Y-02** (`component-specific`) No known AA failures at ship.
-- **A11Y-03** (`component-specific`) Automated accessibility scanning is clean for every release.
-- **A11Y-04** (`component-specific`) A full accessibility assessment is completed at least once per major release.
-- **A11Y-05** (`component-specific`) Representative supported screen-reader smoke testing is recorded.
-- **A11Y-06** (`component-specific`) Keyboard-only operation is verified.
-- **A11Y-07** (`component-specific`) Focus order, trapping, restoration, and visible focus are verified where applicable.
-- **A11Y-08** (`component-specific`) Roles, names, values, states, and relationships are correct.
-- **A11Y-09** (`component-specific`) Selection, expansion/collapse, validation, and async loading are announced.
-- **A11Y-10** (`component-specific`) Windows High Contrast and CSS `forced-colors` are supported.
-- **A11Y-11** (`component-specific`) User-facing strings are localizable.
-- **A11Y-12** (`component-specific`) RTL support is recorded when claimed.
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| A11Y-01 | Component | 3.1 | D | WCAG 2.2 AA for default interactive configurations. |
+| A11Y-02 | Component | 3.1 | E | No known AA failures at ship. |
+| A11Y-03 | Component | 3.3 | E | Accessibility Insights for Web FastPass clean each release. |
+| A11Y-04 | Component | 3.3 | E | Full Accessibility Insights Assessment each major release. |
+| A11Y-05 | Component | 3.4 | E | NVDA, JAWS, or Windows Narrator each major release. |
+| A11Y-06 | Component | 3.1 | E | Keyboard operation. |
+| A11Y-07 | Component | 3.1 | E | Applicable focus behavior. |
+| A11Y-08 | Component | 3.1 | E | Semantic roles, names, values, states, relationships. |
+| A11Y-09 | Component | 3.4 | E | Selection/expansion/validation/async announcements. |
+| A11Y-10 | Component | 3.2 | D | Windows High Contrast and forced-colors. |
+| A11Y-11 | Component | 3.5 | E | All user-visible strings localizable. |
+| A11Y-12 | Component | 3.5 | C | RTL optional, assessed when claimed. |
 
 ## Blazor engineering quality
 
-- **BEQ-01** (`component-specific`) Latest stable .NET is supported on GA day.
-- **BEQ-02** (`component-specific`) Supported render modes are explicit.
-- **BEQ-03** (`component-specific`) Unsupported modes fail safely or are clearly documented.
-- **BEQ-04** (`component-specific`) Prerendering does not throw.
-- **BEQ-05** (`component-specific`) Static SSR output has a documented usefulness/accessibility contract.
-- **BEQ-06** (`component-specific`) Interactive Server is tested.
-- **BEQ-07** (`component-specific`) Interactive WebAssembly or standalone WASM is tested when supported.
-- **BEQ-08** (`component-specific`) Auto transition behavior is tested when supported.
-- **BEQ-09** (`component-specific`) `[Parameter]` properties follow framework guidance and are not mutated by the component.
-- **BEQ-10** (`component-specific`) `[EditorRequired]` is used where appropriate.
-- **BEQ-11** (`component-specific`) Events use `EventCallback`/`EventCallback<T>`.
-- **BEQ-12** (`component-specific`) Callback tasks are awaited and failures reach the host error path.
-- **BEQ-13** (`component-specific`) `InvokeAsync` and `StateHasChanged` are used correctly.
-- **BEQ-14** (`component-specific`) Blocking and unobserved fire-and-forget work are absent.
-- **BEQ-15** (`component-specific`) Timers, subscriptions, cancellation tokens, JS references, and modules are cleaned up.
-- **BEQ-16** (`component-specific`) `IAsyncDisposable` is used when cleanup crosses JS or async boundaries.
-- **BEQ-17** (`component-specific`) JS interop uses narrow module-scoped APIs.
-- **BEQ-18** (`component-specific`) Initialization-time JS interop is avoided.
-- **BEQ-19** (`component-specific`) Serialization is typed and correctly escapes untrusted values.
-- **BEQ-20** (`component-specific`) CSS isolation or a documented scoped global-style contract is used.
-- **BEQ-21** (`repository-wide`) Nullable and .NET/Blazor analyzer results are clean or have an accepted migration plan.
-- **BEQ-22** (`component-specific`) Public APIs have accurate XML documentation.
-- **BEQ-23** (`component-specific`) Public samples cover every supported render mode.
-- **BEQ-24** (`repository-wide`) SemVer, experimental API, obsolete API, and compatibility policy are explicit.
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| BEQ-01 | Component | 4.1 | D | Latest stable .NET on GA day; earlier versions optional. |
+| BEQ-02 | Component | 4.2 | E | Explicit supported render modes. |
+| BEQ-03 | Component | 4.2 | E | Document supported modes and clear error elsewhere. |
+| BEQ-04 | Component | 4.2 | E | Prerendering must not throw. |
+| BEQ-05 | Component | 4.2 | X | Separate SSR usefulness contract. |
+| BEQ-06 | Component | 4.2 | E | Correct supported Interactive Server behavior. |
+| BEQ-07 | Component | 4.2 | E | Correct supported Interactive WebAssembly behavior. |
+| BEQ-08 | Component | 4.2 | E | Correct supported Auto transitions. |
+| BEQ-09 | Component | 4.3 | E | Parameter auto-properties, no required/init (BL0007), no internal mutation. |
+| BEQ-10 | Component | 4.3 | E | EditorRequired where appropriate. |
+| BEQ-11 | Component | 4.4 | D | EventCallback, not Action/Func. |
+| BEQ-12 | Component | 4.5 | E | Observe callbacks; DispatchExceptionAsync for fire-and-forget errors. |
+| BEQ-13 | Component | 4.5 | E | InvokeAsync + StateHasChanged for external events. |
+| BEQ-14 | Component | 4.5 | E | No blocking or unsupported threading on renderer context. |
+| BEQ-15 | Component | 4.6 | E | Dispose owned resources; catch JSDisconnectedException. |
+| BEQ-16 | Component | 4.6 | E | IAsyncDisposable for owned subscriptions/timers/CTS/JS references. |
+| BEQ-17 | Component | 4.7 | E | Collocated .razor.js from OnAfterRenderAsync; dispose JS/.NET references. |
+| BEQ-18 | Component | 4.7 | E | No JS interop in OnInitializedAsync. |
+| BEQ-19 | Component | 2.11 | E | Typed serialization and untrusted-value escaping. |
+| BEQ-20 | Component | 4.8 | D | .razor.css, avoid inline styles, documented prefixed global CSS. |
+| BEQ-21 | Package | 4.11 | D | No new .NET/BL* analyzer warnings; migration plans do not substitute. |
+| BEQ-22 | Component | 4.12 | E | XML documentation for all public APIs. |
+| BEQ-23 | Component | 4.12 | E | Public docs and component samples for every supported mode. |
+| BEQ-24 | Package | 4.10 | D | SemVer, Experimental, Obsolete guidance for at least one minor version. |
 
-## Trimming and native AOT
+## Trimming and AOT
 
-- **TA-01** (`component-specific`) Package-based trimmed WASM publish succeeds.
-- **TA-02** (`component-specific`) Trim analyzer warnings are resolved or accepted with evidence.
-- **TA-03** (`component-specific`) Browser/runtime smoke test succeeds for the trimmed artifact.
-- **TA-04** (`component-specific`) Reflection/dynamic-code surfaces have appropriate annotations or generated alternatives.
-- **TA-05** (`component-specific`) Native WASM AOT publish succeeds when claimed.
-- **TA-06** (`component-specific`) Native AOT runtime smoke test succeeds when claimed.
-- **TA-07** (`repository-wide`) The supported trim/AOT matrix is documented.
-- **TA-08** (`repository-wide`) The package explicitly opts into trim analysis with `<IsTrimmable>true</IsTrimmable>` or documents an equivalent supported configuration.
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| TA-01 | Component | 4.9; 5.7 | E | IsTrimmable=true; clean trimmed WASM publish; avoid bloated transitive dependencies. |
+| TA-02 | Component | 4.9 | E | Annotate/fix trim and AOT warnings, do not suppress. |
+| TA-03 | Component | 4.9 | E | Trimmed runtime smoke test. |
+| TA-04 | Component | 4.9 | E | Reflection/dynamic-code annotations. |
+| TA-05 | Component | 4.9 | E | Clean WASM AOT compilation, not merely when vendor claims support. |
+| TA-06 | Component | 4.9 | E | AOT runtime smoke test. |
+| TA-07 | Package | 4.9 | X | Separately documented trim/AOT matrix. |
 
 ## Performance
 
-- **PERF-01** (`component-specific`) `ShouldRender` is used only when justified.
-- **PERF-02** (`component-specific`) `@key` is used where identity stability requires it.
-- **PERF-03** (`component-specific`) Expensive render-time work is absent.
-- **PERF-04** (`component-specific`) Large data sets use appropriate virtualization.
-- **PERF-05** (`component-specific`) Cascading values do not cause unnecessary broad rerenders.
-- **PERF-06** (`component-specific`) Interactive Server state and per-circuit memory are bounded.
-- **PERF-07** (`component-specific`) Server-to-browser payload size, allocation, and copy costs are understood.
-- **PERF-08** (`component-specific`) WASM dependency and bundle size are measured against a budget.
-- **PERF-09** (`component-specific`) Startup, render, interaction, and large-data targets are documented.
-- **PERF-10** (`component-specific`) Measurements cover supported representative scenarios.
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| PERF-01 | Component | 5.1 | D | Minimize renders, ShouldRender where appropriate, small trees. |
+| PERF-02 | Component | 5.2 | D | @key on repeated elements. |
+| PERF-03 | Component | 5.3 | D | Avoid heavy OnParametersSet/render work. |
+| PERF-04 | Component | 5.4 | D | Virtualize or document consumer virtualization. |
+| PERF-05 | Component | 5.5 | D | Narrow cascading values or IsFixed. |
+| PERF-06 | Component | 5.6 | D | Small per-circuit state, no large retained graphs. |
+| PERF-07 | Component | 5.6 | X | Payload/allocation/copy measurements. |
+| PERF-08 | Component | 5.7 | X | Measured WASM size budget, beyond normative trimming guidance. |
+| PERF-09 | Component | 5.1 | X | Published performance targets. |
+| PERF-10 | Component | 5.1 | X | Representative benchmark evidence matrix. |
 
 ## CI, documentation, and release validation
 
-- **CI-01** (`repository-wide`) PR CI restores, builds, tests, and packages relevant targets.
-- **CI-02** (`component-specific`) Deterministic regression tests cover every accepted product defect.
-- **CI-03** (`component-specific`) Browser tests cover claimed render modes and JS behavior.
-- **CI-04** (`component-specific`) Accessibility smoke tests run at the agreed cadence.
-- **CI-05** (`repository-wide`) Dependency scans and release checks are required gates.
-- **CI-06** (`repository-wide`) Default and release refs require appropriate review/checks.
-- **CI-07** (`repository-wide`) Untrusted build execution is separated from privileged signing/publishing.
-- **CI-08** (`repository-wide`) Signing/publishing consumes a verified immutable artifact.
-- **CI-09** (`component-specific`) Documentation examples compile and assert behavior, not only syntax.
-- **CI-10** (`component-specific`) Node, .NET, browser, and workload prerequisites are correct.
-- **CI-11** (`component-specific`) Release checklist revalidates every applicable requirement.
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| CI-01 | Package | 8.3 | X | PR restore/build/test/package CI. |
+| CI-02 | Component | 8.3 | X | Per-defect regression tests. |
+| CI-03 | Component | 4.2 | X | Automated browser tests. |
+| CI-04 | Component | 3.3 | X | Additional agreed accessibility CI cadence. |
+| CI-05 | Package | 2.9 | X | Enforced scan/release gates. |
+| CI-06 | Package | 8.3 | X | Branch protection and review checks. |
+| CI-07 | Package | 2.3 | X | Untrusted-build/privileged-publish separation. |
+| CI-08 | Package | 2.2 | X | Immutable artifact promotion. |
+| CI-09 | Component | 4.12 | X | Executable documentation behavior assertions. |
+| CI-10 | Component | 8.3 | X | Probe prerequisite audit. |
+| CI-11 | Component | 8.3 | E | Recheck applicable release requirements. |
 
 ## Support, servicing, and lifecycle
 
-- **SUP-01** (`repository-wide`) Active maintainer/support owner is identified.
-- **SUP-02** (`repository-wide`) Public contact exists.
-- **SUP-03** (`repository-wide`) Response SLA is published.
-- **SUP-04** (`repository-wide`) Supported versions are documented.
-- **SUP-05** (`repository-wide`) Security patch cadence is documented.
-- **SUP-06** (`repository-wide`) Public EOL notice precedes support termination.
-- **SUP-07** (`repository-wide`) Non-security issues are tracked publicly.
-- **SUP-08** (`repository-wide`) Security issues use coordinated disclosure.
-- **SUP-09** (`component-specific`) Requirements are reverified for every release.
-- **SUP-10** (`repository-wide`) The release process defines how readiness regressions suspend a release or supported status and how revalidation restores it.
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| SUP-01 | Package | 8.1 | E | Active support for security, accessibility, engineering. |
+| SUP-02 | Package | 8.1 | E | Single published contact. |
+| SUP-03 | Package | 8.1 | E | Published response SLA. |
+| SUP-04 | Package | 8.1 | X | Separate supported-version matrix. |
+| SUP-05 | Package | 2.8 | X | Separately documented security servicing cadence. |
+| SUP-06 | Package | 8.2 | D | Sufficient advance public EOL notice. |
+| SUP-07 | Package | 8.4 | E | Public non-security shipped-version issues. |
+| SUP-08 | Package | 8.4 | E | Private security disclosure until fix. |
+| SUP-09 | Component | 8.3 | D | Reverify each release. |
+| SUP-10 | Package | 8.5 | D | Microsoft may stop promotion for nonadherence; no vendor suspension workflow is required. |
 
-## Optional overlay: Scaffolder readiness overlay
+## Conditional scaffolders
 
-**Overlay ID:** `scaffolder`
-**Overlay version:** 1.0.0
-**Selection:** Explicit only
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| SCF-01 | Package | 6.intro | C | dotnet scaffold, not dotnet new; dotnet/scaffolding contribution. |
+| SCF-02 | Package | 6.1 | C | Generated accessibility/Blazor quality. |
+| SCF-03 | Package | 6.2 | C | .NET and qualifying partner dependencies only. |
+| SCF-04 | Package | 6.3 | C | Signed nuget.org packages and pinned partner versions. |
+| SCF-05 | Package | 6.4 | C | No arbitrary script execution. |
+| SCF-06 | Package | 6.5 | C | Updates track library changes. |
 
-- **SCF-01** Integrates through the documented scaffolding mechanism for the target ecosystem.
-- **SCF-02** Generated output meets the core accessibility and Blazor requirements.
-- **SCF-03** Dependencies are limited to .NET and explicitly approved third-party libraries.
-- **SCF-04** Packages and generated dependency versions are signed and pinned.
-- **SCF-05** Scaffolding does not perform undocumented arbitrary script execution.
-- **SCF-06** The scaffolder stays current with supported library versions.
+## Conditional AI skills
 
-## Optional overlay: AI-skill readiness overlay
+| ID | Ledger | Clause | Basis | Requirement |
+|---|---|---|---|---|
+| AI-01 | Package | 7.intro | C | dotnet-blazor plugin contribution in dotnet/skills. |
+| AI-02 | Package | 7.intro | C | Contribution format, evals, ownership. |
+| AI-03 | Package | 7.2; 7.3 | C | Accurate .NET release day and prompt library-pattern updates. |
+| AI-04 | Package | 7.4 | C | .NET and qualifying partner dependencies only. |
+| AI-05 | Package | 7.4 | C | No proprietary/closed-source dependencies. |
+| AI-06 | Package | 7.1 | C | Responsible AI review before merge. |
 
-**Overlay ID:** `ai-skill`
-**Overlay version:** 1.0.0
-**Selection:** Explicit only
+## Outside the canonical count
 
-- **AI-01** Contributed through the documented skill or plugin path for the target ecosystem.
-- **AI-02** Follows the target repository's contribution guidance.
-- **AI-03** Updated for each supported framework or library guidance change.
-- **AI-04** Generated code uses only explicitly supported dependencies.
-- **AI-05** Generated guidance remains portable and avoids undocumented proprietary lock-in.
-- **AI-06** Applicable responsible-AI review is completed before release.
+The supplementary trim-analysis audit ID in rubric.json's `extensions` array is
+separate from these 121 rows. Its old equivalent-configuration wording is not a
+waiver of the DOCX IsTrimmable requirement. Stronger CI/provenance/performance
+controls already occupying canonical slots remain in those slots with X labels.
+Do not add a supplementary row to canonical assessments or remove X rows.
+
+## Frozen legacy artifacts
+
+[rubric.v1.3.0.json](rubric.v1.3.0.json) and
+[checklist.v1.3.0.md](checklist.v1.3.0.md) preserve the previous 110-row meaning and
+conditional-overlay behavior. They are historical contracts, not the new
+normative interpretation. Revisions cannot silently change rubric generations.

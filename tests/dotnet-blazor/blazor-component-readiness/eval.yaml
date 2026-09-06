@@ -7,6 +7,49 @@ defaults:
 scoring:
   threshold: 1.0
 stimuli:
+  - name: Retain excluded deliverables without inventing defects
+    prompt: |
+      Review fixture/library-only.json and write out/scope.md explaining how the current
+      package review should represent scaffolder and AI requirements. We want a traceable
+      record, not a smaller checklist. Also explain who owns the removal policy. Do not
+      run probes, modify the package or use the network.
+    environment:
+      files:
+        - src: fixtures/conditional-intake/library-only.json
+          dest: fixture/library-only.json
+    graders:
+      - type: file-exists
+        config:
+          path: out/scope.md
+      - type: prompt
+      - type: exit-success
+    rubric:
+      - Both absent deliverable families remain explicitly accounted for with scope-specific not-applicable rationales.
+      - Development templates are not treated as a promoted scaffolder against the owner's explicit scope confirmation.
+      - Microsoft removal discretion is not rewritten as a partner-owned suspension and restoration process.
+      - The response distinguishes missing rows from demonstrated product defects.
+
+  - name: Respect the integration requirement for an in-scope scaffolder
+    prompt: |
+      Review fixture/promoted-scaffolder.json and write out/scope.md for the partner.
+      Tell them what the supplied manifest establishes, what is still untested and what
+      exact artifact could close the integration question. Do not run probes or use the network.
+    environment:
+      files:
+        - src: fixtures/conditional-intake/promoted-scaffolder.json
+          dest: fixture/promoted-scaffolder.json
+    graders:
+      - type: file-exists
+        config:
+          path: out/scope.md
+      - type: prompt
+      - type: exit-success
+    rubric:
+      - The declared promoted scaffolder is in scope and dotnet-new-only integration conflicts with the supplied requirement.
+      - The response does not claim accessibility or generated-code correctness from an integration manifest.
+      - Closure requires the documented scaffolding integration and contributed artifact rather than merely renaming a template.
+      - Absent AI deliverables remain explicitly not applicable rather than omitted or failed.
+
   - name: Distinguish release intent from package facts
     prompt: |
       Our release workflow says the Blazor control package is signed and publishes an SBOM. Review only
@@ -57,9 +100,9 @@ stimuli:
           value: '"status":"not tested"'
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 110
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 121
           expected_exit_code: 0
-          stdout_matches: VALID unified 110
+          stdout_matches: VALID unified 121
       - type: exit-success
 
   - name: Apply the four status boundaries precisely
@@ -268,7 +311,7 @@ stimuli:
           value: owner-supplied-internal-evidence
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 110
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 121
           expected_exit_code: 0
       - type: exit-success
 
@@ -295,7 +338,7 @@ stimuli:
           path: out/revisions/0001/unified.validation.json
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 110
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 121
           expected_exit_code: 0
       - type: output-not-matches
         config:
@@ -324,9 +367,9 @@ stimuli:
           path: out/revisions/0001/unified.validation.json
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 110
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 121
           expected_exit_code: 0
-          stdout_matches: VALID unified 110
+          stdout_matches: VALID unified 121
       - type: exit-success
 
   - name: Bind package and component records
@@ -351,11 +394,11 @@ stimuli:
           path: out/grid-revisions/0001/component.validation.json
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/package-revisions/0001 --kind package --rows 46
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/package-revisions/0001 --kind package --rows 60
           expected_exit_code: 0
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/grid-revisions/0001 --kind component --rows 64
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/grid-revisions/0001 --kind component --rows 61
           expected_exit_code: 0
       - type: file-contains
         config:
@@ -391,7 +434,7 @@ stimuli:
           value: '"version":"3.0.0-rc.1"'
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 110
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 121
           expected_exit_code: 0
       - type: exit-success
 
@@ -451,7 +494,7 @@ stimuli:
           pattern: (?i)(release verdict|ship decision|priority ranking)
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 110
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind unified --rows 121
           expected_exit_code: 0
       - type: exit-success
 
@@ -503,7 +546,7 @@ stimuli:
           expected_exit_code: 0
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 46
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 60
           expected_exit_code: 0
       - type: exit-success
 
@@ -531,7 +574,7 @@ stimuli:
           expected_exit_code: 0
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 46
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 60
           expected_exit_code: 0
       - type: exit-success
 
@@ -558,7 +601,7 @@ stimuli:
           expected_exit_code: 0
       - type: run-command
         config:
-          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 46
+          command: python3 fixture/fixture-tool.py verify-revision --revision out/revisions/0001 --kind package --rows 60
           expected_exit_code: 0
       - type: exit-success
 

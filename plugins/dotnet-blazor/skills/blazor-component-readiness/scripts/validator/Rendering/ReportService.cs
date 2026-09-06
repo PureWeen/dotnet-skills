@@ -90,7 +90,7 @@ public static class ReportService
                 $"   - {Escape(exclusion.Subject)}: {Escape(exclusion.Rationale)}"));
 
         lines.AddRange(["", "## Factual status counts", ""]);
-        foreach (var status in RubricLoader.Load().Statuses)
+        foreach (var status in RubricLoader.Load(assessment.RubricVersion).Statuses)
         {
             lines.Add($"- `{status}`: {assessment.Rows.Count(row => row.Status == status)}");
         }

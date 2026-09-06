@@ -10,6 +10,7 @@ using BlazorComponentReadiness.Validator.Inputs;
 using BlazorComponentReadiness.Validator.IO;
 using BlazorComponentReadiness.Validator.Rendering;
 using BlazorComponentReadiness.Validator.Validation;
+using AssessmentService = LegacyAssessmentService;
 
 internal static class EnforcementTests
 {
@@ -29,7 +30,9 @@ internal static class EnforcementTests
 
     public static void Run(string repositoryRoot, string pluginRoot)
     {
-        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-enforcement-tests");
+        var root = Path.Combine(
+            Environment.GetEnvironmentVariable("READINESS_TEST_ARTIFACTS") ?? Path.Combine(repositoryRoot, "artifacts"),
+            "readiness-enforcement-tests");
         if (Directory.Exists(root))
         {
             Directory.Delete(root, recursive: true);

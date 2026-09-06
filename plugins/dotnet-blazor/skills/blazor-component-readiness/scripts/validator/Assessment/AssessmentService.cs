@@ -20,7 +20,8 @@ public static class AssessmentService
         ReadOnlySpan<byte> inputBytes,
         string? componentId,
         IReadOnlyList<string> overlayIds,
-        PackageRevisionBinding? packageBinding = null)
+        PackageRevisionBinding? packageBinding = null,
+        string? rubricVersion = null)
     {
         InputManifestService.Validate(input, root, requireConfirmed: true);
         kind = kind.ToLowerInvariant();
@@ -59,10 +60,10 @@ public static class AssessmentService
         if (kind is "package" or "component" && overlayIds.Count != 0)
         {
             throw new DeterministicValidationException(
-                "Split package/component assessments contain exactly the 46/64 core rows and cannot add overlay rows.");
+                "Split package/component assessments contain their version's canonical rows and cannot add selected overlays.");
         }
 
-        var rubric = RubricLoader.Load();
+        var rubric = RubricLoader.Load(rubricVersion);
         var requirements = RubricLoader.Select(rubric, kind, overlayIds);
         var overlays = rubric.Overlays
             .Where(overlay => overlayIds.Contains(overlay.Id, StringComparer.Ordinal))
@@ -161,7 +162,14 @@ public static class AssessmentService
         }
 
         ValidatePackageReference(assessment, expectedPackage, input, packageBinding);
-        var rubric = RubricLoader.Load();
+        var rubric = RubricLoader.Load(assessment.RubricVersion);
+        if (rubric.RubricVersion == RubricLoader.CurrentVersion &&
+            assessment.SchemaVersion != SchemaVersion)
+        {
+            throw new DeterministicValidationException(
+                "The current normative rubric requires the current assessment evidence protocols.");
+        }
+
         var selectedOverlayIds = assessment.Overlays.Select(overlay => overlay.Id).ToArray();
         if (assessment.AssessmentKind is "package" or "component" &&
             selectedOverlayIds.Length != 0)
@@ -441,7 +449,7 @@ public static class AssessmentService
             row.EvidenceIds.Any(id => applicability[id].Scope != "repository-wide"))
         {
             throw new DeterministicValidationException(
-                $"Repository-wide row '{row.Id}' cannot be established by component-specific evidence.");
+                $"Library-level row '{row.Id}' cannot be established by component-specific evidence.");
         }
 
         ValidateOptionalField(row.Observation, $"{row.Id} observation");
@@ -529,7 +537,7 @@ public static class AssessmentService
     {
         if (assessment.AssessmentKind == "package" && assessment.CompletionState == "complete")
         {
-            var statuses = RubricLoader.Load().Statuses;
+            var statuses = RubricLoader.Load(assessment.RubricVersion).Statuses;
             var expected = statuses
                 .Select(status => new
                 {
@@ -554,7 +562,7 @@ public static class AssessmentService
                         StringComparer.Ordinal))
                 {
                     throw new DeterministicValidationException(
-                        "Package summary groups must partition all 46 repository-wide IDs exactly once by actual row status in canonical status order.");
+                        "Package summary groups must partition all selected repository-wide IDs exactly once by actual row status in canonical status order.");
                 }
             }
 

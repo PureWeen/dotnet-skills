@@ -15,29 +15,18 @@ compatibility: Requires an active .NET 11 SDK; full-library mode requires top-le
 ## Outcome and safety boundary
 
 Produce a bounded, evidence-backed self-assessment of an exact released or release-candidate
-Blazor package. The 110-row public baseline is not certification or a Microsoft acceptance
-requirement. Read local inputs and retrieve public inputs when needed; write only beneath the
+Blazor package. The June 26 requirements DOCX is normative for the partner correction profile;
+its 121-ID operational crosswalk is not certification or a Microsoft acceptance decision.
+Read local inputs and retrieve public inputs when needed; write only beneath the
 user-approved local output root. Never modify the reviewed source tree or any remote system.
 
 Deterministic validation proves artifact shape, canonical ordering, digests, and local byte
 correspondence. It does not prove evidence truth, organizational approval, or release suitability.
 
-## When to Use
+## Applicability
 
-- The request explicitly asks for vendor self-assessment, readiness, adoption, recommendation, or
-  release evaluation of a released or release-candidate Blazor component package.
-- The request explicitly covers one component, one package, or a confirmed full-library inventory.
-- The owner wants a factual scorecard, evidence-backed correction, feedback re-render, or optional
-  decision guidance derived from an existing validated revision.
-
-## When Not to Use
-
-- Ordinary Blazor authoring, debugging, feature implementation, or implementation-only work.
-- First-party framework review, generic NuGet assistance, CI failure analysis, pull-request review,
-  issue triage, or repository maintenance.
-- Formal certification, compliance attestation, or an acceptance decision on another party's
-  behalf.
-- Catalog exploration without explicit readiness intent. Use an inventory-only task instead.
+Use for readiness assessment or revision of an exact Blazor package, component, or confirmed
+library. Do not use for implementation, framework/repository work, certification, or cataloging.
 
 ## Prerequisites and required inputs
 
@@ -55,17 +44,22 @@ stop with an environment limitation; do not weaken the launcher isolation.
 | Dynamic children | Conditional | Declare whether the component groups, registers, selects, or composes children; required surfaces use the post-initialization lifecycle matrix. |
 | Evidence inputs | Conditional | Confirm protocol documents and raw observation/log/inventory files by neutral basename, kind, size, and digest. |
 | Owner evidence | Optional | Local public/internal evidence with explicit provenance and digest; never treat feedback as evidence. |
+| Feedback | Optional | Issue URL or Markdown; see [feedback contract](references/feedback-contract.md). |
 | Exclusions/timebox | Optional | Record explicit exclusions and stop when the timebox expires. |
 
 ## Canonical contract
 
-1. `references/rubric.json` is the sole source of the 110 requirement IDs, wording, order, and
-   46 `repository-wide` / 64 `component-specific` ownership split.
+1. `references/rubric.json` is the source of current requirement IDs, wording, order, and
+   60 `repository-wide` / 61 `component-specific` ownership split.
+   The [crosswalk](references/docx-crosswalk.json) binds clause and basis. Each canonical ID
+   occurs once across the pair. `TA-08` is noncanonical. Historical rubric bytes remain frozen.
 2. `references/checklist.md` is only the generated human-readable view. Never edit or derive IDs
    from it independently.
 3. Use exactly: `verified`, `gap`, `owner evidence required`, `not tested`,
    `not applicable`. Follow [status boundaries](references/status-boundaries.md).
-4. Select overlays only when the confirmed deliverable contains that feature. Read
+4. Keep all twelve scaffolder/AI rows visible. Explicitly declare each family's applicability;
+   an absent AI skill can be N/A, and repository templates alone do not establish an in-scope
+   promoted scaffolder. An omitted family is incomplete, not an automatic product defect. Read
    [conditional families](references/area-conditional-families.md) and the selected
    [scaffolder](references/overlay-scaffolder.md) or
    [AI-skill](references/overlay-ai-skill.md) overlay.
@@ -105,8 +99,8 @@ environment/tool failure.
 ## Select the mode
 
 1. **Single component, unified**: default when no already validated package revision exists. Assess
-   all 110 core rows for one component/package in one isolated context.
-2. **Single package, split**: create one 46-row package assessment, then one 64-row component
+   all 121 canonical rows for one component/package in one isolated context.
+2. **Single package, split**: create one 60-row package assessment, then one 61-row component
    assessment per confirmed component, each bound to the package revision.
 3. **Full library**: create package assessments and exactly one top-level writable worker session
    per confirmed component. Nested custom agents are not workers. If separate sessions are
@@ -138,9 +132,8 @@ environment/tool failure.
    the dynamic-child lifecycle matrix required. Do not infer not-applicable from a missing probe.
 6. For source-available components, capture wrapper/API, inherited runtime, browser interop,
    styles/assets, tests, and samples. A source archive alone is not closure.
-7. Show package/version/digest, acquisition mode, source mapping/availability, official documents,
-   owner inputs, component inventory, claimed modes, and exclusions. Ask the owner to correct and
-   confirm the draft.
+7. Show package/version/digest, sources, documents, inputs, modes, exclusions, and feedback before
+   scoring. Ask owner.
 8. Canonicalize and freeze the manifest:
 
    ```text
@@ -191,6 +184,9 @@ owner evidence. Lower-ranked evidence cannot override contradictory higher-ranke
   conditional/event-handler paths.
 - A mutable cascade proves `PERF-05` applicability, not a gap. Without descendant render
   evidence, use `not tested`.
+- Apply the named obligations and policy limits in the [DOCX crosswalk](references/docx-crosswalk.md).
+  Unapproved extensions are not DOCX defects. Package-owned `SEC-01` through `SEC-03` request
+  one library security packet, not independent reviews for each control.
 
 Use exact grouped commands:
 
@@ -236,9 +232,9 @@ Initialize the appropriate row ownership:
 <launcher> assessment init --kind component --root <output> --input <component.input.confirmed.json> --component <component-id> --package-revision <package-revision> --output <component.assessment.json>
 ```
 
-Populate every selected row from evidence. New assessments use schema version 2; legacy v1
-revisions retain legacy verification. Follow [report contract](references/report-contract.md).
-Validate before rendering:
+Populate all rows from evidence. Use schema 2; retain legacy v1 verification.
+Follow [report contract](references/report-contract.md); deliver the
+[reader](references/partner-preview.md) after validation:
 
 ```text
 <launcher> assessment validate --root <output> --input <input.confirmed.json> --assessment <assessment.json> --evidence <evidence.json>
@@ -296,7 +292,7 @@ Read [learning loop](references/learning-loop.md) only when asked to improve thi
 
 ### 7. Optional decision guidance
 
-Do not create guidance unless the user explicitly requests a verdict, prioritization, remediation,
+Do not create guidance unless the user explicitly requests a verdict, prioritization, remediation
 or next steps. Then write `decision-guidance.md` beside the relevant feedback file, outside
 `revisions/`. Its header must contain the exact source validation-manifest SHA-256. It may derive
 only from that validated revision, may include the requested verdict/priorities, and is deliberately

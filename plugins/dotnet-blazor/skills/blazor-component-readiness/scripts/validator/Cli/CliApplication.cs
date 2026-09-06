@@ -28,6 +28,8 @@ public static class CliApplication
           assessment revise  Validate an evidence-backed correction and render its next revision.
           report render      Render the next immutable deterministic revision.
           report verify      Verify report bytes and every validation-manifest binding.
+          reader render      Derive the four-column partner-preview report outside revisions.
+          reader verify      Recompute and verify reader coverage, source bindings and evidence.
           inventory discover Canonicalize package/component library discovery candidates.
           inventory confirm  Freeze one immutable confirmed library inventory.
           inventory status   Report completed, pending, blocked, incomplete, or invalid work.
@@ -88,6 +90,11 @@ public static class CliApplication
             if (string.Equals(args[0], "report", StringComparison.Ordinal))
             {
                 return ReportCommand.Run(args.Skip(1).ToArray(), output);
+            }
+
+            if (string.Equals(args[0], "reader", StringComparison.Ordinal))
+            {
+                return ReaderCommand.Run(args.Skip(1).ToArray(), output);
             }
 
             if (string.Equals(args[0], "inventory", StringComparison.Ordinal))

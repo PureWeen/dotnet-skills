@@ -11,6 +11,7 @@ using BlazorComponentReadiness.Validator.Inventory;
 using BlazorComponentReadiness.Validator.IO;
 using BlazorComponentReadiness.Validator.Library;
 using BlazorComponentReadiness.Validator.Validation;
+using AssessmentService = LegacyAssessmentService;
 
 internal static class LibraryTests
 {

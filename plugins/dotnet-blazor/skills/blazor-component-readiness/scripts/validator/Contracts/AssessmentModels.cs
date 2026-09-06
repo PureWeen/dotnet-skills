@@ -5,7 +5,23 @@ public sealed record RubricRequirement(
     string Requirement,
     string Scope,
     string Area,
-    string? OverlayId);
+    string? OverlayId,
+    RequirementBasis? Basis = null);
+
+public sealed record NormativeClause(string Clause, string Quotation);
+
+public sealed record RequirementBasis(
+    string Clause,
+    string Quotation,
+    string Classification,
+    string SemanticScope,
+    string? SharedActionKey,
+    string? ConditionalFamily,
+    string? ExtensionBasis,
+    IReadOnlyList<NormativeClause> AdditionalClauses)
+{
+    public bool RequiresPolicyApproval => Classification == "versioned extension";
+}
 
 public sealed record RubricOverlay(
     string Id,
@@ -23,7 +39,9 @@ public sealed record RubricContract(
     Sha256Digest CoreDigest,
     Sha256Digest ScopeMapDigest,
     IReadOnlyList<RubricRequirement> CoreRequirements,
-    IReadOnlyList<RubricOverlay> Overlays);
+    IReadOnlyList<RubricOverlay> Overlays,
+    Sha256Digest? CrosswalkDigest = null,
+    IReadOnlyList<RubricRequirement>? Extensions = null);
 
 public sealed record AssessmentOverlay(
     string Id,

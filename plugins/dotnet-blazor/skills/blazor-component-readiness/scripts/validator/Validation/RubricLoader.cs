@@ -8,6 +8,16 @@ namespace BlazorComponentReadiness.Validator.Validation;
 
 public static class RubricLoader
 {
+    public const string CurrentVersion = "2.0.0";
+    public const string LegacyVersion = "1.3.0";
+    private const string CurrentRubricDigest =
+        "155d8ea2d7fc8abbfa6d9df6b6cc2c21d8ed05c8e83fd2891b96e019897d3264";
+    private const string CurrentCoreDigest =
+        "d48756ed60c90b510b215e8dcdcb28523c0aca6de2a8a1d01368e31dbd45022d";
+    private const string CurrentScopeDigest =
+        "6e949e7018070880972909990f685bc048cc5f4f391024fc0ff4e224aeba4c0a";
+    private const string ExpectedCrosswalkDigest =
+        "15fab7fb82f9ad30fb7a57d3f915afb9e93f281d0e5845ab17a95eb87cb79470";
     private const string ExpectedRubricDigest =
         "6a36fc581af3a2710fec3a70a484c7dc751cdf2c248dcd98e49ce4bb9cf8c49f";
     private const string ExpectedCoreDigest =
@@ -23,27 +33,37 @@ public static class RubricLoader
         "not applicable"
     ];
 
-    public static RubricContract Load()
+    public static RubricContract Load(string? rubricVersion = null)
     {
-        var rubricPath = ResolveRubricPath();
+        rubricVersion ??= CurrentVersion;
+        if (rubricVersion is not (CurrentVersion or LegacyVersion))
+        {
+            throw new DeterministicValidationException($"Unsupported rubric version '{rubricVersion}'.");
+        }
+
+        var legacy = rubricVersion == LegacyVersion;
+        var rubricPath = ResolveReferencePath(legacy ? "rubric.v1.3.0.json" : "rubric.json");
         var bytes = BoundedIO.ReadAllBytes(
             rubricPath,
             ResourceLimits.SerializedArtifactBytes,
             "rubric");
         using var document = StrictJson.Parse(bytes, ResourceLimits.SerializedArtifactBytes, "rubric");
         var root = document.RootElement;
+        var properties = new[]
+        {
+            "schema_version", "rubric_version", "scope_schema_version", "positioning",
+            "statuses", "core", "overlays"
+        };
         ContractJson.RequireProperties(
             root,
-            "schema_version",
-            "rubric_version",
-            "scope_schema_version",
-            "positioning",
-            "statuses",
-            "core",
-            "overlays");
-        if (ContractJson.Int32(root, "schema_version") != 1)
+            legacy ? properties :
+                ["schema_version", "rubric_version", "scope_schema_version", "positioning",
+                    "statuses", "crosswalk", "core", "overlays", "extensions"]);
+        if (ContractJson.Int32(root, "schema_version") != (legacy ? 1 : 2) ||
+            ContractJson.String(root, "rubric_version") != rubricVersion ||
+            ContractJson.Int32(root, "scope_schema_version") != (legacy ? 1 : 2))
         {
-            throw new DeterministicValidationException("Rubric schema_version must be 1.");
+            throw new DeterministicValidationException("Rubric version and schema binding is invalid.");
         }
 
         var statuses = ContractJson.StringArray(root, "statuses");
@@ -52,19 +72,21 @@ public static class RubricLoader
             throw new DeterministicValidationException("Rubric status vocabulary has drifted.");
         }
 
+        var clauses = legacy ? null : LoadCrosswalk(root);
         var coreObject = ContractJson.Object(root, "core");
         ContractJson.RequireProperties(coreObject, "name", "requirements");
         _ = ContractJson.NormalizeText(ContractJson.String(coreObject, "name"), "rubric core name", 256);
         var core = ContractJson.Array(coreObject, "requirements")
             .EnumerateArray()
-            .Select(ParseCoreRequirement)
+            .Select(element => ParseCoreRequirement(element, clauses))
             .ToArray();
-        if (core.Length != 110 ||
-            core.Count(requirement => requirement.Scope == "repository-wide") != 46 ||
-            core.Count(requirement => requirement.Scope == "component-specific") != 64 ||
-            core.Select(requirement => requirement.Id).Distinct(StringComparer.Ordinal).Count() != 110)
+        var expectedCount = legacy ? 110 : 121;
+        if (core.Length != expectedCount ||
+            core.Count(requirement => requirement.Scope == "repository-wide") != (legacy ? 46 : 60) ||
+            core.Count(requirement => requirement.Scope == "component-specific") != (legacy ? 64 : 61) ||
+            core.Select(requirement => requirement.Id).Distinct(StringComparer.Ordinal).Count() != expectedCount)
         {
-            throw new DeterministicValidationException("Rubric must contain canonical 110/46/64 core ownership.");
+            throw new DeterministicValidationException("Rubric canonical inventory or ledger ownership has drifted.");
         }
 
         var overlays = ContractJson.Array(root, "overlays")
@@ -72,20 +94,29 @@ public static class RubricLoader
             .Select(ParseOverlay)
             .ToArray();
         if (!overlays.Select(overlay => overlay.Id)
-                .SequenceEqual(new[] { "scaffolder", "ai-skill" }, StringComparer.Ordinal))
+                .SequenceEqual(legacy ? new[] { "scaffolder", "ai-skill" } : [], StringComparer.Ordinal))
         {
-            throw new DeterministicValidationException("Rubric overlays must be scaffolder then ai-skill.");
+            throw new DeterministicValidationException("Only the frozen legacy rubric permits selected overlays.");
+        }
+
+        var extensions = legacy ? [] : ContractJson.Array(root, "extensions")
+            .EnumerateArray().Select(element => ParseCoreRequirement(element, clauses)).ToArray();
+        if (extensions.Any(row => row.Basis?.RequiresPolicyApproval != true) ||
+            extensions.Select(row => row.Id).Distinct(StringComparer.Ordinal).Count() != extensions.Length ||
+            extensions.Any(row => core.Any(canonical => canonical.Id == row.Id)))
+        {
+            throw new DeterministicValidationException("Supplementary extensions cannot duplicate canonical IDs.");
         }
 
         var rubricDigest = ContractJson.RawDigest(bytes);
         var coreDigest = ProjectionDigest(core, includeScope: true);
         var scopeDigest = ScopeDigest(core);
-        if (rubricDigest.Value != ExpectedRubricDigest ||
-            coreDigest.Value != ExpectedCoreDigest ||
-            scopeDigest.Value != ExpectedScopeDigest)
+        if (rubricDigest.Value != (legacy ? ExpectedRubricDigest : CurrentRubricDigest) ||
+            coreDigest.Value != (legacy ? ExpectedCoreDigest : CurrentCoreDigest) ||
+            scopeDigest.Value != (legacy ? ExpectedScopeDigest : CurrentScopeDigest))
         {
             throw new DeterministicValidationException(
-                "Rubric/checklist contract digest has drifted from the frozen public-v1 baseline.");
+                "Rubric/checklist contract digest has drifted from its frozen version.");
         }
 
         return new RubricContract(
@@ -97,7 +128,9 @@ public static class RubricLoader
             coreDigest,
             scopeDigest,
             core,
-            overlays);
+            overlays,
+            legacy ? null : new Sha256Digest("sha256", ExpectedCrosswalkDigest),
+            extensions);
     }
 
     public static IReadOnlyList<RubricRequirement> Select(
@@ -130,7 +163,7 @@ public static class RubricLoader
             .ToArray();
     }
 
-    private static string ResolveRubricPath()
+    private static string ResolveReferencePath(string filename)
     {
         var skillRoot = Environment.GetEnvironmentVariable("READINESS_SKILL_ROOT");
         if (string.IsNullOrWhiteSpace(skillRoot))
@@ -147,14 +180,24 @@ public static class RubricLoader
 
         return SafePath.ResolveUnderRoot(
             fullRoot,
-            "references/rubric.json",
+            $"references/{filename}",
             requireExisting: true,
             requireFile: true);
     }
 
-    private static RubricRequirement ParseCoreRequirement(JsonElement element)
+    private static RubricRequirement ParseCoreRequirement(
+        JsonElement element,
+        IReadOnlyDictionary<string, string>? clauses)
     {
-        ContractJson.RequireProperties(element, "id", "requirement", "scope", "area");
+        var properties = new[] { "id", "requirement", "scope", "area" };
+        if (clauses is not null)
+        {
+            properties = [.. properties, "clause", "classification",
+                .. new[] { "semantic_scope", "shared_action_key", "conditional_family", "extension_basis", "additional_clauses" }
+                    .Where(name => element.TryGetProperty(name, out _))];
+        }
+
+        ContractJson.RequireProperties(element, properties);
         var scope = ContractJson.String(element, "scope");
         if (scope is not ("repository-wide" or "component-specific"))
         {
@@ -166,7 +209,85 @@ public static class RubricLoader
             ContractJson.NormalizeText(ContractJson.String(element, "requirement"), "requirement wording", 1024),
             scope,
             ContractJson.NormalizeText(ContractJson.String(element, "area"), "requirement area", 256),
-            null);
+            null,
+            clauses is null ? null : ParseBasis(element, scope, clauses));
+    }
+
+    private static IReadOnlyDictionary<string, string> LoadCrosswalk(JsonElement rubric)
+    {
+        if (ContractJson.String(rubric, "crosswalk") != "docx-crosswalk.json")
+        {
+            throw new DeterministicValidationException("The normative crosswalk reference is invalid.");
+        }
+
+        var bytes = BoundedIO.ReadAllBytes(
+            ResolveReferencePath("docx-crosswalk.json"),
+            ResourceLimits.SerializedArtifactBytes, "DOCX crosswalk");
+        if (ContractJson.RawDigest(bytes).Value != ExpectedCrosswalkDigest)
+        {
+            throw new DeterministicValidationException("DOCX crosswalk digest has drifted from its frozen version.");
+        }
+
+        using var document = StrictJson.Parse(bytes, ResourceLimits.SerializedArtifactBytes, "DOCX crosswalk");
+        var root = document.RootElement;
+        ContractJson.RequireProperties(root, "schema_version", "version", "source", "clauses");
+        if (ContractJson.Int32(root, "schema_version") != 1 ||
+            ContractJson.String(root, "version") != CurrentVersion)
+        {
+            throw new DeterministicValidationException("DOCX crosswalk version is invalid.");
+        }
+
+        var source = ContractJson.Object(root, "source");
+        ContractJson.RequireProperties(source, "filename", "sha256", "description");
+        var result = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var clause in ContractJson.Array(root, "clauses").EnumerateArray())
+        {
+            ContractJson.RequireProperties(clause, "id", "quotation");
+            if (!result.TryAdd(
+                ContractJson.String(clause, "id"),
+                ContractJson.String(clause, "quotation")))
+            {
+                throw new DeterministicValidationException("Duplicate normative clause.");
+            }
+        }
+
+        return result;
+    }
+
+    private static RequirementBasis ParseBasis(
+        JsonElement element, string ledgerScope, IReadOnlyDictionary<string, string> clauses)
+    {
+        var clause = ContractJson.String(element, "clause");
+        var classification = ContractJson.String(element, "classification");
+        if (!clauses.TryGetValue(clause, out var quotation) ||
+            classification is not ("direct obligation" or "decomposition evidence check" or
+                "conditional obligation" or "versioned extension"))
+        {
+            throw new DeterministicValidationException("Requirement has an invalid DOCX clause/classification.");
+        }
+
+        string? Optional(string name) => element.TryGetProperty(name, out _)
+            ? ContractJson.String(element, name) : null;
+        var extension = Optional("extension_basis");
+        var semanticScope = Optional("semantic_scope") ?? ledgerScope;
+        if ((classification == "versioned extension") != (extension is not null) ||
+            semanticScope is not ("repository-wide" or "component-specific"))
+        {
+            throw new DeterministicValidationException("Requirement extension basis or semantic scope is invalid.");
+        }
+
+        var additional = element.TryGetProperty("additional_clauses", out _)
+            ? ContractJson.StringArray(element, "additional_clauses") : [];
+        if (additional.Any(id => !clauses.ContainsKey(id)) ||
+            additional.Distinct(StringComparer.Ordinal).Count() != additional.Count)
+        {
+            throw new DeterministicValidationException("Additional normative clauses are invalid.");
+        }
+
+        return new RequirementBasis(
+            clause, quotation, classification, semanticScope, Optional("shared_action_key"),
+            Optional("conditional_family"), extension,
+            additional.Select(id => new NormativeClause(id, clauses[id])).ToArray());
     }
 
     private static RubricOverlay ParseOverlay(JsonElement element)

@@ -41,6 +41,14 @@ The generated report includes:
 6. the complete canonical requirements table;
 7. fixed limitations distinguishing structural validation from factual truth.
 
+When optional feedback context is supplied, retain a separate readable companion beside the
+feedback source or report. It may summarize each relevant item as `changed`, `qualified`, or
+`unchanged`, identify unmapped or ambiguous entries, preserve attribution and source links, and
+explain whether the item was context only or supported an evidence-backed correction. Do not place
+free-form source prose into the canonical feedback table, mutate immutable revisions, or treat
+feedback-only commentary as evidence. The companion is supplemental and does not replace the
+canonical report or validation manifest.
+
 The canonical table header is:
 
 ```text
@@ -48,6 +56,17 @@ The canonical table header is:
 ```
 
 ## Validation manifest
+
+### Readable projection
+
+After canonical verification, the [partner-preview reader](partner-preview.md) is the default
+local delivery view. `reader render` and `reader verify` produce and check a separate derived
+directory; `report render`, `report verify`, canonical bytes and five-file revisions are unchanged.
+Its four-column table groups only existing rubric facts and retains each check's exact result,
+qualifications, ownership and evidence. `mapping.json` preserves the internal check mapping;
+the reader manifest binds the exact source validation digest, rubric, optional package binding
+and every derived file. Invalid projection or unavailable private inputs must fall back to the
+canonical local report with the reader limitation explicitly reported, never an unverified rewrite.
 
 The manifest binds plugin/validator/renderer versions; rubric, scope-map, and selected-overlay
 digests; input, assessment, evidence, and report digests; selected evidence IDs; assessment kind and

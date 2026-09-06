@@ -42,9 +42,12 @@ sibling identities there as non-evidence and never cite or reproduce them in com
    raw inputs if it fails. Reconcile every `available` or `blocked` coverage surface. For
    source-available component work, materialize the wrapper/API, inherited runtime, browser
    interop, styles/assets, tests, and samples rather than treating a source archive as closure.
-3. Collect only evidence allowed for this unit. A package worker owns the 46 repository-wide rows;
-   a component worker owns the 64 component-specific rows and must bind the supplied package
+3. Collect only evidence allowed for this unit. A package worker owns the 60 repository-wide/conditional rows;
+   a component worker owns the 61 component-specific rows and must bind the supplied package
    revision.
+   Emit all conditional rows with explicit applicability. Library threat model, security review
+   and finding disposition (`SEC-01` through `SEC-03`) belong only to the package. Preserve
+   canonical meaning and identify unapproved extensions; extension gaps are not DOCX defects.
 4. For a component, create disposable external consumers and exercise every claimed render mode.
    Record blocked probes as `not tested`; do not omit a mode or infer runtime behavior from a build.
    If grouped, registered, selected, or composite children apply, complete every post-initialization

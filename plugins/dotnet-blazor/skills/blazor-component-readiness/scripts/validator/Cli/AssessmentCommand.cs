@@ -12,7 +12,7 @@ public static class AssessmentCommand
         Canonical readiness assessments
 
         Usage:
-          readiness-validator assessment init --kind <unified|package|component> --root <dir> --input <confirmed> --output <json> [--component <id>] [--overlays <id,id>] [--package-revision <dir>] [--package-feedback <markdown>]
+          readiness-validator assessment init --kind <unified|package|component> --root <dir> --input <confirmed> --output <json> [--component <id>] [--rubric-version <2.0.0|1.3.0>] [--overlays <legacy-id,id>] [--package-revision <dir>] [--package-feedback <markdown>]
           readiness-validator assessment validate --root <dir> --input <confirmed> --assessment <json> --evidence <bundle> [--package-revision <dir>] [--package-feedback <markdown>]
           readiness-validator assessment revise --root <dir> --input <confirmed> --assessment <replacement-json> --evidence <replacement-bundle> --output <revisions-root> --predecessor <digest> --changed-ids <id,id> [--feedback <markdown>] [--package-revision <dir>] [--package-feedback <markdown>]
         """;
@@ -50,6 +50,7 @@ public static class AssessmentCommand
             "--output",
             "--component",
             "--overlays",
+            "--rubric-version",
             "--package-revision",
             "--package-feedback");
         var root = Path.GetFullPath(options.Single("--root"));
@@ -72,7 +73,8 @@ public static class AssessmentCommand
             inputBytes,
             options.Optional("--component"),
             overlays,
-            packageBinding);
+            packageBinding,
+            options.Optional("--rubric-version"));
         WriteNew(options.Single("--output"), AssessmentService.Serialize(assessment));
         return ExitCodes.Success;
     }

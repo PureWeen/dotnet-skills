@@ -51,7 +51,7 @@ public static class FeedbackService
                 "Feedback must contain only '# Assessment feedback' and the two-column Requirement IDs/Feedback table.");
         }
 
-        var rubric = RubricLoader.Load();
+        var rubric = RubricLoader.Load(assessment.RubricVersion);
         var knownIds = rubric.CoreRequirements.Select(row => row.Id)
             .Concat(rubric.Overlays.SelectMany(overlay => overlay.Requirements).Select(row => row.Id))
             .ToHashSet(StringComparer.Ordinal);
