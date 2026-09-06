@@ -11,6 +11,7 @@ using BlazorComponentReadiness.Validator.IO;
 using BlazorComponentReadiness.Validator.Rendering;
 using BlazorComponentReadiness.Validator.Validation;
 using AssessmentService = LegacyAssessmentService;
+using CurrentAssessmentService = BlazorComponentReadiness.Validator.Assessment.AssessmentService;
 
 internal static class EnforcementTests
 {
@@ -46,6 +47,7 @@ internal static class EnforcementTests
         try
         {
             TestStructuredVerifiedBoundaries(root);
+            TestAutoTransitionProtocol(root);
             TestDynamicLifecycleMatrix(root);
             TestToolchainDisposition(root);
             TestComparisonInputGate(root);
@@ -417,7 +419,7 @@ internal static class EnforcementTests
                 .ToArray()
         };
         var publicInputBytes = InputManifestService.Serialize(publicInput);
-        var publicPackage = AssessmentService.Initialize(
+        var publicPackage = CurrentAssessmentService.Initialize(
             "package",
             fixture.Root,
             publicInput,
@@ -454,7 +456,13 @@ internal static class EnforcementTests
             publicGap,
             publicEvidence);
 
-        var legacyPackage = publicPackage with
+        var legacyPackage = AssessmentService.Initialize(
+            "package",
+            fixture.Root,
+            publicInput,
+            publicInputBytes,
+            null,
+            []) with
         {
             SchemaVersion = AssessmentService.LegacySchemaVersion
         };
@@ -1588,6 +1596,327 @@ internal static class EnforcementTests
                 evidence),
             name);
     }
+
+    private static void TestAutoTransitionProtocol(string root)
+    {
+        var fixture = CreateFixture(Path.Combine(root, "auto-transition"), lifecycleRequired: false);
+        var coldRawBasename = "auto-cold.raw.json";
+        var warmRawBasename = "auto-warm.raw.json";
+        File.WriteAllBytes(
+            Path.Combine(fixture.Root, coldRawBasename),
+            RawAutoObservation("static-control", "cold", "server"));
+        File.WriteAllBytes(
+            Path.Combine(fixture.Root, warmRawBasename),
+            RawAutoObservation("static-control", "warm", "webassembly"));
+        var coldRaw = CreateEvidenceInput(fixture.Root, coldRawBasename, "raw-observation");
+        var warmRaw = CreateEvidenceInput(fixture.Root, warmRawBasename, "raw-observation");
+        var validBasename = "auto-transition-valid.json";
+        File.WriteAllBytes(
+            Path.Combine(fixture.Root, validBasename),
+            AutoTransitionProtocol(
+                "static-control",
+                coldRaw.ContentDigest,
+                warmRaw.ContentDigest,
+                "server",
+                "webassembly"));
+        var validProtocol = CreateEvidenceInput(fixture.Root, validBasename, "structured-protocol");
+        var validInput = fixture.Manifest with
+        {
+            EvidenceInputs = new[] { coldRaw, warmRaw, validProtocol }
+                .OrderBy(item => item.Basename, StringComparer.Ordinal)
+                .ToArray()
+        };
+        var validInputBytes = InputManifestService.Serialize(validInput);
+        var initialized = CurrentAssessmentService.Initialize(
+            "unified",
+            fixture.Root,
+            validInput,
+            validInputBytes,
+            "static-control",
+            Array.Empty<string>());
+        var validEvidence = BuildEvidence(
+            initialized.Identity,
+            [
+                Draft(
+                    initialized.Identity,
+                    EvidenceIdentity.ReproducedRuntimeObservation,
+                    validProtocol.Basename,
+                    EvidenceProtocolValidator.AutoTransitionMethod,
+                    validProtocol.ContentDigest,
+                    componentSpecific: true)
+            ]);
+        var validId = validEvidence.Selection.Single().EvidenceId;
+        var validAssessment = CompleteRows(
+            initialized,
+            new Dictionary<string, RowConclusion>(StringComparer.Ordinal)
+            {
+                ["BEQ-08"] = Verified(validId)
+            });
+        Validate(fixture.Root, validInput, validInputBytes, validAssessment, validEvidence);
+
+        var invalidRawBasename = "auto-identical.raw.json";
+        File.WriteAllBytes(
+            Path.Combine(fixture.Root, invalidRawBasename),
+            RawAutoObservation("static-control", "warm", "server"));
+        var invalidRaw = CreateEvidenceInput(fixture.Root, invalidRawBasename, "raw-observation");
+        var invalidBasename = "auto-transition-identical.json";
+        File.WriteAllBytes(
+            Path.Combine(fixture.Root, invalidBasename),
+            AutoTransitionProtocol(
+                "static-control",
+                coldRaw.ContentDigest,
+                invalidRaw.ContentDigest,
+                "server",
+                "server"));
+        var invalidProtocol = CreateEvidenceInput(fixture.Root, invalidBasename, "structured-protocol");
+        var invalidInput = fixture.Manifest with
+        {
+            EvidenceInputs = new[] { coldRaw, invalidRaw, invalidProtocol }
+                .OrderBy(item => item.Basename, StringComparer.Ordinal)
+                .ToArray()
+        };
+        var invalidInputBytes = InputManifestService.Serialize(invalidInput);
+        var invalidInitialized = CurrentAssessmentService.Initialize(
+            "unified",
+            fixture.Root,
+            invalidInput,
+            invalidInputBytes,
+            "static-control",
+            Array.Empty<string>());
+        var invalidEvidence = BuildEvidence(
+            invalidInitialized.Identity,
+            [
+                Draft(
+                    invalidInitialized.Identity,
+                    EvidenceIdentity.ReproducedRuntimeObservation,
+                    invalidProtocol.Basename,
+                    EvidenceProtocolValidator.AutoTransitionMethod,
+                    invalidProtocol.ContentDigest,
+                    componentSpecific: true)
+            ]);
+        var invalidId = invalidEvidence.Selection.Single().EvidenceId;
+        var invalidAssessment = CompleteRows(
+            invalidInitialized,
+            new Dictionary<string, RowConclusion>(StringComparer.Ordinal)
+            {
+                ["BEQ-08"] = Verified(invalidId)
+            });
+        ExpectValidation(
+            () => Validate(
+                fixture.Root,
+                invalidInput,
+                invalidInputBytes,
+                invalidAssessment,
+                invalidEvidence),
+            "BEQ-08 cannot infer distinct renderer identities");
+
+        void ExpectAutoProtocolFailure(
+            string name,
+            string protocolBasename,
+            byte[] protocolBytes,
+            IReadOnlyList<InputEvidenceArtifact> rawEvidence)
+        {
+            File.WriteAllBytes(Path.Combine(fixture.Root, protocolBasename), protocolBytes);
+            var protocol = CreateEvidenceInput(fixture.Root, protocolBasename, "structured-protocol");
+            var input = fixture.Manifest with
+            {
+                EvidenceInputs = rawEvidence
+                    .Append(protocol)
+                    .OrderBy(item => item.Basename, StringComparer.Ordinal)
+                    .ToArray()
+            };
+            var inputBytes = InputManifestService.Serialize(input);
+            var assessment = CurrentAssessmentService.Initialize(
+                "unified",
+                fixture.Root,
+                input,
+                inputBytes,
+                "static-control",
+                Array.Empty<string>());
+            var evidence = BuildEvidence(
+                assessment.Identity,
+                [
+                    Draft(
+                        assessment.Identity,
+                        EvidenceIdentity.ReproducedRuntimeObservation,
+                        protocol.Basename,
+                        EvidenceProtocolValidator.AutoTransitionMethod,
+                        protocol.ContentDigest,
+                        componentSpecific: true)
+                ]);
+            var completed = CompleteRows(
+                assessment,
+                new Dictionary<string, RowConclusion>(StringComparer.Ordinal)
+                {
+                    ["BEQ-08"] = Verified(evidence.Selection.Single().EvidenceId)
+                });
+            ExpectValidation(
+                () => Validate(fixture.Root, input, inputBytes, completed, evidence),
+                name);
+        }
+
+        ExpectAutoProtocolFailure(
+            "Auto transition requires a retained raw observation",
+            "auto-transition-missing-raw.json",
+            AutoTransitionProtocol(
+                "static-control",
+                coldRaw.ContentDigest,
+                new Sha256Digest("sha256", new string('f', 64)),
+                "server",
+                "webassembly"),
+            [coldRaw, warmRaw]);
+
+        var contradictoryRawBasename = "auto-contradictory.raw.json";
+        File.WriteAllBytes(
+            Path.Combine(fixture.Root, contradictoryRawBasename),
+            RawAutoObservation("static-control", "warm", "server"));
+        var contradictoryRaw = CreateEvidenceInput(
+            fixture.Root,
+            contradictoryRawBasename,
+            "raw-observation");
+        ExpectAutoProtocolFailure(
+            "Auto transition rejects protocol versus raw identity contradiction",
+            "auto-transition-contradictory.json",
+            AutoTransitionProtocol(
+                "static-control",
+                coldRaw.ContentDigest,
+                contradictoryRaw.ContentDigest,
+                "server",
+                "webassembly"),
+            [coldRaw, contradictoryRaw]);
+
+        var wrongComponentRawBasename = "auto-wrong-component.raw.json";
+        File.WriteAllBytes(
+            Path.Combine(fixture.Root, wrongComponentRawBasename),
+            RawAutoObservation("other-control", "warm", "webassembly"));
+        var wrongComponentRaw = CreateEvidenceInput(
+            fixture.Root,
+            wrongComponentRawBasename,
+            "raw-observation");
+        ExpectAutoProtocolFailure(
+            "Auto transition rejects wrong component raw observation",
+            "auto-transition-wrong-component.json",
+            AutoTransitionProtocol(
+                "static-control",
+                coldRaw.ContentDigest,
+                wrongComponentRaw.ContentDigest,
+                "server",
+                "webassembly"),
+            [coldRaw, wrongComponentRaw]);
+
+        var wrongVisitRawBasename = "auto-wrong-visit.raw.json";
+        File.WriteAllBytes(
+            Path.Combine(fixture.Root, wrongVisitRawBasename),
+            RawAutoObservation("static-control", "cold", "webassembly"));
+        var wrongVisitRaw = CreateEvidenceInput(
+            fixture.Root,
+            wrongVisitRawBasename,
+            "raw-observation");
+        ExpectAutoProtocolFailure(
+            "Auto transition rejects wrong visit raw observation",
+            "auto-transition-wrong-visit.json",
+            AutoTransitionProtocol(
+                "static-control",
+                coldRaw.ContentDigest,
+                wrongVisitRaw.ContentDigest,
+                "server",
+                "webassembly"),
+            [coldRaw, wrongVisitRaw]);
+
+        var downgradedAssessment = initialized with
+        {
+            SchemaVersion = AssessmentService.LegacySchemaVersion
+        };
+        ExpectValidation(
+            () => Validate(
+                fixture.Root,
+                validInput,
+                validInputBytes,
+                CompleteRows(
+                    downgradedAssessment,
+                    new Dictionary<string, RowConclusion>(StringComparer.Ordinal)
+                    {
+                        ["BEQ-08"] = Verified(validEvidence.Selection.Single().EvidenceId)
+                    }),
+                validEvidence),
+            "current rubric rejects a schema-downgraded Auto assessment");
+
+        var legacyInitialized = AssessmentService.Initialize(
+            "unified",
+            fixture.Root,
+            fixture.Manifest,
+            InputManifestService.Serialize(fixture.Manifest),
+            "static-control",
+            []);
+        var legacyEvidence = BuildEvidence(
+            legacyInitialized.Identity,
+            [
+                Draft(
+                    legacyInitialized.Identity,
+                    EvidenceIdentity.ReproducedRuntimeObservation,
+                    "legacy-runtime.txt",
+                    "bounded legacy runtime observation",
+                    new Sha256Digest("sha256", new string('a', 64)),
+                    componentSpecific: true)
+            ]);
+        var legacyAssessment = CompleteRows(
+            legacyInitialized,
+            new Dictionary<string, RowConclusion>(StringComparer.Ordinal)
+            {
+                ["BEQ-08"] = Verified(legacyEvidence.Selection.Single().EvidenceId)
+            });
+        Validate(
+            fixture.Root,
+            fixture.Manifest,
+            InputManifestService.Serialize(fixture.Manifest),
+            legacyAssessment,
+            legacyEvidence);
+    }
+
+    private static byte[] AutoTransitionProtocol(
+        string componentId,
+        Sha256Digest coldRawDigest,
+        Sha256Digest warmRawDigest,
+        string coldObserved,
+        string warmObserved) =>
+        StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", 1);
+            writer.WriteString("protocol", "auto-renderer-transition");
+            writer.WriteString("component_id", componentId);
+            writer.WritePropertyName("cold");
+            writer.WriteStartObject();
+            writer.WriteString("visit", "cold");
+            writer.WriteString("expected_identity", "server");
+            writer.WriteString("observed_identity", coldObserved);
+            WriteDigest(writer, "raw_observation_sha256", coldRawDigest);
+            writer.WriteEndObject();
+            writer.WritePropertyName("warm");
+            writer.WriteStartObject();
+            writer.WriteString("visit", "warm");
+            writer.WriteString("expected_identity", "webassembly");
+            writer.WriteString("observed_identity", warmObserved);
+            WriteDigest(writer, "raw_observation_sha256", warmRawDigest);
+            writer.WriteEndObject();
+            writer.WriteEndObject();
+        });
+
+    private static byte[] RawAutoObservation(
+        string componentId,
+        string visit,
+        string observedIdentity) =>
+        StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", 1);
+            writer.WriteString("observation", "auto-renderer-visit");
+            writer.WriteString("component_id", componentId);
+            writer.WriteString("visit", visit);
+            writer.WriteString("mode", "interactive-auto");
+            writer.WriteString("observed_identity", observedIdentity);
+            writer.WriteEndObject();
+        });
 
     private static void TestDynamicLifecycleMatrix(string root)
     {

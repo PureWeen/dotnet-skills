@@ -43,7 +43,7 @@ stop with an environment limitation; do not weaken the launcher isolation.
 | Documentation | Yes | Discover official owner-controlled docs, package metadata/README, and source docs when available; owner confirms the set. |
 | Dynamic children | Conditional | Declare whether the component groups, registers, selects, or composes children; required surfaces use the post-initialization lifecycle matrix. |
 | Evidence inputs | Conditional | Confirm protocol documents and raw observation/log/inventory files by neutral basename, kind, size, and digest. |
-| Owner evidence | Optional | Local public/internal evidence with explicit provenance and digest; never treat feedback as evidence. |
+| Owner evidence | Optional | Use `owner-supplied-internal-evidence` or `owner-supplied-public-evidence` with explicit provenance and digest; never treat feedback as evidence. |
 | Feedback | Optional | Issue URL or Markdown; see [feedback contract](references/feedback-contract.md). |
 | Exclusions/timebox | Optional | Record explicit exclusions and stop when the timebox expires. |
 
@@ -51,7 +51,8 @@ stop with an environment limitation; do not weaken the launcher isolation.
 
 1. `references/rubric.json` is the source of current requirement IDs, wording, order, and
    60 `repository-wide` / 61 `component-specific` ownership split.
-   The [crosswalk](references/docx-crosswalk.json) binds clause and basis. Each canonical ID
+   The [crosswalk](references/docx-crosswalk.json) binds clause and basis; use the
+   [crosswalk guide](references/docx-crosswalk.md) when interpreting those bindings. Each canonical ID
    occurs once across the pair. `TA-08` is noncanonical. Historical rubric bytes remain frozen.
    New assessments use rubric `2.0.0` and its 60+61 ownership split. Do not add
    `--rubric-version 1.3.0` unless the owner explicitly requests a legacy assessment or
@@ -96,19 +97,18 @@ New-Item -ItemType Directory -Force $env:READINESS_TEMP | Out-Null
 & (Join-Path $SkillDir "scripts/validator/run-validator.ps1") help
 ```
 
-Use the same launcher prefix for every command below. Exit `0` means the command completed, not
-that all rows are positive; `1` is deterministic validation failure, `2` invalid usage, and `3`
-environment/tool failure.
+Use the same launcher prefix below. Exit `0` means completion, not that all rows are positive;
+`1` is deterministic validation failure, `2` invalid usage, and `3` environment/tool failure.
 
 ## Select the mode
 
 1. **Single component, unified**: default when no already validated package revision exists. Assess
    all 121 canonical rows for one component/package in one isolated context.
-2. **Single package, split**: create one 60-row package assessment, then one 61-row component
-   assessment per confirmed component, each bound to the package revision.
-3. **Full library**: create package assessments and exactly one top-level writable worker session
-   per confirmed component. Nested custom agents are not workers. If separate sessions are
-   unavailable, fail before inventory confirmation with
+2. **Single package, split**: create one 60-row package assessment, then a bound 61-row component
+   assessment per confirmed component.
+3. **Full library**: create package assessments and one top-level writable worker per component.
+   Nested custom agents are not workers. If separate sessions are unavailable, fail before
+   inventory confirmation with
    `unsupported host: full-library assessment requires isolated workers`; never use a shared-context
    or serialized fallback.
 4. **Targeted follow-up**: only for named rows or a bounded correction. It is not a complete
@@ -119,23 +119,23 @@ environment/tool failure.
 
 ### 1. Discover, confirm, and freeze inputs
 
-1. Inspect an available package:
+1. Inspect the package:
 
    ```text
    <launcher> package inspect --nupkg <exact.nupkg>
    ```
 
 2. For published packages, follow [artifact acquisition](references/artifact-acquisition.md).
-   Default to discovering the latest stable version, then ask the owner to confirm it. A failed
-   retrieval is a recorded attempt, not proof that the package or product has a gap.
+   Default to discovering the latest stable version, then ask the owner to confirm it. An explicit
+   package/version remains authoritative; a failed retrieval is an attempt, not proof of a gap.
 3. Discover official sources using [documentation discovery](references/documentation-discovery.md).
    Classify source as `source-available`, `closed-source`, or `unresolved`.
 4. Discover components and every claimed mode (`static-ssr`, `interactive-server`,
    `interactive-webassembly`, `interactive-auto`, or `standalone-webassembly`).
 5. For each component, declare whether grouped, registered, selected, or composite children make
    the dynamic-child lifecycle matrix required. Do not infer not-applicable from a missing probe.
-6. For source-available components, capture wrapper/API, inherited runtime, browser interop,
-   styles/assets, tests, and samples. A source archive alone is not closure.
+6. For source-available components, capture wrapper/API, inherited runtime, interop, styles/assets,
+   tests, and samples. A source archive alone is not closure.
 7. Show package/version/digest, sources, documents, inputs, modes, exclusions, and feedback before
    scoring. Ask owner.
 8. Canonicalize and freeze the manifest:
@@ -160,37 +160,11 @@ Apply the precedence and ownership rules in
 reproduced probes, exact mapped source, current public source/configuration, then documentation or
 owner evidence. Lower-ranked evidence cannot override contradictory higher-ranked evidence.
 
-- Build immutable ledgers and select only cited `EV1-` records into the assessment bundle.
-- Reuse repository evidence only for the same package ID, version, nupkg digest, and source commit.
-- Keep component evidence within its confirmed component and allowed source paths.
-- Bind inputs to confirmed-manifest locators and SHA-256 values. Failed source retrieval stays
-  `unresolved`; it never implies `closed-source`.
-- Owner evidence may verify when direct, digest-bound, and labeled
-  `owner-supplied-public-evidence` or `owner-supplied-internal-evidence`.
-- An owner declaration can establish `owner-declared-closed-source` or
-  `owner-declared-unavailable`; it cannot substitute for unrelated runtime or artifact proof.
-- Use the canonical verified-boundary protocols in
-  [provenance and integrity](references/area-provenance-integrity.md) and
-  [support/lifecycle](references/area-support-lifecycle.md). Notice sidecars, certificate-table
-  presence, signer subjects, organization names, authors, and contact routes are weak hints, not
-  sufficient `verified` evidence for `LP-04`, `PI-02`, or `SUP-01`.
-- Apply the status order; keep public absence, owner-only facts, unrun probes, and inapplicable
-  surfaces distinct.
-- Use `public-absence-v1` for public-corpus gaps, `source-proof-v1` for lifecycle-bound source gaps,
-  and `direct-failure-v1` for assertion-present `CI-09` compilation failures.
-- Complete package/release inventories with no published SBOM/provenance make `PI-06`, `PI-07`,
-  `PI-10`, and `PI-11` gaps. `PI-08`/`PI-09` need direct incomplete representation evidence.
-- Outcomes do not prove mechanisms. Complete source with no component-owned repeated identity
-  surface makes `PERF-02` not applicable; otherwise absent `@key` proof is `not tested`.
-- Release boundaries: same-job source build plus privileged signing/publishing is a gap; verifying
-  and pushing one mutable path is not a digest-bound immutable handoff.
-- Any component assignment through a public `[Parameter]` setter is mutation, including
-  conditional/event-handler paths.
-- A mutable cascade proves `PERF-05` applicability, not a gap. Without descendant render
-  evidence, use `not tested`.
-- Apply the named obligations and policy limits in the [DOCX crosswalk](references/docx-crosswalk.md).
-  Unapproved extensions are not DOCX defects. Package-owned `SEC-01` through `SEC-03` request
-  one library security packet, not independent reviews for each control.
+Build immutable ledgers, bind every input to confirmed locators and digests, keep component
+evidence isolated, and apply the status/protocol boundaries in the linked area playbooks.
+Failed retrieval remains `unresolved`; owner declarations do not replace unrelated proof.
+Unapproved extensions are not DOCX defects; package-owned `SEC-01` through `SEC-03` use one shared
+library security packet.
 
 Use exact grouped commands:
 
@@ -216,13 +190,9 @@ rebuild. For each claimed mode, record restore/build/start commands, runtime obs
 and console/network evidence where applicable, prerequisites, and blockers. A build is not runtime
 proof. Stop at the timebox and mark remaining applicable rows `not tested`.
 
-For a `net10.0` consumer, pin the intended supported SDK in the disposable consumer root and
-record `dotnet --version` before restore; do not assume the host's highest installed SDK matches
-the target framework. Restore from the declared public registry and exact local package source.
-If the NuGet v3 service index is unavailable, a public NuGet v2 endpoint is an allowed read-only
-fallback; retain the v3 error, fallback source, and exit codes. Do not edit reviewed
-`global.json`, package manifests, lockfiles, or NuGet configuration, and do not attribute a
-source transport failure to the package.
+For `net10.0`, pin and record the supported SDK before restore. A public NuGet v2 endpoint is an
+allowed read-only fallback when v3 is unavailable; retain both outcomes and never edit reviewed
+manifests or configuration.
 
 Remove disposable apps and raw logs after extracting bounded commands, results, relevant snippets,
 and digests into the local evidence set. Retain a failed probe only when needed for reproduction;
@@ -244,6 +214,11 @@ evidence-required rationale/ownership paths. A handful of generic ledger records
 immutable revision after the missing checks. A low record count alone is not failure when compact
 shared evidence substantively supports every cited claim. Do not inflate coverage by repeating one
 blocked probe across unrelated rows.
+For structured proof boundaries, use `source-proof-v1`, `public-absence-v1`, or
+`direct-failure-v1`; free-text assertions are not substitutes. same-job source build plus
+privileged signing/publishing is a gap. one mutable path is not a digest-bound immutable handoff.
+component assignment through a public `[Parameter]` setter is mutation; mutable cascade proves
+`PERF-05` applicability, not a gap.
 
 ### 4. Create and validate assessments
 
@@ -255,9 +230,8 @@ Initialize the appropriate row ownership:
 <launcher> assessment init --kind component --root <output> --input <component.input.confirmed.json> --component <component-id> --package-revision <package-revision> --output <component.assessment.json>
 ```
 
-Omit `--rubric-version` for new work: the validator defaults to current `2.0.0`. If a command
-contains `--rubric-version 1.3.0`, stop and confirm that the owner explicitly requested legacy
-reproduction before executing it; never use it to satisfy a current 121-row request.
+Omit `--rubric-version` for new work; the validator defaults to `2.0.0`. If a command contains
+`--rubric-version 1.3.0`, confirm explicit legacy reproduction; never use it for current work.
 
 Populate all rows from evidence. Use schema 2; retain legacy v1 verification.
 Follow [report contract](references/report-contract.md); deliver the
@@ -270,15 +244,16 @@ Follow [report contract](references/report-contract.md); deliver the
 ```
 
 Component validation/render/verify also requires `--package-revision <package-revision>` and, when
-used, `--package-feedback <package.feedback.md>`. A completed worker returns the unit ID, revision
-directory, report path, validation-manifest path and SHA-256, plus blockers.
+used, `--package-feedback <package.feedback.md>`. A worker returns the unit ID, revision, report,
+validation-manifest SHA-256, and blockers.
 
 ### 5. Coordinate a full library
 
 Follow [worker execution](references/worker-execution.md) and
-[library assessment](references/library-assessment.md). Launch one top-level writable worker session
-per confirmed unit; nested agent/task invocations cannot produce artifacts. Exclude sibling inputs,
-then validate every returned path and digest before acceptance.
+[library assessment](references/library-assessment.md). Launch one top-level writable worker per
+unit; nested agent/task invocations cannot produce artifacts. Exclude sibling inputs, then validate
+every path and digest. `library reconcile` derives package/component kind; filenames alone cannot
+satisfy a handoff.
 
 After interruption, leave completed revisions untouched, mark active units incomplete, run:
 

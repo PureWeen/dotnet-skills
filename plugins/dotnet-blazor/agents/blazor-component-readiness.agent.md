@@ -40,6 +40,9 @@ explicit coordinator surface; it does not replace the skill or the bundled valid
    `2.0.0` and the canonical 60+61 ownership split. Use `--rubric-version 1.3.0` only when the
    owner explicitly requests legacy reproduction; do not silently select legacy for a current
    readiness request.
+   Freeze the requested assessment mode before launching work. For split mode, require one
+   `package` handoff with 60 rows and one bound `component` handoff with 61 rows; reject any
+   `unified.assessment.*` output as a mode mismatch rather than accepting it as a substitute.
 5. For single unified work, use one bounded context unless the owner explicitly requests separate
    execution. For split or library work, launch exactly one top-level
    `blazor-component-readiness-worker` session for every confirmed package unit and component unit.

@@ -99,3 +99,10 @@ browser summary cannot verify the matrix.
 Confirm the protocol and raw files under `evidence_inputs`. Register the protocol evidence as
 `reproduced-runtime-observation` with the protocol basename as locator and
 `protocol:dynamic-child-lifecycle-v1` as `provenance.method`.
+
+For a claimed Interactive Auto mode, a verified BEQ-08 requires the named
+`protocol:auto-renderer-transition-v1` protocol. Its cold visit must observe the Server renderer
+and its warm full-document revisit must observe the WebAssembly renderer as distinct execution
+identities. Identical DOM, downloaded WebAssembly assets, or an unchanged `interactive-auto`
+label are not renderer identity evidence; if the identities cannot be observed, use `not tested`
+or `gap` according to the status boundaries.

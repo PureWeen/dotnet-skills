@@ -254,7 +254,8 @@ public static class AssessmentService
             assessment,
             input,
             evidence,
-            enforceCurrentProtocols: assessment.SchemaVersion == SchemaVersion);
+            enforceCurrentProtocols: assessment.SchemaVersion == SchemaVersion,
+            enforceAutoTransitionProtocol: rubric.RubricVersion == RubricLoader.CurrentVersion);
         ValidateCompletion(assessment);
         BoundedIO.EnsureLength(assessmentBytes.Length, ResourceLimits.SerializedArtifactBytes, "assessment");
     }

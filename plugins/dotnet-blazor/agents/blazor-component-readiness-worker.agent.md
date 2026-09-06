@@ -47,6 +47,9 @@ sibling identities there as non-evidence and never cite or reproduce them in com
    revision.
    New worker assessments must omit `--rubric-version` and use current rubric `2.0.0`; accept
    `1.3.0` only when the coordinator records an explicit owner request for legacy reproduction.
+   The assigned kind is strict: a package worker must return a `package` assessment and a component
+   worker must return a `component` assessment. Never emit or substitute a `unified` assessment for
+   either handoff.
    Emit all conditional rows with explicit applicability. Library threat model, security review
    and finding disposition (`SEC-01` through `SEC-03`) belong only to the package. Preserve
    canonical meaning and identify unapproved extensions; extension gaps are not DOCX defects.
@@ -76,6 +79,10 @@ sibling identities there as non-evidence and never cite or reproduce them in com
    `[Parameter]` setter is mutation, including conditional or event-handler assignments.
    For `PERF-02`, complete source proving no component-owned repeated identity surface establishes
    `not applicable`; otherwise a missing mechanism probe remains `not tested`.
+   For verified BEQ-08, include a digest-bound `protocol:auto-renderer-transition-v1` record whose
+   cold visit observes `server` and warm full-document revisit observes distinct `webassembly`
+   execution identity. DOM parity, downloaded WASM assets, and an `interactive-auto` label alone
+   do not establish the transition.
    For `PERF-05`, source showing a mutable cascading-value surface establishes applicability and
    risk only; require direct descendant render evidence for a gap, otherwise use `not tested`.
 6. Apply a coverage gate before returning a revision. Reconcile the immutable ledger with the

@@ -39,6 +39,7 @@ internal static class LibraryTests
             TestMissingOutputPreventsComplete(fixture, packageRevisions);
             TestComponentInputIsolation(fixture, packageRevisions);
             CreateComponentRevisions(fixture, packageRevisions);
+            TestPackageArtifactCannotSatisfyComponentHandoff(fixture);
             TestCompleteReconcileAndIndex(fixture);
             TestCorruptManifestReconstruction(fixture);
             TestConflictsAndWrongPackage(fixture);
@@ -1193,6 +1194,61 @@ internal static class LibraryTests
         AssertBytes(expected, File.ReadAllBytes(fixture.RunPath), "stale run manifest reconstructs exactly");
     }
 
+    private static void TestPackageArtifactCannotSatisfyComponentHandoff(Fixture fixture)
+    {
+        var package = fixture.Inventory.Packages[0];
+        var component = package.Components[0];
+        var componentRoot = Path.Combine(fixture.Root, component.RevisionRoot);
+        var componentRevision = Path.Combine(componentRoot, "0001");
+        var savedComponentRevision = Path.Combine(fixture.Root, "saved-kind-mismatch-revision");
+        Directory.Move(componentRevision, savedComponentRevision);
+        var inputPath = Path.Combine(fixture.Root, package.InputManifestPath);
+        var inputBytes = File.ReadAllBytes(inputPath);
+        var input = InputManifestService.Parse(inputBytes);
+        var unified = AssessmentService.Initialize(
+            "unified",
+            fixture.Root,
+            input,
+            inputBytes,
+            component.ComponentId,
+            []);
+        var unifiedEvidence = BuildEvidence(unified.Identity, component.RenderModes, input);
+        var unifiedAssessment = Complete(unified, unifiedEvidence);
+        var repositoryEvidenceId = unifiedEvidence.SourceLedgers
+            .Single(source => source.Ledger.LedgerKind == "repository")
+            .Ledger.Records.Single()
+            .StableId;
+        unifiedAssessment = unifiedAssessment with
+        {
+            Rows = unifiedAssessment.Rows
+                .Select((row, index) => index == 0
+                    ? row with { EvidenceIds = [repositoryEvidenceId] }
+                    : row)
+                .ToArray()
+        };
+        _ = Render(
+            fixture.Root,
+            inputPath,
+            unifiedAssessment,
+            unifiedEvidence,
+            componentRoot,
+            packageRevision: null);
+        try
+        {
+            ExpectValidation(
+                () => LibraryService.Reconcile(
+                    fixture.Root,
+                    fixture.Inventory,
+                    fixture.InventoryBytes),
+                "unified artifact cannot satisfy split component handoff");
+        }
+        finally
+        {
+            Directory.Delete(componentRevision, recursive: true);
+            Directory.Move(savedComponentRevision, componentRevision);
+        }
+    }
+
     private static void TestConflictsAndWrongPackage(Fixture fixture)
     {
         var first = fixture.Inventory.Packages[0].Components[0];
@@ -1394,20 +1450,24 @@ internal static class LibraryTests
         IReadOnlyList<string> renderModes,
         InputManifest? input = null)
     {
-        var modes = renderModes.Count == 0 ? new[] { "package-wide" } : renderModes;
+        var repositoryEvidence = identity.AssessmentKind is "package" or "unified";
+        var packageSource = input?.PackageSources.FirstOrDefault();
+        var modes = repositoryEvidence
+            ? new[] { "package-wide" }
+            : renderModes.Count == 0 ? new[] { "package-wide" } : renderModes;
         var drafts = modes.Select((mode, index) => new EvidenceRecordDraft(
-            identity.ComponentId is null
+            repositoryEvidence
                 ? "Exact package evidence supports this package-wide synthetic assessment."
                 : $"The {identity.ComponentId} probe exercised render mode {mode}.",
-            identity.ComponentId is null
+            repositoryEvidence
                 ? new EvidenceApplicability("repository-wide", null)
                 : new EvidenceApplicability("component-specific", identity.ComponentId),
             new EvidenceProvenance(
-                identity.ComponentId is null
+                repositoryEvidence
                     ? EvidenceIdentity.PackageArtifactMetadata
                     : EvidenceIdentity.ReproducedRuntimeObservation,
-                identity.ComponentId is null
-                    ? NupkgInspector.WholePackageEvidenceLocator
+                repositoryEvidence
+                    ? packageSource?.Locator ?? NupkgInspector.WholePackageEvidenceLocator
                     : $"probe://{identity.Package.PackageId}/{identity.ComponentId}/render-mode/{mode}",
                 identity.ComponentId is null
                     ? "Inspected the exact synthetic package."
@@ -1415,13 +1475,13 @@ internal static class LibraryTests
                 $"2026-09-02T2{index}:00:00Z",
                 new Sha256Digest(
                     "sha256",
-                    identity.ComponentId is null
-                        ? identity.Package.NupkgDigest.Value
+                    repositoryEvidence
+                        ? (packageSource?.ContentDigest ?? identity.Package.NupkgDigest).Value
                         : Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(
                             Encoding.UTF8.GetBytes($"{identity.Package.PackageId}\0{identity.ComponentId}\0{mode}")))),
                 "commitment-only"),
             [])).ToList();
-        if (identity.ComponentId is not null && input is not null)
+        if (identity.AssessmentKind == "component" && input is not null)
         {
             drafts.Add(new EvidenceRecordDraft(
                 "The component-specific vendor documentation was reviewed.",
@@ -1469,19 +1529,25 @@ internal static class LibraryTests
                 []));
         }
 
-        EvidenceSourceLedger ledger = identity.AssessmentKind == "component"
-            ? EvidenceLedgerBuilder.BuildComponentLedger(identity, drafts)
-            : EvidenceLedgerBuilder.BuildRepositoryLedger(
-                new RepositoryLedgerSubject(
-                    identity.AssessmentKind,
-                    identity.Package,
-                    identity.InputManifestDigest,
-                    null),
-                drafts);
+        IReadOnlyList<EvidenceSourceLedger> ledgers = identity.AssessmentKind == "component"
+            ? [EvidenceLedgerBuilder.BuildComponentLedger(identity, drafts)]
+            : [
+                EvidenceLedgerBuilder.BuildRepositoryLedger(
+                    new RepositoryLedgerSubject(
+                        identity.AssessmentKind,
+                        identity.Package,
+                        identity.InputManifestDigest,
+                        identity.AssessmentKind == "unified" ? identity.ComponentId : null),
+                    drafts)
+            ];
+        var selectedEvidenceIds = ledgers
+            .SelectMany(ledger => ledger.Records)
+            .Select(record => record.StableId)
+            .ToArray();
         return EvidenceLedgerBuilder.BuildBundle(
             identity,
-            [ledger],
-            ledger.Records.Select(record => record.StableId).ToArray());
+            ledgers,
+            selectedEvidenceIds);
     }
 
     private static EvidenceBundle BuildEvidence(

@@ -16,6 +16,7 @@ public static class EvidenceProtocolValidator
     public const string SourceProofMethod = "protocol:source-proof-v1";
     public const string PublicAbsenceMethod = "protocol:public-absence-v1";
     public const string DirectFailureMethod = "protocol:direct-failure-v1";
+    public const string AutoTransitionMethod = "protocol:auto-renderer-transition-v1";
 
     private static readonly string[] LifecycleOperations =
     [
@@ -87,7 +88,8 @@ public static class EvidenceProtocolValidator
         ReadinessAssessment assessment,
         InputManifest input,
         EvidenceBundle evidence,
-        bool enforceCurrentProtocols)
+        bool enforceCurrentProtocols,
+        bool enforceAutoTransitionProtocol = true)
     {
         var selected = evidence.Selection
             .Select(selection => selection.EvidenceId)
@@ -145,6 +147,10 @@ public static class EvidenceProtocolValidator
             "SUP-01",
             SupportOwnershipMethod);
         ValidateToolchainRows(assessment, input, records, protocols);
+        if (enforceAutoTransitionProtocol)
+        {
+            RequireAutoTransitionProtocol(root, assessment, input, protocols);
+        }
     }
 
     private static ParsedProtocol ParseProtocol(
@@ -173,6 +179,11 @@ public static class EvidenceProtocolValidator
                 input,
                 assessmentIdentity,
                 record),
+            AutoTransitionMethod => ParseAutoTransition(
+                root,
+                bytes,
+                input,
+                assessmentIdentity),
             _ => throw new DeterministicValidationException(
                 $"Evidence '{record.StableId}' uses unknown structured method '{record.Provenance.Method}'.")
         };
@@ -699,6 +710,202 @@ public static class EvidenceProtocolValidator
                     $"Schema-v2 row '{requirementId}' gap requires a matching typed public-absence or direct-failure protocol.");
             }
         }
+    }
+
+    private static void RequireAutoTransitionProtocol(
+        string root,
+        ReadinessAssessment assessment,
+        InputManifest input,
+        IReadOnlyDictionary<string, ParsedProtocol> protocols)
+    {
+        var row = assessment.Rows.SingleOrDefault(item => item.Id == "BEQ-08");
+        if (row?.Status != "verified")
+        {
+            return;
+        }
+
+        if (!row.EvidenceIds.Any(id =>
+                protocols.TryGetValue(id, out var protocol) &&
+                protocol.Method == AutoTransitionMethod &&
+                protocol.Result == "passed"))
+        {
+            throw new DeterministicValidationException(
+                "Verified BEQ-08 requires a passed digest-bound Auto renderer transition protocol.");
+        }
+    }
+
+    private static ParsedProtocol ParseAutoTransition(
+        string root,
+        ReadOnlyMemory<byte> bytes,
+        InputManifest input,
+        ExactAssessmentIdentity assessmentIdentity)
+    {
+        using var document = StrictJson.Parse(
+            bytes,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "Auto renderer transition protocol");
+        var documentRoot = document.RootElement;
+        ContractJson.RequireProperties(documentRoot, "schema_version", "protocol", "component_id", "cold", "warm");
+        RequireProtocolHeader(documentRoot, "auto-renderer-transition");
+        var componentId = ContractJson.String(documentRoot, "component_id");
+        if (assessmentIdentity.ComponentId != componentId)
+        {
+            throw new DeterministicValidationException(
+                "Auto renderer transition protocol component identity does not match the assessment.");
+        }
+
+        var cold = ParseAutoVisit(
+            root,
+            input,
+            ContractJson.Object(documentRoot, "cold"),
+            componentId,
+            "cold");
+        var warm = ParseAutoVisit(
+            root,
+            input,
+            ContractJson.Object(documentRoot, "warm"),
+            componentId,
+            "warm");
+        if (cold.ExpectedIdentity != "server" ||
+            cold.ObservedIdentity != "server" ||
+            warm.ExpectedIdentity != "webassembly" ||
+            warm.ObservedIdentity != "webassembly" ||
+            cold.ObservedIdentity == warm.ObservedIdentity)
+        {
+            throw new DeterministicValidationException(
+                "Auto renderer transition protocol must prove Server on cold visit and WebAssembly on warm visit with distinct observed identities.");
+        }
+
+        var canonical = StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", 1);
+            writer.WriteString("protocol", "auto-renderer-transition");
+            writer.WriteString("component_id", componentId);
+            WriteAutoVisit(writer, "cold", cold);
+            WriteAutoVisit(writer, "warm", warm);
+            writer.WriteEndObject();
+        });
+        ContractJson.RequireCanonical(bytes.Span, canonical, "Auto renderer transition protocol");
+        return new ParsedProtocol(AutoTransitionMethod, null, "passed");
+    }
+
+    private static AutoVisit ParseAutoVisit(
+        string root,
+        InputManifest input,
+        JsonElement element,
+        string componentId,
+        string expectedVisit)
+    {
+        ContractJson.RequireProperties(
+            element,
+            "visit",
+            "expected_identity",
+            "observed_identity",
+            "raw_observation_sha256");
+        var visit = ContractJson.String(element, "visit");
+        if (visit != expectedVisit)
+        {
+            throw new DeterministicValidationException(
+                $"Auto renderer transition visit must be '{expectedVisit}'.");
+        }
+
+        var expected = ContractJson.String(element, "expected_identity");
+        var observed = ContractJson.String(element, "observed_identity");
+        var rawDigest = ContractJson.Digest(
+            ContractJson.Object(element, "raw_observation_sha256"));
+        if (expected is not ("server" or "webassembly") ||
+            observed is not ("server" or "webassembly"))
+        {
+            throw new DeterministicValidationException(
+                $"Auto renderer transition {expectedVisit} visit has an unsupported renderer identity.");
+        }
+
+        var rawInput = input.EvidenceInputs.SingleOrDefault(item =>
+            item.Kind == "raw-observation" &&
+            item.ContentDigest == rawDigest);
+        if (rawInput is null)
+        {
+            throw new DeterministicValidationException(
+                $"Auto renderer transition {expectedVisit} visit requires a matching raw-observation input.");
+        }
+
+        var rawPath = SafePath.ResolveUnderRoot(
+            root,
+            rawInput.Basename,
+            requireExisting: true,
+            requireFile: true);
+        var rawBytes = BoundedIO.ReadAllBytes(
+            rawPath,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            $"Auto renderer {expectedVisit} raw observation");
+        var raw = ParseRawAutoObservation(rawBytes, expectedVisit);
+        if (raw.ComponentId != componentId ||
+            raw.ObservedIdentity != observed ||
+            raw.Visit != expectedVisit)
+        {
+            throw new DeterministicValidationException(
+                $"Auto renderer transition {expectedVisit} raw observation does not match its component, visit, or observed identity.");
+        }
+
+        return new AutoVisit(expectedVisit, expected, observed, rawDigest);
+    }
+
+    private static RawAutoObservation ParseRawAutoObservation(
+        ReadOnlyMemory<byte> bytes,
+        string expectedVisit)
+    {
+        using var document = StrictJson.Parse(
+            bytes,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            $"Auto renderer {expectedVisit} raw observation");
+        var root = document.RootElement;
+        ContractJson.RequireProperties(
+            root,
+            "schema_version",
+            "observation",
+            "component_id",
+            "visit",
+            "mode",
+            "observed_identity");
+        if (ContractJson.Int32(root, "schema_version") != 1 ||
+            ContractJson.String(root, "observation") != "auto-renderer-visit" ||
+            ContractJson.String(root, "mode") != "interactive-auto")
+        {
+            throw new DeterministicValidationException(
+                $"Auto renderer {expectedVisit} raw observation has an invalid observation kind or mode.");
+        }
+
+        var canonical = StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", 1);
+            writer.WriteString("observation", "auto-renderer-visit");
+            writer.WriteString("component_id", ContractJson.String(root, "component_id"));
+            writer.WriteString("visit", ContractJson.String(root, "visit"));
+            writer.WriteString("mode", "interactive-auto");
+            writer.WriteString("observed_identity", ContractJson.String(root, "observed_identity"));
+            writer.WriteEndObject();
+        });
+        ContractJson.RequireCanonical(bytes.Span, canonical, "Auto renderer raw observation");
+        return new RawAutoObservation(
+            ContractJson.String(root, "component_id"),
+            ContractJson.String(root, "visit"),
+            ContractJson.String(root, "observed_identity"));
+    }
+
+    private static void WriteAutoVisit(
+        Utf8JsonWriter writer,
+        string name,
+        AutoVisit visit)
+    {
+        writer.WritePropertyName(name);
+        writer.WriteStartObject();
+        writer.WriteString("visit", visit.Visit);
+        writer.WriteString("expected_identity", visit.ExpectedIdentity);
+        writer.WriteString("observed_identity", visit.ObservedIdentity);
+        WriteDigest(writer, "raw_observation_sha256", visit.RawObservationDigest);
+        writer.WriteEndObject();
     }
 
     private static LifecycleOperation ParseLifecycleOperation(JsonElement element)
@@ -1343,6 +1550,17 @@ public static class EvidenceProtocolValidator
         IReadOnlyDictionary<string, LifecycleOperation>? Operations,
         string? Result,
         string? RequirementId = null);
+
+    private sealed record AutoVisit(
+        string Visit,
+        string ExpectedIdentity,
+        string ObservedIdentity,
+        Sha256Digest RawObservationDigest);
+
+    private sealed record RawAutoObservation(
+        string ComponentId,
+        string Visit,
+        string ObservedIdentity);
 
     private sealed record PublicAbsenceRequirement(
         string CorpusKind,
