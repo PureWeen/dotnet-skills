@@ -45,11 +45,17 @@ sibling identities there as non-evidence and never cite or reproduce them in com
 3. Collect only evidence allowed for this unit. A package worker owns the 60 repository-wide/conditional rows;
    a component worker owns the 61 component-specific rows and must bind the supplied package
    revision.
+   New worker assessments must omit `--rubric-version` and use current rubric `2.0.0`; accept
+   `1.3.0` only when the coordinator records an explicit owner request for legacy reproduction.
    Emit all conditional rows with explicit applicability. Library threat model, security review
    and finding disposition (`SEC-01` through `SEC-03`) belong only to the package. Preserve
    canonical meaning and identify unapproved extensions; extension gaps are not DOCX defects.
 4. For a component, create disposable external consumers and exercise every claimed render mode.
    Record blocked probes as `not tested`; do not omit a mode or infer runtime behavior from a build.
+   Pin and record the supported SDK used by each disposable consumer before restore. For net10
+   consumers, do not inherit a preview SDK merely because it is the host default; if the public
+   NuGet v3 service index is unavailable, use the declared read-only NuGet v2 fallback and
+   preserve both source outcomes. Never change reviewed manifests or NuGet configuration.
    If grouped, registered, selected, or composite children apply, complete every post-initialization
    lifecycle operation with a digest-bound raw observation or operation-specific not-tested reason.
 5. Build immutable evidence ledgers/bundle, initialize and populate the assessment, validate it,

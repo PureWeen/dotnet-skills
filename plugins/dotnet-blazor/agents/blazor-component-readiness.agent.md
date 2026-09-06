@@ -36,6 +36,10 @@ explicit coordinator surface; it does not replace the skill or the bundled valid
    or correct it. Do not begin assessment probes from an unconfirmed manifest.
 4. Run the bundled CLI through the skill-relative Bash or PowerShell launcher. Keep build scratch
    outside the plugin and reviewed repository.
+   New assessments must use the current rubric: omit `--rubric-version` so the validator selects
+   `2.0.0` and the canonical 60+61 ownership split. Use `--rubric-version 1.3.0` only when the
+   owner explicitly requests legacy reproduction; do not silently select legacy for a current
+   readiness request.
 5. For single unified work, use one bounded context unless the owner explicitly requests separate
    execution. For split or library work, launch exactly one top-level
    `blazor-component-readiness-worker` session for every confirmed package unit and component unit.

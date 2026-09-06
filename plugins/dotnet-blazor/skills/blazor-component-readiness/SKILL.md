@@ -53,6 +53,10 @@ stop with an environment limitation; do not weaken the launcher isolation.
    60 `repository-wide` / 61 `component-specific` ownership split.
    The [crosswalk](references/docx-crosswalk.json) binds clause and basis. Each canonical ID
    occurs once across the pair. `TA-08` is noncanonical. Historical rubric bytes remain frozen.
+   New assessments use rubric `2.0.0` and its 60+61 ownership split. Do not add
+   `--rubric-version 1.3.0` unless the owner explicitly requests a legacy assessment or
+   reproduction; a legacy selection for a current request is an invalid scope decision, not a
+   harmless compatibility choice.
 2. `references/checklist.md` is only the generated human-readable view. Never edit or derive IDs
    from it independently.
 3. Use exactly: `verified`, `gap`, `owner evidence required`, `not tested`,
@@ -212,6 +216,14 @@ rebuild. For each claimed mode, record restore/build/start commands, runtime obs
 and console/network evidence where applicable, prerequisites, and blockers. A build is not runtime
 proof. Stop at the timebox and mark remaining applicable rows `not tested`.
 
+For a `net10.0` consumer, pin the intended supported SDK in the disposable consumer root and
+record `dotnet --version` before restore; do not assume the host's highest installed SDK matches
+the target framework. Restore from the declared public registry and exact local package source.
+If the NuGet v3 service index is unavailable, a public NuGet v2 endpoint is an allowed read-only
+fallback; retain the v3 error, fallback source, and exit codes. Do not edit reviewed
+`global.json`, package manifests, lockfiles, or NuGet configuration, and do not attribute a
+source transport failure to the package.
+
 Remove disposable apps and raw logs after extracting bounded commands, results, relevant snippets,
 and digests into the local evidence set. Retain a failed probe only when needed for reproduction;
 record why and avoid secrets, credentials, unrelated private URLs, and machine-specific absolute
@@ -231,6 +243,10 @@ Initialize the appropriate row ownership:
 <launcher> assessment init --kind package --root <output> --input <package.input.confirmed.json> --output <package.assessment.json>
 <launcher> assessment init --kind component --root <output> --input <component.input.confirmed.json> --component <component-id> --package-revision <package-revision> --output <component.assessment.json>
 ```
+
+Omit `--rubric-version` for new work: the validator defaults to current `2.0.0`. If a command
+contains `--rubric-version 1.3.0`, stop and confirm that the owner explicitly requested legacy
+reproduction before executing it; never use it to satisfy a current 121-row request.
 
 Populate all rows from evidence. Use schema 2; retain legacy v1 verification.
 Follow [report contract](references/report-contract.md); deliver the
