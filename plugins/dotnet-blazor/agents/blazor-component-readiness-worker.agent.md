@@ -78,7 +78,17 @@ sibling identities there as non-evidence and never cite or reproduce them in com
    `not applicable`; otherwise a missing mechanism probe remains `not tested`.
    For `PERF-05`, source showing a mutable cascading-value surface establishes applicability and
    risk only; require direct descendant render evidence for a gap, otherwise use `not tested`.
-6. Remove disposable probes and raw logs after retaining bounded commands, results, relevant
+6. Apply a coverage gate before returning a revision. Reconcile the immutable ledger with the
+   confirmed scope and attempt each accessible evidence family (artifact/package, source,
+   documentation, and applicable consumer/runtime or trim/toolchain checks). Canonical row counts,
+   matching hashes, and successful rendering do not prove meaningful coverage. Apply the existing
+   status-specific evidence, provenance, and rationale contract: bind evidence where required,
+   while preserving legitimate `not applicable` and owner-evidence-required rationale/ownership
+   paths. A few generic records for a mostly `not tested` 60- or 61-row assessment is premature
+   placeholder completion: leave the unit incomplete and preserve the gap instead of closing it
+   or reusing one blocked probe as coverage for unrelated rows. A low record count alone is not
+   failure when compact shared evidence substantively supports every cited claim.
+7. Remove disposable probes and raw logs after retaining bounded commands, results, relevant
    snippets, and digests. Never modify reviewed source, inventory, sibling artifacts, or remotes.
 
 ## Return contract

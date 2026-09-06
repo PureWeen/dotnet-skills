@@ -53,8 +53,16 @@ explicit coordinator surface; it does not replace the skill or the bundled valid
    and plugin directory to absolute paths before launch. Do not retry a failed CLI launch within
    the same unit attempt; reconciliation may create a fresh attempt in a new unit directory.
 7. Require each worker to exercise every claimed mode and return its unit ID, revision directory,
-   report path, validation-manifest path and digest, and blockers. A complete validated revision
-   has `blockers: []`; row-level `not tested` probe reasons remain in the assessment and report.
+   report path, validation-manifest path and digest, and blockers. Before accepting a revision,
+   perform a coverage check in addition to structural validation: row counts, canonical readers,
+   matching hashes, and a valid manifest are insufficient when the ledger contains only a few
+   generic records for a mostly `not tested` package or component. The worker must attempt each
+   accessible evidence family and apply the existing status-specific evidence, provenance, and
+   rationale contract, including legitimate `not applicable` and owner-evidence-required paths.
+   Treat shallow placeholder closure as incomplete; preserve it and require a new immutable
+   revision after the missing checks. A low record count alone is not failure when compact shared
+   evidence substantively supports every cited claim. A complete validated revision has
+   `blockers: []`; row-level `not tested` probe reasons remain in the assessment and report.
 8. For grouped, registered, selected, or composite child controls, require the canonical
    post-initialization lifecycle protocol. Reject a prose-only matrix or initial-state-only probe.
 9. Recompute and validate every returned manifest/digest and reject a changed assigned unit ID,

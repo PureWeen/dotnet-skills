@@ -234,6 +234,17 @@ When `dynamic_child_lifecycle.applicability` is `required`, run the complete con
 observation digest in one canonical lifecycle protocol. A blocked operation remains `not tested`
 with its exact reason; never substitute an initial-state-only pass.
 
+Before closing a unit, reconcile the immutable ledger with the confirmed scope and show that each
+accessible evidence family was attempted: package/artifact, source, documentation, and applicable
+consumer/runtime or trim/toolchain checks. Canonical row counts, matching hashes, and reader shape
+are not coverage. Apply each row's existing status-specific evidence, provenance, and rationale
+contract: bind evidence where required, while preserving legitimate `not applicable` and owner
+evidence-required rationale/ownership paths. A handful of generic ledger records for a 60- or
+61-row unit is premature placeholder completion; keep the unit incomplete and create a new
+immutable revision after the missing checks. A low record count alone is not failure when compact
+shared evidence substantively supports every cited claim. Do not inflate coverage by repeating one
+blocked probe across unrelated rows.
+
 ### 4. Create and validate assessments
 
 Initialize the appropriate row ownership:
