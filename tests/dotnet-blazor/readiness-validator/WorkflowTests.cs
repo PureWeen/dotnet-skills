@@ -174,6 +174,7 @@ internal static class WorkflowTests
         AssertAgents(pluginRoot);
         AssertContracts(referencesRoot);
         AssertWorkerLaunchContract(pluginRoot);
+        AssertReadinessLauncherExample(skillRoot);
     }
 
     private static void AssertRubricIsSoleRequirementSource(string referencesRoot)
@@ -564,6 +565,81 @@ internal static class WorkflowTests
                 "--prompt-file", promptFile,
                 "--output", Path.Combine(unitRoot, "missing-skill.env"));
             Assert(missingSkill.ExitCode != 0 && missingSkill.StandardError.Contains("missing blazor-component-readiness SKILL.md", StringComparison.Ordinal), "missing bundled skill rejected");
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot))
+            {
+                Directory.Delete(testRoot, recursive: true);
+            }
+        }
+    }
+
+    private static void AssertReadinessLauncherExample(string skillRoot)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var skill = File.ReadAllText(Path.Combine(skillRoot, "SKILL.md")).Replace("\r\n", "\n", StringComparison.Ordinal);
+        var functionStart = skill.IndexOf("readiness()\n{", StringComparison.Ordinal);
+        Assert(functionStart >= 0, "documented readiness function exists");
+        var functionEnd = skill.IndexOf("\n}", functionStart, StringComparison.Ordinal);
+        Assert(functionEnd > functionStart, "documented readiness function closes");
+        var function = skill[functionStart..(functionEnd + 2)];
+        var testRoot = Path.Combine(Path.GetTempPath(), $"readiness launcher example {Guid.NewGuid():N}");
+        var outputRoot = Path.Combine(testRoot, "output root with spaces");
+        var validatorRoot = Path.Combine(testRoot, "validator root with spaces");
+        var validatorDirectory = Path.Combine(validatorRoot, "scripts", "validator");
+        var stub = Path.Combine(validatorDirectory, "run-validator.sh");
+        var script = Path.Combine(testRoot, "invoke readiness.sh");
+        var result = Path.Combine(outputRoot, "result.txt");
+
+        try
+        {
+            Directory.CreateDirectory(validatorDirectory);
+            Directory.CreateDirectory(outputRoot);
+            File.WriteAllText(
+                stub,
+                """
+                #!/usr/bin/env bash
+                set -euo pipefail
+                printf 'temp=%s\nargc=%s\n' "$READINESS_TEMP" "$#" > "$RESULT_FILE"
+                for argument in "$@"; do
+                  printf '<%s>\n' "$argument" >> "$RESULT_FILE"
+                done
+                exit 7
+                """);
+            File.WriteAllText(
+                script,
+                $$"""
+                set -euo pipefail
+                SKILL_DIR="$1"
+                OUTPUT="$2"
+                export RESULT_FILE="$3"
+                shift 3
+                mkdir -p "$OUTPUT/.validator-cache"
+                {{function}}
+                readiness "$@"
+                """);
+
+            var invocation = RunHelper(
+                script,
+                validatorRoot,
+                outputRoot,
+                result,
+                "arg with spaces",
+                "literal $dollar and apostrophe '");
+            Assert(invocation.ExitCode == 7, "readiness forwards nonzero exit code");
+            Assert(invocation.StandardError == string.Empty, "readiness example has no shell error");
+            var lines = File.ReadAllLines(result);
+            Assert(
+                Path.Combine(outputRoot, ".validator-cache") == lines[0]["temp=".Length..],
+                "readiness forwards environment value");
+            Assert(lines[1] == "argc=2", "readiness forwards argument count");
+            Assert(lines[2] == "<arg with spaces>", "readiness preserves spaced argument");
+            Assert(lines[3] == "<literal $dollar and apostrophe '>", "readiness preserves literal argument");
         }
         finally
         {

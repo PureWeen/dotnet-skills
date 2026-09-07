@@ -83,9 +83,16 @@ Bash:
 SKILL_DIR="<directory-containing-the-loaded-SKILL.md>"
 OUTPUT="<user-approved-local-output-root>"
 mkdir -p "$OUTPUT/.validator-cache"
-READINESS_TEMP="$OUTPUT/.validator-cache" \
-  bash "$SKILL_DIR/scripts/validator/run-validator.sh" help
+readiness()
+{
+  READINESS_TEMP="$OUTPUT/.validator-cache" \
+    bash "$SKILL_DIR/scripts/validator/run-validator.sh" "$@"
+}
+readiness help
 ```
+
+Define `readiness` in this shell; tool calls start fresh shells. `<launcher>` below means this
+function. PowerShell uses its block instead.
 
 PowerShell:
 
@@ -97,7 +104,7 @@ New-Item -ItemType Directory -Force $env:READINESS_TEMP | Out-Null
 & (Join-Path $SkillDir "scripts/validator/run-validator.ps1") help
 ```
 
-Use the same launcher prefix below. Exit `0` means completion, not that all rows are positive;
+Exit `0` means completion, not that all rows are positive;
 `1` is deterministic validation failure, `2` invalid usage, and `3` environment/tool failure.
 
 ## Select the mode
