@@ -249,6 +249,11 @@ internal static class WorkflowTests
         Assert(!coordinator.Contains("\"agent\"", StringComparison.Ordinal), "coordinator must not expose nested agent dispatch");
         Assert(!coordinator.Contains("\"Task\"", StringComparison.Ordinal), "coordinator must not expose nested task dispatch");
         AssertContains(coordinator, "Never invoke the worker through a nested agent/task tool.", "nested worker prohibition");
+        AssertContains(coordinator, "absolute trusted plugin root", "coordinator trusted plugin context");
+        AssertContains(coordinator, "file-based fallback", "coordinator file activation fallback");
+        AssertContains(coordinator, "permission or content-exclusion denials", "coordinator fallback boundary");
+        AssertContains(coordinator, "matching inherited `PWD`", "coordinator cwd/PWD launch contract");
+        AssertContains(coordinator, "native argv", "coordinator native launch receipt");
         AssertContains(coordinator, "exactly one top-level `blazor-component-readiness-worker` session", "top-level worker isolation");
         AssertContains(coordinator, "unsupported host: full-library assessment requires isolated workers", "coordinator unsupported-host stop");
         AssertContains(coordinator, "decision-guidance.md", "coordinator decision guidance");
@@ -256,6 +261,9 @@ internal static class WorkflowTests
 
         AssertContains(worker, "user-invocable: false", "worker invocation");
         AssertContains(worker, "selected as the top-level agent", "top-level worker requirement");
+        AssertContains(worker, "activation_method=file-fallback", "worker file activation receipt");
+        AssertContains(worker, "absolute trusted plugin root", "worker trusted plugin context");
+        AssertContains(worker, "permission or content-exclusion denial", "worker fallback boundary");
         AssertContains(worker, "unsupported host: readiness worker requires a top-level writable session", "nested worker stop");
         Assert(Regex.IsMatch(worker, @"(?m)^tools:\s*\[(?!\s*\])"), "worker tools must be non-empty");
         AssertContains(worker, "exactly one coordinator-assigned", "worker single-unit scope");
@@ -343,6 +351,16 @@ internal static class WorkflowTests
 
         var workerExecution = File.ReadAllText(Path.Combine(referencesRoot, "worker-execution.md"));
         AssertContains(workerExecution, "Nested custom agents are text-only", "nested agent boundary");
+        AssertContains(workerExecution, "complete", "complete file activation");
+        AssertContains(workerExecution, "Record the activation method", "activation receipt");
+        AssertContains(workerExecution, "cd \"$UNIT\"", "launch directory setup");
+        AssertContains(workerExecution, "export PWD=\"$UNIT\" TMPDIR=\"$UNIT/tmp\"", "unit-local PWD/TMPDIR setup");
+        AssertContains(workerExecution, "--effort <owner-approved-effort>", "explicit effort");
+        AssertContains(workerExecution, "set inherited `PWD` to that same absolute path", "cwd/PWD alignment");
+        AssertContains(workerExecution, "Invoke `copilot` from `PATH`", "PATH launcher");
+        AssertContains(workerExecution, "--session-id <new-session-uuid>", "native session identity");
+        AssertContains(workerExecution, "--log-dir \"$UNIT/logs\"", "native log directory");
+        AssertContains(workerExecution, "tool-call IDs/results", "raw tool receipt");
         AssertContains(workerExecution, "--agent <plugin-name>:blazor-component-readiness-worker", "qualified CLI worker");
         AssertContains(workerExecution, "Never add `--allow-all-paths`", "worker path sandbox");
         AssertContains(workerExecution, "Recomputes the validation-manifest SHA-256", "worker digest acceptance");

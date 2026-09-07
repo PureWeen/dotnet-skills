@@ -12,6 +12,14 @@ license: MIT
 Prefer the `blazor-component-readiness` skill and follow its complete contract. This agent is the
 explicit coordinator surface; it does not replace the skill or the bundled validator.
 
+If the host reports `Skill not found` or does not expose the skill invocation capability, use the
+absolute trusted plugin root supplied in the launch context to load the complete
+`skills/blazor-component-readiness/SKILL.md`, then resolve all references and the validator
+relative to that file. Record the activation method and original lookup result. This file-based
+fallback is allowed only for lookup absence; never use it for permission or content-exclusion
+denials, never reconstruct the skill from memory, and never search a guessed cache, home, or
+repository path.
+
 ## Boundaries
 
 - Work only on an explicit owner-requested readiness/adoption/release self-assessment.
@@ -52,8 +60,11 @@ explicit coordinator surface; it does not replace the skill or the bundled valid
    package revision binding and its package-wide validation-input closure, official component docs,
    allowed component source/artifact surface, claimed modes, output root, and timebox. Never provide
    sibling component source, documentation, candidates, or evidence. Follow the skill's
-   worker-execution reference for CLI/SDK launch and permission boundaries. Resolve the worker root
-   and plugin directory to absolute paths before launch. Do not retry a failed CLI launch within
+   worker-execution reference for CLI/SDK launch and permission boundaries. Carry the absolute
+   trusted plugin root in the ordinary launch context; keep it and all scratch/output paths inside
+   the worker unit. Launch from that unit with matching inherited `PWD`, `copilot` from `PATH`,
+   the owner-approved model and effort, and a new session UUID/log directory. Record native argv,
+   exit, stderr, tool-call IDs/results, and raw permission failures. Do not retry a failed CLI launch within
    the same unit attempt; reconciliation may create a fresh attempt in a new unit directory.
 7. Require each worker to exercise every claimed mode and return its unit ID, revision directory,
    report path, validation-manifest path and digest, and blockers. Before accepting a revision,

@@ -31,6 +31,16 @@ not authorize sibling component source, documentation, candidates, or evidence. 
 entries inside the exact binding remain non-evidence for component work and must not be cited or
 reproduced in component artifacts.
 
+Carry the absolute trusted plugin root in the coordinator-to-worker launch context. The trusted
+root is the staged plugin inside the unit, not a host cache or sibling checkout; it is execution
+context, not an assessment-schema field. The worker first uses the host-registered
+`blazor-component-readiness` skill. Only when that lookup returns `Skill not found` or the host
+does not expose the skill invocation capability may it load the complete
+`<trusted-plugin-root>/skills/blazor-component-readiness/SKILL.md` and resolve every referenced
+file, including the validator, relative to that loaded file. Record the activation method and
+the original lookup result. Never use this fallback after a permission, content-exclusion, or
+path-access denial, and never reconstruct the skill from memory or search an unrelated path.
+
 Use the unit directory as the validator input root. Keep confirmed package/component inputs and the
 validated package revision directly beneath that root, and place new component artifacts beneath
 the assigned output subdirectory. Do not use the output subdirectory as `--root` or relocate bound
@@ -42,10 +52,18 @@ Select the qualified worker as a new top-level process. Use the installed plugin
 `plugin.json`; do not guess an unqualified agent name.
 
 ```text
+UNIT="<absolute-unit-directory>"
+PLUGIN="$UNIT/tooling/plugins/<plugin-name>"
+mkdir -p "$UNIT/logs" "$UNIT/tmp"
+cd "$UNIT"
+export PWD="$UNIT" TMPDIR="$UNIT/tmp"
 copilot --agent <plugin-name>:blazor-component-readiness-worker \
-  --plugin-dir <absolute-staged-plugin-directory> \
-  -C <absolute-unit-directory> \
+  --plugin-dir "$PLUGIN" \
+  -C "$UNIT" \
   --model <owner-approved-model> \
+  --effort <owner-approved-effort> \
+  --session-id <new-session-uuid> \
+  --log-dir "$UNIT/logs" \
   --allow-all-tools \
   --disable-builtin-mcps \
   --no-ask-user \
@@ -58,11 +76,19 @@ copilot --agent <plugin-name>:blazor-component-readiness-worker \
 the worker working directory. Never add `--allow-all-paths`. Permit network URLs only when the
 confirmed unit requires public retrieval and the owner approved those exact domains.
 
-Resolve the plugin directory and unit directory to absolute paths before invoking the CLI. Some
-hosts apply `-C` before resolving other relative arguments, which can make a valid staged plugin
-undiscoverable. Launch once per unit attempt. Treat usage output, a nonzero exit, timeout, or
-missing handoff as a failed attempt; do not retry in the same directory. A coordinator may
-reconcile the failure by creating a fresh attempt in a new unit directory.
+Resolve the plugin directory and unit directory to absolute paths before invoking the CLI. Change
+directory to the unit before launching and set inherited `PWD` to that same absolute path; keep
+temporary files, output, logs, and the staged plugin below the unit. Invoke `copilot` from `PATH`,
+not a guessed SDK/cache executable. Record the exact native session UUID, full argv, actual cwd and
+PWD, native exit code, stderr, tool-call IDs/results, and any raw permission or content-policy
+failure. A prose summary is not a host error. Some hosts apply `-C` before resolving other
+relative arguments, which can make a valid staged plugin undiscoverable. Launch once per unit
+attempt. Treat usage output, a nonzero exit, timeout, or missing handoff as a failed attempt; do
+not retry in the same directory. A coordinator may reconcile the failure by creating a fresh
+attempt in a new unit directory.
+
+`--available-tools` may restrict a startup check to the declared skill/read tools; do not broaden
+filesystem or URL permissions to compensate for a lookup failure.
 
 Use the host's equivalent top-level-session API when available. In an SDK host, create a new
 session with the unit directory as `WorkingDirectory`, register/select only the worker persona and

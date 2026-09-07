@@ -20,6 +20,8 @@ session`; do not return success-shaped paths or ask the coordinator to create wo
 
 Accept only:
 
+- one absolute trusted plugin root inside the assigned unit, carried as launch context rather than
+  canonical assessment data;
 - one confirmed unit ID and kind (`package` or `component`);
 - one exact confirmed package record and input-manifest path/digest;
 - for a component, one component ID, its claimed render modes, allowed source/artifact paths, and
@@ -37,6 +39,12 @@ sibling identities there as non-evidence and never cite or reproduce them in com
 ## Execution
 
 1. Invoke `blazor-component-readiness` and resolve the validator relative to its loaded `SKILL.md`.
+   If the host returns `Skill not found` or does not expose the skill invocation capability, use the
+   absolute trusted plugin root supplied in the coordinator launch context to load the complete
+   `skills/blazor-component-readiness/SKILL.md`, then resolve every reference and the validator
+   relative to that file. Record `activation_method=file-fallback` and the original lookup result.
+   Never use this fallback after a permission or content-exclusion denial, and never search a
+   guessed cache, home, repository, or sibling path.
 2. Validate the confirmed input before investigation.
    In blinded comparison mode, first run `comparison inputs-validate`; fail closed before reading
    raw inputs if it fails. Reconcile every `available` or `blocked` coverage surface. For

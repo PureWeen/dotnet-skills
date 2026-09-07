@@ -29,6 +29,12 @@ checkout, use that checkout's plugin directory; do not imply an unpublished vers
 from the marketplace. Resolve `SKILL_DIR` to the directory containing the **loaded** `SKILL.md`,
 not a developer's checkout, session cache or global hardcoded path.
 
+For isolated worker startup, stage the tracked plugin inside the unit and carry its absolute path as
+trusted launch context. Prefer the host-registered skill; only a `Skill not found` or absent skill
+capability permits loading the complete staged `SKILL.md` and resolving references/validator beside
+it. Record the activation method and original lookup result. Do not use file fallback for a
+permission/content-exclusion denial, and do not search unrelated caches or repositories.
+
 The bundled Bash/PowerShell launchers require an active **.NET 11 SDK**. They build the
 BCL-only validator outside the plugin and reviewed source. Do not install SDKs without consent.
 Full-library assessment still requires top-level isolated writable worker sessions; hosts that
