@@ -19,6 +19,22 @@ public static partial class EvidenceIdentity
     public const string OwnerDeclaredClosedSource = "owner-declared-closed-source";
     public const string OwnerDeclaredUnavailable = "owner-declared-unavailable";
 
+    /// <summary>
+    /// Gets the existing provenance kinds accepted by evidence record validation.
+    /// </summary>
+    public static IReadOnlyList<string> ExistingProvenanceKinds =>
+    [
+        VendorPublicDocumentation,
+        PackageArtifactMetadata,
+        VendorSourceRepository,
+        ReproducedRuntimeObservation,
+        ReviewerGeneratedAnalysis,
+        OwnerSuppliedInternalEvidence,
+        OwnerSuppliedPublicEvidence,
+        OwnerDeclaredClosedSource,
+        OwnerDeclaredUnavailable
+    ];
+
     private static readonly UTF8Encoding StrictUtf8 = new(
         encoderShouldEmitUTF8Identifier: false,
         throwOnInvalidBytes: true);
@@ -126,6 +142,27 @@ public static partial class EvidenceIdentity
                 $"EVID002: invalid stable evidence ID '{identifier}'.");
         }
     }
+
+    /// <summary>
+    /// Describes the existing logical locator grammar for a provenance kind.
+    /// </summary>
+    public static string GetLocatorGrammar(string kind) =>
+        kind switch
+        {
+            VendorPublicDocumentation => "https://<public-dns-host>[/path]",
+            PackageArtifactMetadata =>
+                $"{NupkgInspector.WholePackageEvidenceLocator} or " +
+                $"{NupkgInspector.PackageEntryEvidencePrefix}<exact-case relative entry path>",
+            VendorSourceRepository => "source:<relative logical path>",
+            ReproducedRuntimeObservation or ReviewerGeneratedAnalysis =>
+                "<command probe using letters, digits, spaces and ._-:/+=,@()>",
+            OwnerSuppliedInternalEvidence or OwnerSuppliedPublicEvidence =>
+                "<basename without a path>",
+            OwnerDeclaredClosedSource => "source",
+            OwnerDeclaredUnavailable => "artifact:<name>",
+            _ => throw new DeterministicValidationException(
+                $"EVID005: invalid provenance kind '{kind}'.")
+        };
 
     public static EvidencePackageIdentity FromInspectedPackage(PackageIdentity package)
     {

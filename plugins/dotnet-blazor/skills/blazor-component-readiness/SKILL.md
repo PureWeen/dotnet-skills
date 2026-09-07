@@ -169,6 +169,8 @@ owner evidence. Lower-ranked evidence cannot override contradictory higher-ranke
 
 Build immutable ledgers, bind every input to confirmed locators and digests, keep component
 evidence isolated, and apply the status/protocol boundaries in the linked area playbooks.
+Use `evidence draft-add` for ordinary typed draft authoring; it computes bounded
+content digests and does not validate evidence or readiness.
 Failed retrieval remains `unresolved`; owner declarations do not replace unrelated proof.
 Unapproved extensions are not DOCX defects; package-owned `SEC-01` through `SEC-03` use one shared
 library security packet.

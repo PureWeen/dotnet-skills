@@ -21,6 +21,7 @@ internal static class EvidenceTests
     {
         TestKnownAnswersAndCanonicalBytes();
         TestCliCommandSurface();
+        TestEvidenceDraftProducer(repositoryRoot);
         TestPackageInspectionPersistence(repositoryRoot);
         TestAssessmentKindsAndManifestBinding();
         TestNuGetVersionNormalization(repositoryRoot);
@@ -169,6 +170,456 @@ internal static class EvidenceTests
             Assert(
                 output.ToString().Contains($"evidence {command}", StringComparison.Ordinal),
                 $"{command} help contains exact grouped command");
+        }
+
+        Assert(
+            output.ToString().Contains("draft-add", StringComparison.Ordinal) &&
+            output.ToString().Contains(EvidenceIdentity.OwnerDeclaredUnavailable, StringComparison.Ordinal),
+            "evidence help documents draft producer and existing provenance kinds");
+    }
+
+    private static void TestEvidenceDraftProducer(string repositoryRoot)
+    {
+        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-evidence-draft-tests");
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, recursive: true);
+        }
+
+        Directory.CreateDirectory(root);
+        try
+        {
+            var contentPath = Path.Combine(root, "source.txt");
+            File.WriteAllBytes(contentPath, [3]);
+            var outputPath = Path.Combine(root, "draft-01.json");
+            var arguments = new[]
+            {
+                "evidence", "draft-add",
+                "--output", outputPath,
+                "--claim", "The retained source contains the observed bytes.",
+                "--scope", "repository-wide",
+                "--kind", EvidenceIdentity.VendorSourceRepository,
+                "--locator", "source:src/Observed.cs",
+                "--method", "Read retained source file.",
+                "--captured-at", "2026-09-07T18:00:00Z",
+                "--content", contentPath
+            };
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(arguments, new StringWriter(), new StringWriter()),
+                "evidence draft producer exit");
+            var firstBytes = File.ReadAllBytes(outputPath);
+            _ = CanonicalEvidenceJson.ParseDraftDocument(firstBytes);
+            var secondPath = Path.Combine(root, "draft-02.json");
+            arguments[3] = secondPath;
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(arguments, new StringWriter(), new StringWriter()),
+                "repeat evidence draft producer exit");
+            AssertBytes(firstBytes, File.ReadAllBytes(secondPath), "deterministic evidence draft bytes");
+
+            var appendedPath = Path.Combine(root, "draft-03.json");
+            var appendArguments = arguments
+                .Append("--input")
+                .Append(outputPath)
+                .ToArray();
+            appendArguments[3] = appendedPath;
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(appendArguments, new StringWriter(), new StringWriter()),
+                "append evidence draft producer exit");
+            Assert(
+                CanonicalEvidenceJson.ParseDraftDocument(File.ReadAllBytes(appendedPath)).Records.Count == 2,
+                "evidence draft producer appends without repair");
+            var manualInputPath = Path.Combine(root, "manual-draft.json");
+            var manualBytes = Encoding.UTF8.GetBytes(
+                " \n" + DraftJson(CanonicalEvidenceJson.ParseDraftDocument(firstBytes).Records.Single()) + "\n");
+            File.WriteAllBytes(manualInputPath, manualBytes);
+            var manualOriginal = File.ReadAllBytes(manualInputPath);
+            var manualOutputPath = Path.Combine(root, "manual-draft-next.json");
+            var manualArguments = arguments
+                .Append("--input")
+                .Append(manualInputPath)
+                .ToArray();
+            manualArguments[3] = manualOutputPath;
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(manualArguments, new StringWriter(), new StringWriter()),
+                "manual valid draft append exit");
+            AssertBytes(manualOriginal, File.ReadAllBytes(manualInputPath), "manual draft remains unchanged");
+
+            const string ExpectedContentDigest =
+                "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5";
+            var contentKinds = new (string Kind, string Locator)[]
+            {
+                (EvidenceIdentity.VendorPublicDocumentation, "https://docs.example.com/record"),
+                (EvidenceIdentity.VendorSourceRepository, "source:src/Observed.cs"),
+                (EvidenceIdentity.ReproducedRuntimeObservation, "dotnet test --filter Evidence.Record"),
+                (EvidenceIdentity.ReviewerGeneratedAnalysis, "review evidence --scope package"),
+                (EvidenceIdentity.OwnerSuppliedInternalEvidence, "owner-internal.txt"),
+                (EvidenceIdentity.OwnerSuppliedPublicEvidence, "owner-public.txt"),
+                (EvidenceIdentity.OwnerDeclaredClosedSource, "source"),
+                (EvidenceIdentity.OwnerDeclaredUnavailable, "artifact:unavailable")
+            };
+            foreach (var (kind, locator) in contentKinds)
+            {
+                var kindOutput = Path.Combine(
+                    root,
+                    $"kind-{kind}.json");
+                var kindArguments = new[]
+                {
+                    "evidence", "draft-add",
+                    "--output", kindOutput,
+                    "--claim", $"The retained {kind} record is explicit.",
+                    "--scope", "repository-wide",
+                    "--kind", kind,
+                    "--locator", locator,
+                    "--method", "Read the retained evidence file.",
+                    "--captured-at", "2026-09-07T18:00:00Z",
+                    "--content", contentPath
+                };
+                AssertEqual(
+                    ExitCodes.Success,
+                    CliApplication.Run(kindArguments, new StringWriter(), new StringWriter()),
+                    $"producer accepts existing kind {kind}");
+                var kindRecord = CanonicalEvidenceJson.ParseDraftDocument(File.ReadAllBytes(kindOutput))
+                    .Records.Single();
+                AssertEqual(ExpectedContentDigest, kindRecord.Provenance.ContentDigest.Value,
+                    $"producer computes exact digest for {kind}");
+            }
+
+            var packagePath = Path.Combine(root, "Sample.Widgets.1.2.3.nupkg");
+            byte[] entryBytes = [3];
+            CreatePackage(
+                packagePath,
+                "Sample.Widgets",
+                "1.2.3",
+                new Dictionary<string, byte[]> { ["lib/Observed.dll"] = entryBytes });
+            var packageDraft = Path.Combine(root, "package-draft.json");
+            var packageArguments = new[]
+            {
+                "evidence", "draft-add",
+                "--output", packageDraft,
+                "--claim", "The package contains the observed artifact.",
+                "--scope", "repository-wide",
+                "--kind", EvidenceIdentity.PackageArtifactMetadata,
+                "--locator", NupkgInspector.WholePackageEvidenceLocator,
+                "--method", "Inspected the retained package.",
+                "--captured-at", "2026-09-07T18:00:00Z",
+                "--nupkg", packagePath
+            };
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(packageArguments, new StringWriter(), new StringWriter()),
+                "package whole evidence draft producer exit");
+            var wholeRecord = CanonicalEvidenceJson.ParseDraftDocument(File.ReadAllBytes(packageDraft))
+                .Records.Single();
+            AssertEqual(
+                NupkgInspector.ComputeEvidenceContentSha256(
+                    packagePath,
+                    NupkgInspector.WholePackageEvidenceLocator),
+                wholeRecord.Provenance.ContentDigest.Value,
+                "package whole digest preserves every hex digit");
+            var entryDraft = Path.Combine(root, "package-entry-draft.json");
+            packageArguments[3] = entryDraft;
+            packageArguments[11] = NupkgInspector.PackageEntryEvidencePrefix + "lib/Observed.dll";
+            packageArguments = packageArguments
+                .Append("--input")
+                .Append(packageDraft)
+                .ToArray();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(packageArguments, new StringWriter(), new StringWriter()),
+                "package entry evidence draft producer exit");
+            var entryRecord = CanonicalEvidenceJson.ParseDraftDocument(File.ReadAllBytes(entryDraft))
+                .Records.Last();
+            AssertEqual(
+                ExpectedContentDigest,
+                entryRecord.Provenance.ContentDigest.Value,
+                "package entry digest preserves every hex digit");
+
+            var subjectPath = Path.Combine(root, "subject.json");
+            var inspectedPackage = NupkgInspector.Inspect(packagePath);
+            var packageSubject = KnownRepositorySubject() with
+            {
+                Package = new EvidencePackageIdentity(
+                    inspectedPackage.Id,
+                    inspectedPackage.Version,
+                    new Sha256Digest("sha256", inspectedPackage.NupkgSha256))
+            };
+            File.WriteAllBytes(subjectPath, CanonicalEvidenceJson.SerializeRepositorySubject(packageSubject));
+            var ledgerPath = Path.Combine(root, "ledger.json");
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    [
+                        "evidence", "ledger-build",
+                        "--kind", "repository",
+                        "--subject", subjectPath,
+                        "--draft", entryDraft,
+                        "--nupkg", packagePath,
+                        "--output", ledgerPath
+                    ],
+                    new StringWriter(),
+                    new StringWriter()),
+                "producer ledger integration");
+            var changedPackagePath = Path.Combine(root, "Sample.Widgets.changed.nupkg");
+            CreatePackage(
+                changedPackagePath,
+                "Sample.Widgets",
+                "1.2.3",
+                new Dictionary<string, byte[]> { ["lib/Observed.dll"] = Encoding.UTF8.GetBytes("changed") });
+            var changedLedgerPath = Path.Combine(root, "changed-ledger.json");
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    [
+                        "evidence", "ledger-build",
+                        "--kind", "repository",
+                        "--subject", subjectPath,
+                        "--draft", entryDraft,
+                        "--nupkg", changedPackagePath,
+                        "--output", changedLedgerPath
+                    ],
+                    new StringWriter(),
+                    new StringWriter()),
+                "changed package binding is rejected");
+            Assert(!File.Exists(changedLedgerPath), "changed package binding has no output");
+
+            var invalidOutput = Path.Combine(root, "invalid.json");
+            var invalidArguments = arguments
+                .Select(value => value == EvidenceIdentity.VendorSourceRepository
+                    ? "source-artifact"
+                    : value)
+                .ToArray();
+            invalidArguments[3] = invalidOutput;
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(invalidArguments, new StringWriter(), new StringWriter()),
+                "evidence draft producer rejects invented kind");
+            Assert(!File.Exists(invalidOutput), "invalid evidence draft has no output");
+
+            var overrideOutput = Path.Combine(root, "hash-override.json");
+            var overrideArguments = arguments
+                .Append("--content-sha256")
+                .Append(new string('a', 64))
+                .ToArray();
+            overrideArguments[3] = overrideOutput;
+            AssertEqual(
+                ExitCodes.InvalidUsage,
+                CliApplication.Run(overrideArguments, new StringWriter(), new StringWriter()),
+                "evidence draft producer rejects caller hash");
+            Assert(!File.Exists(overrideOutput), "hash override has no output");
+
+            var bothModesOutput = Path.Combine(root, "both-modes.json");
+            var bothModesArguments = arguments
+                .Append("--nupkg")
+                .Append(contentPath)
+                .ToArray();
+            bothModesArguments[3] = bothModesOutput;
+            AssertEqual(
+                ExitCodes.InvalidUsage,
+                CliApplication.Run(bothModesArguments, new StringWriter(), new StringWriter()),
+                "evidence draft producer rejects mutually exclusive modes");
+            Assert(!File.Exists(bothModesOutput), "both source modes have no output");
+
+            var noModeOutput = Path.Combine(root, "no-source-mode.json");
+            var noModeArguments = arguments[..16];
+            noModeArguments[3] = noModeOutput;
+            AssertEqual(
+                ExitCodes.InvalidUsage,
+                CliApplication.Run(noModeArguments, new StringWriter(), new StringWriter()),
+                "evidence draft producer requires a retained content source");
+            Assert(!File.Exists(noModeOutput), "missing source mode has no output");
+
+            var missingOutput = Path.Combine(root, "missing-content.json");
+            var missingArguments = arguments.ToArray();
+            missingArguments[17] = Path.Combine(root, "missing.txt");
+            missingArguments[3] = missingOutput;
+            AssertEqual(
+                ExitCodes.EnvironmentFailure,
+                CliApplication.Run(missingArguments, new StringWriter(), new StringWriter()),
+                "evidence draft producer rejects missing content");
+            Assert(!File.Exists(missingOutput), "missing content has no output");
+
+            var oversizedPath = Path.Combine(root, "oversized-content.bin");
+            using (var oversized = new FileStream(oversizedPath, FileMode.CreateNew))
+            {
+                oversized.SetLength(ResourceLimits.SupplementalInputAggregateBytes + 1);
+            }
+
+            var oversizedOutput = Path.Combine(root, "oversized-content.json");
+            var oversizedArguments = arguments.ToArray();
+            oversizedArguments[17] = oversizedPath;
+            oversizedArguments[3] = oversizedOutput;
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(oversizedArguments, new StringWriter(), new StringWriter()),
+                "evidence draft producer enforces retained content bound");
+            Assert(!File.Exists(oversizedOutput), "oversized content has no output");
+
+            var largeRetainedPath = Path.Combine(root, "large-retained-content.bin");
+            using (var largeRetained = new FileStream(largeRetainedPath, FileMode.CreateNew))
+            {
+                largeRetained.SetLength(4L * 1024 * 1024 + 1);
+            }
+
+            var largeRetainedOutput = Path.Combine(root, "large-retained-content.json");
+            var largeRetainedArguments = arguments.ToArray();
+            largeRetainedArguments[17] = largeRetainedPath;
+            largeRetainedArguments[3] = largeRetainedOutput;
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(largeRetainedArguments, new StringWriter(), new StringWriter()),
+                "evidence producer accepts retained content above JSON cap");
+            AssertEqual(
+                CanonicalEvidenceJson.ComputeSha256(File.ReadAllBytes(largeRetainedPath)),
+                CanonicalEvidenceJson.ParseDraftDocument(File.ReadAllBytes(largeRetainedOutput))
+                    .Records.Single().Provenance.ContentDigest.Value,
+                "large retained content digest");
+
+            var metadataCases = new[]
+            {
+                ("bad-locator.json", 11, "source:../unsafe"),
+                ("bad-scope.json", 7, "not-a-scope"),
+                ("bad-time.json", 15, "not-a-timestamp")
+            };
+            foreach (var (fileName, index, value) in metadataCases)
+            {
+                var metadataOutput = Path.Combine(root, fileName);
+                var metadataArguments = arguments.ToArray();
+                metadataArguments[index] = value;
+                metadataArguments[3] = metadataOutput;
+                AssertEqual(
+                    ExitCodes.ValidationFailure,
+                    CliApplication.Run(metadataArguments, new StringWriter(), new StringWriter()),
+                    $"producer rejects {fileName}");
+                Assert(!File.Exists(metadataOutput), $"{fileName} has no output");
+            }
+
+            var packageModeOutput = Path.Combine(root, "wrong-package-mode.json");
+            var packageModeArguments = arguments.ToArray();
+            packageModeArguments[9] = EvidenceIdentity.PackageArtifactMetadata;
+            packageModeArguments[3] = packageModeOutput;
+            AssertEqual(
+                ExitCodes.InvalidUsage,
+                CliApplication.Run(packageModeArguments, new StringWriter(), new StringWriter()),
+                "package kind requires nupkg mode");
+            Assert(!File.Exists(packageModeOutput), "wrong package mode has no output");
+
+            var contentModeOutput = Path.Combine(root, "wrong-content-mode.json");
+            var contentModeArguments = arguments.ToArray();
+            contentModeArguments[16] = "--nupkg";
+            contentModeArguments[3] = contentModeOutput;
+            AssertEqual(
+                ExitCodes.InvalidUsage,
+                CliApplication.Run(contentModeArguments, new StringWriter(), new StringWriter()),
+                "non-package kind requires content mode");
+            Assert(!File.Exists(contentModeOutput), "wrong content mode has no output");
+
+            var invalidInputPath = Path.Combine(root, "invalid-existing.json");
+            var invalidInput = DraftJson(
+                RepositoryDraft(
+                    EvidenceIdentity.VendorSourceRepository,
+                    "source:src/Observed.cs",
+                    "Invalid existing draft.") with
+                {
+                    Provenance = RepositoryDraft(
+                        EvidenceIdentity.VendorSourceRepository,
+                        "source:src/Observed.cs",
+                        "Invalid existing draft.").Provenance with
+                    {
+                        ContentDigest = new Sha256Digest("sha256", new string('a', 63))
+                    }
+                });
+            File.WriteAllText(invalidInputPath, invalidInput);
+            var invalidInputOriginal = File.ReadAllBytes(invalidInputPath);
+            var invalidInputOutput = Path.Combine(root, "invalid-existing-output.json");
+            var invalidInputArguments = arguments
+                .Append("--input")
+                .Append(invalidInputPath)
+                .ToArray();
+            invalidInputArguments[3] = invalidInputOutput;
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(invalidInputArguments, new StringWriter(), new StringWriter()),
+                "invalid existing draft is rejected");
+            Assert(!File.Exists(invalidInputOutput), "invalid existing draft has no output");
+            AssertBytes(invalidInputOriginal, File.ReadAllBytes(invalidInputPath),
+                "invalid existing draft is not repaired");
+
+            var supersedesOutput = Path.Combine(root, "empty-supersedes.json");
+            var supersedesArguments = arguments
+                .Append("--supersedes")
+                .Append(",")
+                .ToArray();
+            supersedesArguments[3] = supersedesOutput;
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(supersedesArguments, new StringWriter(), new StringWriter()),
+                "empty supersedes identifiers are rejected");
+            Assert(!File.Exists(supersedesOutput), "empty supersedes has no output");
+
+            var existingOutput = Path.Combine(root, "existing-output.json");
+            var existingOutputOriginal = Encoding.UTF8.GetBytes("existing");
+            File.WriteAllBytes(existingOutput, existingOutputOriginal);
+            var existingOutputArguments = arguments.ToArray();
+            existingOutputArguments[3] = existingOutput;
+            AssertEqual(
+                ExitCodes.EnvironmentFailure,
+                CliApplication.Run(existingOutputArguments, new StringWriter(), new StringWriter()),
+                "existing output is not overwritten");
+            AssertBytes(existingOutputOriginal, File.ReadAllBytes(existingOutput),
+                "existing output remains unchanged");
+
+            var directoryOutput = Path.Combine(root, "directory-content.json");
+            var directoryArguments = arguments.ToArray();
+            directoryArguments[17] = root;
+            directoryArguments[3] = directoryOutput;
+            AssertEqual(
+                ExitCodes.EnvironmentFailure,
+                CliApplication.Run(directoryArguments, new StringWriter(), new StringWriter()),
+                "directory content is rejected");
+            Assert(!File.Exists(directoryOutput), "directory content has no output");
+
+            var symlink = Path.Combine(root, "content-link.txt");
+            if (TryCreateFileSymlink(symlink, contentPath))
+            {
+                var symlinkOutput = Path.Combine(root, "symlink-content.json");
+                var symlinkArguments = arguments.ToArray();
+                symlinkArguments[17] = symlink;
+                symlinkArguments[3] = symlinkOutput;
+                AssertEqual(
+                    ExitCodes.ValidationFailure,
+                    CliApplication.Run(symlinkArguments, new StringWriter(), new StringWriter()),
+                    "symlink content is rejected");
+                Assert(!File.Exists(symlinkOutput), "symlink content has no output");
+            }
+            var packageFailureCases = new[]
+            {
+                ("wrong-case-entry.json", NupkgInspector.PackageEntryEvidencePrefix + "lib/observed.dll"),
+                ("missing-entry.json", NupkgInspector.PackageEntryEvidencePrefix + "lib/Missing.dll"),
+                ("unsafe-entry.json", NupkgInspector.PackageEntryEvidencePrefix + "../escape")
+            };
+            foreach (var (fileName, locator) in packageFailureCases)
+            {
+                var packageFailureOutput = Path.Combine(root, fileName);
+                var packageFailureArguments = packageArguments.ToArray();
+                packageFailureArguments[3] = packageFailureOutput;
+                packageFailureArguments[11] = locator;
+                AssertEqual(
+                    ExitCodes.ValidationFailure,
+                    CliApplication.Run(packageFailureArguments, new StringWriter(), new StringWriter()),
+                    $"producer rejects {fileName}");
+                Assert(!File.Exists(packageFailureOutput), $"{fileName} has no output");
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
         }
     }
 

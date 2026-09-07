@@ -90,10 +90,28 @@ candidate records and existing output paths are errors; do not strip fields or h
 the generated files after an error. The existing raw-candidate discovery parser remains
 strict and is not a substitute for the construction commands in ordinary assessment runs.
 
-Before authoring evidence drafts, read `<launcher> evidence ledger-build --help` for the
-existing draft shape and code-owned package locator grammar. Replace template placeholders
-with actual observed claims and inspection/capture facts; never invent provenance metadata.
+Before authoring evidence drafts, read `<launcher> evidence draft-add --help` for the
+existing provenance kinds, locator grammars, and typed options. Supply actual observed
+claims and inspection/capture facts; never invent provenance metadata.
 Evidence drafts are not canonical ledgers, and their logical locators are not filesystem paths.
+For ordinary authoring, use the typed producer rather than transcribing computed hashes into JSON:
+
+```text
+<launcher> evidence draft-add --output evidence-draft-01.json --claim "<observed atomic claim>" --scope repository-wide --kind package-artifact-metadata --locator package:whole-nupkg --method "<actual capture method>" --captured-at <actual-utc> --nupkg <exact.nupkg>
+```
+
+`draft-add` computes the digest itself and accepts no hash override. Package artifact
+records require `--nupkg`; every other existing provenance kind requires `--content
+<retained regular file>`. These modes are mutually exclusive. Retained content is
+bounded by the existing 64 MiB supplemental-input limit, while the draft JSON remains
+bounded by the existing 4 MiB authored-ledger limit. The existing nine kinds and
+locator grammars are shown by command help. `--input` accepts any valid existing draft
+through the existing parser normalization and never rewrites that original file;
+invalid records are rejected rather than repaired. Supply claims, scope/component,
+kind, logical locator, method, capture time, and any supersession IDs explicitly. The
+output is an untrusted draft, not evidence validation or readiness. Existing valid
+manual drafts remain supported by `ledger-build`; the producer does not replace
+their existing integrity or binding checks.
 
 ## Canonical identity and ledger sequence
 

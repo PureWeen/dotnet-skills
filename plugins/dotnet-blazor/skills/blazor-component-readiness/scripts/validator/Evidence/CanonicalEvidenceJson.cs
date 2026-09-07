@@ -47,6 +47,39 @@ public static class CanonicalEvidenceJson
         return writer.ToArray();
     }
 
+    /// <summary>
+    /// Serializes a normalized draft using the existing evidence schema without creating a ledger.
+    /// </summary>
+    public static byte[] SerializeDraftDocument(EvidenceDraftDocument draft)
+    {
+        if (draft.SchemaVersion != EvidenceSchemaVersion || draft.Records.Count == 0)
+        {
+            throw new DeterministicValidationException(
+                "EVID001: evidence draft requires schema 1 and records.");
+        }
+
+        var normalized = draft with
+        {
+            Records = draft.Records.Select(EvidenceIdentity.NormalizeRecordDraft).ToArray()
+        };
+        var writer = new CanonicalJsonTextWriter();
+        writer.Raw("{\"schema_version\":");
+        writer.Integer(normalized.SchemaVersion);
+        writer.Raw(",\"records\":[");
+        for (var index = 0; index < normalized.Records.Count; index++)
+        {
+            if (index > 0)
+            {
+                writer.Raw(",");
+            }
+
+            WriteRecordIdentityPayload(writer, normalized.Records[index]);
+        }
+
+        writer.Raw("]}");
+        return writer.ToArray();
+    }
+
     public static byte[] SerializeBundle(EvidenceBundle bundle)
     {
         EvidenceLedgerValidator.ValidateBundle(bundle);

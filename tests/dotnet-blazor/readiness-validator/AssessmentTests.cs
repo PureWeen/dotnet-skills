@@ -593,14 +593,14 @@ internal static class AssessmentTests
         var initialized = CurrentAssessmentService.Parse(File.ReadAllBytes(assessmentPath));
         AssertEqual(60, initialized.Rows.Count, "package-only assessment owns current 60 rows");
         Assert(initialized.Identity.ComponentId is null, "package-only assessment has no component identity");
+        AssertEqual(RubricLoader.CurrentVersion, initialized.RubricVersion, "package-only assessment uses rubric 2");
         TestIdentityExport(fixture, assessmentPath);
 
-        var evidence = BuildEvidence(initialized.Identity);
+        var evidencePath = BuildEvidenceThroughPublicCli(fixture, assessmentPath);
+        var evidence = CanonicalEvidenceJson.ParseBundle(File.ReadAllBytes(evidencePath));
         var assessment = Complete(initialized, evidence, "gap");
         var completedAssessmentPath = Path.Combine(fixture.Root, "package-only.complete.assessment.json");
-        var evidencePath = Path.Combine(fixture.Root, "package-only.evidence.json");
         File.WriteAllBytes(completedAssessmentPath, CurrentAssessmentService.Serialize(assessment));
-        File.WriteAllBytes(evidencePath, CanonicalEvidenceJson.SerializeBundle(evidence));
         AssertEqual(
             ExitCodes.Success,
             CliApplication.Run(
@@ -609,6 +609,65 @@ internal static class AssessmentTests
                 output,
                 error),
             $"package-only assessment validate: {error}");
+        var subject = new RepositoryLedgerSubject(
+            evidence.Assessment.AssessmentKind,
+            evidence.Assessment.Package,
+            evidence.Assessment.InputManifestDigest,
+            evidence.Assessment.ComponentId);
+        foreach (var mismatchedKind in new[]
+        {
+            EvidenceIdentity.VendorSourceRepository,
+            EvidenceIdentity.VendorPublicDocumentation
+        })
+        {
+            var mismatchedRecords = evidence.SourceLedgers
+                .SelectMany(source => source.Ledger.Records)
+                .Select(record => record.Provenance.Kind == mismatchedKind
+                    ? record with
+                    {
+                        Provenance = record.Provenance with
+                        {
+                            ContentDigest = new Sha256Digest("sha256", new string('f', 64))
+                        }
+                    }
+                    : record)
+                .Select(record => new EvidenceRecordDraft(
+                    record.Claim,
+                    record.Applicability,
+                    record.Provenance,
+                    record.Supersedes))
+                .ToArray();
+            var mismatchedLedger = EvidenceLedgerBuilder.BuildRepositoryLedger(subject, mismatchedRecords);
+            var mismatchedBundle = EvidenceLedgerBuilder.BuildBundle(
+                evidence.Assessment,
+                [mismatchedLedger],
+                mismatchedLedger.Records.Select(record => record.StableId).ToArray());
+            var mismatchedPath = Path.Combine(
+                fixture.Root,
+                $"package-only.mismatched-{mismatchedKind}.evidence.json");
+            File.WriteAllBytes(mismatchedPath, CanonicalEvidenceJson.SerializeBundle(mismatchedBundle));
+            var mismatchedAssessment = Complete(initialized, mismatchedBundle, "gap");
+            var mismatchedAssessmentPath = Path.Combine(
+                fixture.Root,
+                $"package-only.mismatched-{mismatchedKind}.assessment.json");
+            File.WriteAllBytes(
+                mismatchedAssessmentPath,
+                CurrentAssessmentService.Serialize(mismatchedAssessment));
+            var mismatchError = new StringWriter();
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    ["assessment", "validate", "--root", fixture.Root, "--input", confirmedPath,
+                        "--assessment", mismatchedAssessmentPath, "--evidence", mismatchedPath],
+                    new StringWriter(),
+                    mismatchError),
+                $"assessment rejects mismatched {mismatchedKind} content");
+            Assert(
+                mismatchError.ToString().Contains(
+                    "not bound to the confirmed input manifest",
+                    StringComparison.Ordinal),
+                $"mismatched {mismatchedKind} reaches input binding validation: {mismatchError}");
+        }
 
         var revisions = Path.Combine(fixture.Root, "package-only.revisions");
         AssertEqual(
@@ -725,6 +784,132 @@ internal static class AssessmentTests
             Assert(!Directory.Exists(Path.Combine(invalidRoot, "rejected-output")), "invalid scope publishes no revision");
             Assert(!Directory.Exists(invalidReader), "invalid scope publishes no reader");
         }
+    }
+
+    private static string BuildEvidenceThroughPublicCli(Fixture fixture, string assessmentPath)
+    {
+        var identityPath = assessmentPath + ".export.identity.json";
+        var draftPath = Path.Combine(fixture.Root, "package-only.producer.draft.json");
+        var ledgerPath = Path.Combine(fixture.Root, "package-only.producer.ledger.json");
+        var bundlePath = Path.Combine(fixture.Root, "package-only.producer.bundle.json");
+        var output = new StringWriter();
+        var error = new StringWriter();
+        var wholeArguments = new[]
+        {
+            "evidence", "draft-add",
+            "--output", draftPath,
+            "--claim", "The retained package archive contains the assessed release.",
+            "--scope", "repository-wide",
+            "--kind", EvidenceIdentity.PackageArtifactMetadata,
+            "--locator", NupkgInspector.WholePackageEvidenceLocator,
+            "--method", "Inspected the retained package archive.",
+            "--captured-at", "2026-09-07T18:00:00Z",
+            "--nupkg", fixture.NupkgPath
+        };
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(wholeArguments, output, error),
+            $"package-only producer draft: {error}");
+        var entryDraftPath = Path.Combine(fixture.Root, "package-only.producer.entry-draft.json");
+        var entryArguments = new[]
+        {
+            "evidence", "draft-add",
+            "--output", entryDraftPath,
+            "--claim", "The retained package archive contains its exact nuspec entry.",
+            "--scope", "repository-wide",
+            "--kind", EvidenceIdentity.PackageArtifactMetadata,
+            "--locator", NupkgInspector.PackageEntryEvidencePrefix + "Sample.Widgets.nuspec",
+            "--method", "Inspected the exact-case package entry.",
+            "--captured-at", "2026-09-07T18:00:00Z",
+            "--nupkg", fixture.NupkgPath,
+            "--input", draftPath
+        };
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(entryArguments, output, error),
+            $"package-only producer package entry: {error}");
+        var sourceDraftPath = Path.Combine(fixture.Root, "package-only.producer.source-draft.json");
+        var sourceArguments = new[]
+        {
+            "evidence", "draft-add",
+            "--output", sourceDraftPath,
+            "--claim", "The retained source file contains the observed source artifact.",
+            "--scope", "repository-wide",
+            "--kind", EvidenceIdentity.VendorSourceRepository,
+            "--locator", "source:src/FancyTree.razor",
+            "--method", "Read the retained source capture.",
+            "--captured-at", "2026-09-07T18:00:00Z",
+            "--content", Path.Combine(fixture.Root, "source-captures", "FancyTree.razor"),
+            "--input", entryDraftPath
+        };
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(sourceArguments, output, error),
+            $"package-only producer source: {error}");
+        var documentationDraftPath = Path.Combine(fixture.Root, "package-only.producer.documentation-draft.json");
+        var documentationArguments = new[]
+        {
+            "evidence", "draft-add",
+            "--output", documentationDraftPath,
+            "--claim", "The retained documentation records the observed release fact.",
+            "--scope", "repository-wide",
+            "--kind", EvidenceIdentity.VendorPublicDocumentation,
+            "--locator", "https://docs.example.com/Widgets",
+            "--method", "Read the retained official documentation.",
+            "--captured-at", "2026-09-07T18:00:00Z",
+            "--content", Path.Combine(fixture.Root, "docs.html"),
+            "--input", sourceDraftPath
+        };
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(documentationArguments, output, error),
+            $"package-only producer documentation: {error}");
+        Assert(File.Exists(draftPath), "public producer wrote package draft");
+
+        var draft = CanonicalEvidenceJson.ParseDraftDocument(File.ReadAllBytes(documentationDraftPath));
+        AssertEqual(4, draft.Records.Count, "public producer draft contains package, source, and documentation records");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                [
+                    "evidence", "ledger-build",
+                    "--kind", "repository",
+                    "--subject", identityPath,
+                    "--draft", documentationDraftPath,
+                    "--nupkg", fixture.NupkgPath,
+                    "--output", ledgerPath
+                ],
+                output,
+                error),
+            $"package-only producer ledger build: {error}");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["evidence", "ledger-validate", "--ledger", ledgerPath],
+                output,
+                error),
+            $"package-only producer ledger validate: {error}");
+        var ledger = CanonicalEvidenceJson.ParseSourceLedger(File.ReadAllBytes(ledgerPath));
+        var identity = CanonicalEvidenceJson.ParseAssessment(File.ReadAllBytes(identityPath));
+        AssertEqual(4, ledger.Records.Count, "public producer ledger record count");
+
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                [
+                    "evidence", "bundle",
+                    "--assessment", identityPath,
+                    "--source-ledger", ledgerPath,
+                    "--ids", string.Join(',', ledger.Records.Select(record => record.StableId)),
+                    "--output", bundlePath
+                ],
+                output,
+                error),
+            $"package-only producer bundle: {error}");
+        var bundle = CanonicalEvidenceJson.ParseBundle(File.ReadAllBytes(bundlePath));
+        AssertEqual(identity, bundle.Assessment, "public producer bundle identity");
+        AssertEqual(4, bundle.Selection.Count, "public producer bundle selection");
+        return bundlePath;
     }
 
     internal static Fixture CreateInputFixture(string root)
@@ -3433,7 +3618,7 @@ internal static class AssessmentTests
         EvidenceBundle evidence,
         string firstStatus)
     {
-        var evidenceId = evidence.Selection.Single().EvidenceId;
+        var evidenceIds = evidence.Selection.Select(selection => selection.EvidenceId).ToArray();
         var rows = initialized.Rows.Select((row, index) =>
         {
             if (index != 0)
@@ -3451,31 +3636,31 @@ internal static class AssessmentTests
                 {
                     Status = firstStatus,
                     Observation = "The retained evidence directly establishes this synthetic observation.",
-                    EvidenceIds = [evidenceId]
+                    EvidenceIds = evidenceIds
                 },
                 "gap" => row with
                 {
                     Status = firstStatus,
                     Observation = "The retained evidence directly demonstrates this bounded product gap.",
-                    EvidenceIds = [evidenceId]
+                    EvidenceIds = evidenceIds
                 },
                 "owner evidence required" => row with
                 {
                     Status = firstStatus,
                     Observation = "Provide the retained release record that establishes this requirement.",
-                    EvidenceIds = [evidenceId],
+                    EvidenceIds = evidenceIds,
                     OwnerAction = "Supply the exact retained owner-controlled release evidence."
                 },
                 "not tested" => row with
                 {
                     Status = firstStatus,
-                    EvidenceIds = [evidenceId],
+                    EvidenceIds = evidenceIds,
                     AssessmentFollowUp = "Run the bounded synthetic probe and record its exact result."
                 },
                 "not applicable" => row with
                 {
                     Status = firstStatus,
-                    EvidenceIds = [evidenceId],
+                    EvidenceIds = evidenceIds,
                     NotApplicableRationale = "The bounded synthetic package does not expose this capability."
                 },
                 _ => throw new InvalidOperationException()

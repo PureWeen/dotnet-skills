@@ -6,11 +6,12 @@ namespace BlazorComponentReadiness.Validator.Cli;
 
 public static class EvidenceCommand
 {
-    public const string Help =
+    public static readonly string Help =
         $$"""
         Build and validate public-v1 readiness evidence
 
         Usage:
+          readiness-validator evidence draft-add --output <new-path> --claim <text> --scope <repository-wide|component-specific> [--component <id>] --kind <existing-kind> --locator <logical-locator> --method <text> --captured-at <actual-utc> [--supersedes <EV1-id>]... (--nupkg <path>|--content <retained-file>) [--input <previous-draft>]
           readiness-validator evidence ledger-build --kind <repository|component> --subject <path> --draft <path> --nupkg <path> --output <path>
           readiness-validator evidence ledger-validate --ledger <path>
           readiness-validator evidence bundle --assessment <path> --source-ledger <path>... --ids <EV1-id,...> --output <path>
@@ -18,6 +19,20 @@ public static class EvidenceCommand
         Initialize the assessment, then run assessment export-identity to create the
         canonical file used by ledger-build --subject and bundle --assessment.
         A full assessment document or hand-authored identity JSON is not a substitute.
+
+        Evidence draft producer:
+          draft-add computes content_sha256 from exactly one retained source. Use
+          --nupkg only with package-artifact-metadata; use --content with every
+          other existing provenance kind. --content is a regular file bounded by
+          ResourceLimits.SupplementalInputAggregateBytes (64 MiB). The locator is logical
+          provenance metadata, never a filesystem path. No caller-supplied hash,
+          network access, inferred metadata, or guessed timestamp is accepted.
+          --input accepts any valid draft through the existing parser normalization
+          and never rewrites that original file. The output is a fresh untrusted
+          draft, not evidence validation or a readiness conclusion.
+
+        Existing provenance kinds and locator grammars:
+        {{string.Join(Environment.NewLine, EvidenceIdentity.ExistingProvenanceKinds.Select(kind => $"  {kind}: {EvidenceIdentity.GetLocatorGrammar(kind)}"))}}
 
         Evidence draft template (repository-wide package record):
         ```json
@@ -71,11 +86,125 @@ public static class EvidenceCommand
 
         return args[0] switch
         {
+            "draft-add" => AddDraft(args.Skip(1).ToArray(), output),
             "ledger-build" => BuildLedger(args.Skip(1).ToArray(), output),
             "ledger-validate" => ValidateLedger(args.Skip(1).ToArray(), output),
             "bundle" => BuildBundle(args.Skip(1).ToArray(), output),
             _ => throw new UsageException($"Unknown evidence command '{args[0]}'.")
         };
+    }
+
+    private static int AddDraft(IReadOnlyList<string> args, TextWriter output)
+    {
+        var options = ParseOptions(
+            args,
+            repeatableOptions: ["--supersedes"],
+            "--input",
+            "--output",
+            "--claim",
+            "--scope",
+            "--component",
+            "--kind",
+            "--locator",
+            "--method",
+            "--captured-at",
+            "--supersedes",
+            "--nupkg",
+            "--content");
+        RequireExactly(
+            options,
+            "--output",
+            "--claim",
+            "--scope",
+            "--kind",
+            "--locator",
+            "--method",
+            "--captured-at");
+
+        var kind = options.Single("--kind");
+        var locator = options.Single("--locator");
+        var scope = options.Single("--scope");
+        var component = options.All("--component").Count == 0
+            ? null
+            : options.Single("--component");
+        var nupkg = options.All("--nupkg").Count == 0 ? null : options.Single("--nupkg");
+        var content = options.All("--content").Count == 0 ? null : options.Single("--content");
+        if ((nupkg is null) == (content is null))
+        {
+            throw new UsageException(
+                "Evidence draft-add requires exactly one of --nupkg or --content.");
+        }
+
+        if (string.Equals(kind, EvidenceIdentity.PackageArtifactMetadata, StringComparison.Ordinal))
+        {
+            if (nupkg is null)
+            {
+                throw new UsageException(
+                    "--nupkg is required for package-artifact-metadata.");
+            }
+        }
+        else if (content is null)
+        {
+            throw new UsageException(
+                "--content is required for non-package provenance kinds.");
+        }
+
+        var digest = (nupkg, content) switch
+        {
+            ({ } packagePath, null) => ComputePackageDigest(packagePath, locator),
+            (null, { } contentPath) => ComputeContentDigest(contentPath),
+            _ => throw new UsageException(
+                "Evidence draft-add requires exactly one of --nupkg or --content.")
+        };
+        var record = EvidenceIdentity.NormalizeRecordDraft(
+            new EvidenceRecordDraft(
+                options.Single("--claim"),
+                new EvidenceApplicability(scope, component),
+                new EvidenceProvenance(
+                    kind,
+                    locator,
+                    options.Single("--method"),
+                    options.Single("--captured-at"),
+                    new Sha256Digest("sha256", digest),
+                    "commitment-only"),
+                options.All("--supersedes")
+                    .SelectMany(value => value.Split(',', StringSplitOptions.TrimEntries))
+                    .ToArray()));
+
+        var records = new List<EvidenceRecordDraft>();
+        if (options.All("--input") is [var input])
+        {
+            var inputBytes = BoundedIO.ReadAllBytes(
+                input,
+                ResourceLimits.AuthoredLedgerBytes,
+                "evidence draft");
+            var previous = CanonicalEvidenceJson.ParseDraftDocument(inputBytes);
+            records.AddRange(previous.Records);
+        }
+
+        records.Add(record);
+        var bytes = CanonicalEvidenceJson.SerializeDraftDocument(
+            new EvidenceDraftDocument(CanonicalEvidenceJson.EvidenceSchemaVersion, records));
+        BoundedIO.EnsureLength(bytes.Length, ResourceLimits.AuthoredLedgerBytes, "evidence draft");
+        WriteNew(options.Single("--output"), bytes);
+        output.WriteLine($"Evidence draft written: {records.Count} records.");
+        return ExitCodes.Success;
+    }
+
+    private static string ComputePackageDigest(string path, string locator)
+    {
+        _ = NupkgInspector.Inspect(path);
+        return NupkgInspector.ComputeEvidenceContentSha256(path, locator);
+    }
+
+    private static string ComputeContentDigest(string path)
+    {
+        SafePath.EnsureRegularFile(path);
+        return CanonicalEvidenceJson.ComputeSha256(
+            BoundedIO.ReadAllBytes(
+                path,
+                ResourceLimits.SupplementalInputAggregateBytes,
+                "evidence content"));
     }
 
     public static void ValidateSupplementalInputs(IReadOnlyList<long> lengths)

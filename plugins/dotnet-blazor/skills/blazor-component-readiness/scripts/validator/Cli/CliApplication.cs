@@ -22,6 +22,8 @@ public static class CliApplication
           inputs validate    Recheck confirmed manifest package and local input bytes.
           evidence ledger-build
                              Build an immutable repository or component source ledger.
+          evidence draft-add
+                             Add a typed, digest-computed record to an untrusted draft.
           evidence ledger-validate
                              Validate canonical source-ledger bytes and identities.
           evidence bundle    Select evidence into a self-contained assessment bundle.
