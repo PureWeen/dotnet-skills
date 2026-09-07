@@ -232,7 +232,8 @@ public static partial class EvidenceIdentity
         if (!value.StartsWith(NupkgInspector.PackageEntryEvidencePrefix, StringComparison.Ordinal))
         {
             throw new DeterministicValidationException(
-                "EVID005: package artifact locator must identify the whole nupkg or a package entry.");
+                $"EVID005: package artifact locator must be '{NupkgInspector.WholePackageEvidenceLocator}' " +
+                $"or '{NupkgInspector.PackageEntryEvidencePrefix}<exact-case relative entry path>'.");
         }
 
         ValidateRelativeLogicalPath(

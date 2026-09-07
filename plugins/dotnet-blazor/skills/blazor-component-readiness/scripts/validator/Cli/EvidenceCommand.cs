@@ -7,13 +7,48 @@ namespace BlazorComponentReadiness.Validator.Cli;
 public static class EvidenceCommand
 {
     public const string Help =
-        """
+        $$"""
         Build and validate public-v1 readiness evidence
 
         Usage:
           readiness-validator evidence ledger-build --kind <repository|component> --subject <path> --draft <path> --nupkg <path> --output <path>
           readiness-validator evidence ledger-validate --ledger <path>
           readiness-validator evidence bundle --assessment <path> --source-ledger <path>... --ids <EV1-id,...> --output <path>
+
+        Evidence draft template (repository-wide package record):
+        ```json
+        {
+          "schema_version": 1,
+          "records": [
+            {
+              "claim": "<observed claim>",
+              "applicability": { "scope": "repository-wide", "component_id": null },
+              "provenance": {
+                "kind": "{{EvidenceIdentity.PackageArtifactMetadata}}",
+                "locator": "{{NupkgInspector.WholePackageEvidenceLocator}}",
+                "method": "<actual capture method>",
+                "captured_at_utc": "<actual capture UTC time>",
+                "content_sha256": { "algorithm": "sha256", "value": "<observed content SHA-256>" },
+                "retention": "commitment-only"
+              },
+              "supersedes": []
+            }
+          ]
+        }
+        ```
+        Replace every placeholder with actual observed facts before ledger-build.
+        Do not invent claims, capture methods, timestamps, hashes, or provenance.
+        For package-artifact-metadata, the exact locator forms are:
+          {{NupkgInspector.WholePackageEvidenceLocator}}
+          {{NupkgInspector.PackageEntryEvidencePrefix}}<exact-case relative entry path>
+        Use the inspected nupkg SHA-256 for the whole-package locator. For an entry,
+        hash that entry's uncompressed bytes, not the whole nupkg. ledger-build
+        verifies either digest against --nupkg. "nupkg" and filesystem paths are
+        not aliases for these logical locators.
+        captured_at_utc records the actual capture instant in UTC, for example
+        YYYY-MM-DDTHH:mm:ssZ; it is not a guessed package publication date.
+        The example is a draft, not evidence or a claim of whole-input completeness.
+        ledger-build generates stable IDs and canonical source-ledger bytes.
 
         Source ledgers are immutable canonical JSON. Bundle selection order is the
         comma-separated --ids order. At most 32 source-ledger inputs totaling at

@@ -81,3 +81,8 @@ completeness, owner confirmation or report readiness. Unknown options, malformed
 candidate records and existing output paths are errors; do not strip fields or hand-repair
 the generated files after an error. The existing raw-candidate discovery parser remains
 strict and is not a substitute for the construction commands in ordinary assessment runs.
+
+Before authoring evidence drafts, read `<launcher> evidence ledger-build --help` for the
+existing draft shape and code-owned package locator grammar. Replace template placeholders
+with actual observed claims and inspection/capture facts; never invent provenance metadata.
+Evidence drafts are not canonical ledgers, and their logical locators are not filesystem paths.

@@ -820,6 +820,66 @@ internal static class EvidenceTests
                     $"verified package evidence {name}");
             }
 
+            var helpOutput = new StringWriter();
+            AssertEqual(ExitCodes.Success,
+                CliApplication.Run(["evidence", "ledger-build", "--help"], helpOutput, new StringWriter()),
+                "ledger draft authoring help");
+            var help = helpOutput.ToString();
+            var marker = help.IndexOf("```json", StringComparison.Ordinal);
+            Assert(marker >= 0, "help exposes a complete JSON draft template");
+            var templateStart = marker + "```json".Length;
+            var templateEnd = help.IndexOf("```", templateStart, StringComparison.Ordinal);
+            Assert(templateEnd > templateStart, "help draft template is delimited");
+            var template = help[templateStart..templateEnd].Trim()
+                .Replace("<observed claim>", "Fixture package bytes were inspected.", StringComparison.Ordinal)
+                .Replace("<actual capture method>", "Inspected retained fixture package bytes.", StringComparison.Ordinal)
+                .Replace("<actual capture UTC time>", "2026-09-02T20:00:00Z", StringComparison.Ordinal)
+                .Replace("<observed content SHA-256>", inspected.NupkgSha256, StringComparison.Ordinal);
+            Assert(help.Contains(NupkgInspector.PackageEntryEvidencePrefix, StringComparison.Ordinal),
+                "help exposes the existing package-entry locator grammar");
+            var packageSubjectPath = Path.Combine(root, "help-package-subject.json");
+            File.WriteAllBytes(packageSubjectPath, CanonicalEvidenceJson.SerializeRepositorySubject(
+                subject with { AssessmentKind = "package", ComponentId = null }));
+            var templatePath = Path.Combine(root, "help-template.draft.json");
+            File.WriteAllText(templatePath, template, new UTF8Encoding(false));
+            var templateLedger = Path.Combine(root, "help-template.ledger.json");
+            var templateError = new StringWriter();
+            AssertEqual(ExitCodes.Success,
+                CliApplication.Run(
+                    ["evidence", "ledger-build", "--kind", "repository", "--subject", packageSubjectPath,
+                        "--draft", templatePath, "--nupkg", packagePath, "--output", templateLedger],
+                    new StringWriter(), templateError),
+                $"help template builds a package-only ledger with observed fixture facts: {templateError}");
+            AssertEqual(ExitCodes.Success,
+                CliApplication.Run(["evidence", "ledger-validate", "--ledger", templateLedger],
+                    new StringWriter(), new StringWriter()),
+                "help template produces a canonical ledger");
+
+            var aliasIndex = 0;
+            foreach (var alias in new[] { "nupkg", "package:nupkg", "Artifact.Test.1.0.0.nupkg" })
+            {
+                var aliasPath = Path.Combine(root, $"alias-{aliasIndex}.draft.json");
+                var aliasLedger = Path.Combine(root, $"alias-{aliasIndex++}.ledger.json");
+                File.WriteAllText(aliasPath,
+                    template.Replace(NupkgInspector.WholePackageEvidenceLocator, alias, StringComparison.Ordinal),
+                    new UTF8Encoding(false));
+                var originalAliasBytes = File.ReadAllBytes(aliasPath);
+                var aliasError = new StringWriter();
+                AssertEqual(ExitCodes.ValidationFailure,
+                    CliApplication.Run(
+                        ["evidence", "ledger-build", "--kind", "repository", "--subject", packageSubjectPath,
+                            "--draft", aliasPath, "--nupkg", packagePath, "--output", aliasLedger],
+                        new StringWriter(), aliasError),
+                    $"package locator alias {alias} remains invalid");
+                Assert(!File.Exists(aliasLedger), "invalid locator does not create a ledger");
+                Assert(originalAliasBytes.SequenceEqual(File.ReadAllBytes(aliasPath)),
+                    "invalid draft is not repaired in place");
+                Assert(aliasError.ToString().Contains(NupkgInspector.WholePackageEvidenceLocator, StringComparison.Ordinal),
+                    "invalid-locator error exposes the whole-package grammar");
+                Assert(aliasError.ToString().Contains(NupkgInspector.PackageEntryEvidencePrefix, StringComparison.Ordinal),
+                    "invalid-locator error exposes the entry grammar");
+            }
+
             var missingDraft = Path.Combine(root, "missing.draft.json");
             File.WriteAllText(
                 missingDraft,
