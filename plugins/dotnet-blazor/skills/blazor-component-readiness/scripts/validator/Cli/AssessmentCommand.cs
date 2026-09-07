@@ -14,8 +14,15 @@ public static class AssessmentCommand
         Usage:
           readiness-validator assessment init --kind <unified|package|component> --root <dir> --input <confirmed> --output <json> [--component <id>] [--rubric-version <2.0.0|1.3.0>] [--overlays <legacy-id,id>] [--package-revision <dir>] [--package-feedback <markdown>]
           readiness-validator assessment canonicalize --assessment <json> --output <canonical-json>
+          readiness-validator assessment export-identity --assessment <canonical-assessment> --output <new-identity-json>
           readiness-validator assessment validate --root <dir> --input <confirmed> --assessment <json> --evidence <bundle> [--package-revision <dir>] [--package-feedback <markdown>]
           readiness-validator assessment revise --root <dir> --input <confirmed> --assessment <replacement-json> --evidence <replacement-bundle> --output <revisions-root> --predecessor <digest> --changed-ids <id,id> [--feedback <markdown>] [--package-revision <dir>] [--package-feedback <markdown>]
+
+        After init, export-identity writes the existing identity as exact canonical bytes
+        for evidence ledger-build --subject and evidence bundle --assessment.
+        This projects identity only; it does not validate evidence, bindings or readiness.
+        Do not hand-author or reformat exported identity files. canonicalize writes a full
+        assessment, not a standalone evidence identity.
         """;
 
     public static int Run(IReadOnlyList<string> args, TextWriter output)
@@ -30,6 +37,7 @@ public static class AssessmentCommand
         {
             "init" => Initialize(args.Skip(1).ToArray(), output),
             "canonicalize" => Canonicalize(args.Skip(1).ToArray(), output),
+            "export-identity" => ExportIdentity(args.Skip(1).ToArray(), output),
             "validate" => Validate(args.Skip(1).ToArray(), output),
             "revise" => Revise(args.Skip(1).ToArray(), output),
             _ => throw new UsageException($"Unknown assessment command '{args[0]}'.")
@@ -51,6 +59,24 @@ public static class AssessmentCommand
             "assessment");
         var assessment = AssessmentService.Parse(assessmentBytes, requireCanonical: false);
         WriteNew(options.Single("--output"), AssessmentService.Serialize(assessment));
+        return ExitCodes.Success;
+    }
+
+    private static int ExportIdentity(IReadOnlyList<string> args, TextWriter output)
+    {
+        if (args.Count == 1 && IsHelp(args[0]))
+        {
+            output.WriteLine(Help);
+            return ExitCodes.Success;
+        }
+
+        var options = CommandOptions.Parse(args, "--assessment", "--output");
+        var bytes = BoundedIO.ReadAllBytes(
+            options.Single("--assessment"),
+            ResourceLimits.SerializedArtifactBytes,
+            "canonical assessment");
+        var assessment = AssessmentService.Parse(bytes);
+        WriteNew(options.Single("--output"), CanonicalEvidenceJson.SerializeAssessment(assessment.Identity));
         return ExitCodes.Success;
     }
 

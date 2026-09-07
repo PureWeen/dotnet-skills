@@ -593,6 +593,7 @@ internal static class AssessmentTests
         var initialized = CurrentAssessmentService.Parse(File.ReadAllBytes(assessmentPath));
         AssertEqual(60, initialized.Rows.Count, "package-only assessment owns current 60 rows");
         Assert(initialized.Identity.ComponentId is null, "package-only assessment has no component identity");
+        TestIdentityExport(fixture, assessmentPath);
 
         var evidence = BuildEvidence(initialized.Identity);
         var assessment = Complete(initialized, evidence, "gap");
@@ -1093,6 +1094,104 @@ internal static class AssessmentTests
         }
     }
 
+    private static void TestIdentityExport(Fixture fixture, string assessmentPath)
+    {
+        var original = File.ReadAllBytes(assessmentPath);
+        var assessment = CurrentAssessmentService.Parse(original);
+        var identity = assessment.Identity;
+        var prefix = Path.Combine(fixture.Root, Path.GetFileName(assessmentPath) + ".export");
+        var identityPath = prefix + ".identity.json";
+        var output = new StringWriter();
+        var error = new StringWriter();
+        AssertEqual(ExitCodes.Success,
+            CliApplication.Run(["assessment", "export-identity", "--assessment", assessmentPath, "--output", identityPath],
+                output, error),
+            $"identity export for {identity.AssessmentKind}: {error}");
+        var identityBytes = File.ReadAllBytes(identityPath);
+        AssertBytes(CanonicalEvidenceJson.SerializeAssessment(identity), identityBytes,
+            "export uses the existing canonical identity serializer");
+        AssertEqual(identity, CanonicalEvidenceJson.ParseAssessment(identityBytes), "identity roundtrip");
+        AssertBytes(original, File.ReadAllBytes(assessmentPath), "export does not mutate its assessment");
+        ExpectValidation(() => CanonicalEvidenceJson.ParseAssessment(original),
+            "full assessment remains invalid as a standalone identity");
+        ExpectValidation(() => CanonicalEvidenceJson.ParseRepositorySubject(original),
+            "full assessment remains invalid as a standalone repository subject");
+        var repeatedPath = prefix + ".repeated.json";
+        AssertEqual(ExitCodes.Success,
+            CliApplication.Run(
+                ["assessment", "export-identity", "--assessment", assessmentPath, "--output", repeatedPath],
+                new StringWriter(), new StringWriter()),
+            "repeat export to a fresh path");
+        AssertBytes(identityBytes, File.ReadAllBytes(repeatedPath), "repeated exports are byte-identical");
+        var overridePath = prefix + ".override.json";
+        Assert(CliApplication.Run(
+                ["assessment", "export-identity", "--assessment", assessmentPath, "--output", overridePath,
+                    "--component", "caller-override"],
+                new StringWriter(), new StringWriter()) != ExitCodes.Success,
+            "export does not accept caller identity overrides");
+        Assert(!File.Exists(overridePath), "rejected identity override creates no output");
+        AssertBytes(identityBytes, CanonicalEvidenceJson.SerializeRepositorySubject(
+            CanonicalEvidenceJson.ParseRepositorySubject(identityBytes)),
+            "repository subject and assessment identity use compatible canonical bytes");
+
+        Assert(CliApplication.Run(
+                ["assessment", "export-identity", "--assessment", assessmentPath, "--output", identityPath],
+                new StringWriter(), new StringWriter()) != ExitCodes.Success,
+            "identity export cannot overwrite an existing artifact");
+        AssertBytes(identityBytes, File.ReadAllBytes(identityPath), "existing identity remains unchanged");
+        byte[][] invalidInputs = [Encoding.UTF8.GetBytes("{}"), [.. original, (byte)'\n'], identityBytes];
+        for (var index = 0; index < invalidInputs.Length; index++)
+        {
+            var invalidPath = prefix + $".invalid-{index}.json";
+            var rejectedDirectory = prefix + $".rejected-{index}";
+            File.WriteAllBytes(invalidPath, invalidInputs[index]);
+            AssertEqual(ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    ["assessment", "export-identity", "--assessment", invalidPath,
+                        "--output", Path.Combine(rejectedDirectory, "identity.json")],
+                    new StringWriter(), new StringWriter()),
+                "export requires a canonical full assessment");
+            Assert(!Directory.Exists(rejectedDirectory), "invalid assessment creates no identity output");
+            AssertBytes(invalidInputs[index], File.ReadAllBytes(invalidPath), "invalid input is not repaired");
+        }
+
+        var component = identity.AssessmentKind == "component";
+        var package = identity.AssessmentKind == "package";
+        var kind = package ? "package-artifact-metadata" : "vendor-public-documentation";
+        var locator = package ? NupkgInspector.WholePackageEvidenceLocator : "https://docs.example.com/widgets";
+        var digest = package ? identity.Package.NupkgDigest.Value : ContractJson.RawDigest(File.ReadAllBytes(Path.Combine(fixture.Root, "docs.html"))).Value;
+        var draftPath = prefix + ".draft.json";
+        File.WriteAllText(draftPath, $$"""
+            {"schema_version":1,"records":[{"claim":"Retained fixture bytes were inspected.","applicability":{"scope":"{{(component ? "component-specific" : "repository-wide")}}","component_id":{{JsonSerializer.Serialize(component ? identity.ComponentId : null)}}},"provenance":{"kind":"{{kind}}","locator":"{{locator}}","method":"Inspected retained fixture bytes.","captured_at_utc":"2026-09-02T20:00:00Z","content_sha256":{"algorithm":"sha256","value":"{{digest}}"},"retention":"commitment-only"},"supersedes":[]}]}
+            """);
+        var ledgerPath = prefix + ".ledger.json";
+        AssertEqual(ExitCodes.Success,
+            CliApplication.Run(
+                ["evidence", "ledger-build", "--kind", component ? "component" : "repository",
+                    "--subject", identityPath, "--draft", draftPath, "--nupkg", fixture.NupkgPath, "--output", ledgerPath],
+                output, error),
+            $"exported identity is consumed by ledger-build: {error}");
+        var ledger = CanonicalEvidenceJson.ParseSourceLedger(File.ReadAllBytes(ledgerPath));
+        var bundlePath = prefix + ".bundle.json";
+        AssertEqual(ExitCodes.Success,
+            CliApplication.Run(
+                ["evidence", "bundle", "--assessment", identityPath, "--source-ledger", ledgerPath,
+                    "--ids", ledger.Records.Single().StableId, "--output", bundlePath],
+                output, error),
+            $"exported identity is consumed by bundle: {error}");
+        AssertEqual(identity, CanonicalEvidenceJson.ParseBundle(File.ReadAllBytes(bundlePath)).Assessment,
+            "bundle retains the exact exported identity");
+        if (package || component)
+        {
+            AssertEqual(ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    ["evidence", "ledger-build", "--kind", package ? "component" : "repository", "--subject", identityPath,
+                        "--draft", draftPath, "--nupkg", fixture.NupkgPath, "--output", prefix + ".wrong-scope.json"],
+                    new StringWriter(), new StringWriter()),
+                "export preserves ledger-kind restrictions at the existing ledger consumer");
+        }
+    }
+
     private static void TestAssessmentKinds(
         Fixture fixture,
         string packageRevision,
@@ -1133,6 +1232,10 @@ internal static class AssessmentTests
             64,
             AssessmentService.Parse(File.ReadAllBytes(cliComponentPath)).Rows.Count,
             "component init CLI exact 64 rows");
+        TestIdentityExport(fixture, cliComponentPath);
+        var unifiedPath = Path.Combine(fixture.Root, "identity-export.unified.assessment.json");
+        File.WriteAllBytes(unifiedPath, AssessmentService.Serialize(unified));
+        TestIdentityExport(fixture, unifiedPath);
         var unboundCliComponent = Path.Combine(fixture.Root, "cli-unbound.component.assessment.json");
         AssertEqual(
             ExitCodes.ValidationFailure,

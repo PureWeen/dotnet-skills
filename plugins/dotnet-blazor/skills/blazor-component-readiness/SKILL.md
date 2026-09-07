@@ -173,14 +173,10 @@ Failed retrieval remains `unresolved`; owner declarations do not replace unrelat
 Unapproved extensions are not DOCX defects; package-owned `SEC-01` through `SEC-03` use one shared
 library security packet.
 
-Use exact grouped commands:
-
-```text
-<launcher> evidence ledger-build --kind repository --subject <repository-subject.json> --draft <evidence-draft.json> --nupkg <exact.nupkg> --output <repository-ledger.json>
-<launcher> evidence ledger-build --kind component --subject <component-subject.json> --draft <evidence-draft.json> --nupkg <exact.nupkg> --output <component-ledger.json>
-<launcher> evidence ledger-validate --ledger <source-ledger.json>
-<launcher> evidence bundle --assessment <assessment-identity.json> --source-ledger <source-ledger.json> --ids <EV1-id,...> --output <evidence.json>
-```
+Initialize the assessment before building ledgers. Use `assessment export-identity`,
+`evidence ledger-build`, `evidence ledger-validate`, and `evidence bundle` in the
+[canonical identity and ledger sequence](references/input-candidates.md).
+Never hand-author or reformat canonical identity/subject bytes.
 
 Read the applicable area playbooks while collecting evidence:
 [security/privacy](references/area-security-privacy.md),

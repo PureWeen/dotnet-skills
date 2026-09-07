@@ -15,6 +15,10 @@ public static class EvidenceCommand
           readiness-validator evidence ledger-validate --ledger <path>
           readiness-validator evidence bundle --assessment <path> --source-ledger <path>... --ids <EV1-id,...> --output <path>
 
+        Initialize the assessment, then run assessment export-identity to create the
+        canonical file used by ledger-build --subject and bundle --assessment.
+        A full assessment document or hand-authored identity JSON is not a substitute.
+
         Evidence draft template (repository-wide package record):
         ```json
         {

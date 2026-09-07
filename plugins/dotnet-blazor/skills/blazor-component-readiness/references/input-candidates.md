@@ -94,3 +94,34 @@ Before authoring evidence drafts, read `<launcher> evidence ledger-build --help`
 existing draft shape and code-owned package locator grammar. Replace template placeholders
 with actual observed claims and inspection/capture facts; never invent provenance metadata.
 Evidence drafts are not canonical ledgers, and their logical locators are not filesystem paths.
+
+## Canonical identity and ledger sequence
+
+Initialize the assessment from confirmed inputs before building evidence ledgers. Export
+its identity through the validator; do not hand-author hashes/IDs, extract JSON with a
+generic serializer, or reformat the exported file. `assessment canonicalize` emits the
+full assessment document, not the standalone identity required by evidence commands.
+
+For a package-only assessment:
+
+```text
+<launcher> assessment init --kind package --root <output> --input <input.confirmed.json> --output <assessment.json>
+<launcher> assessment export-identity --assessment <assessment.json> --output <assessment-identity.json>
+<launcher> evidence ledger-build --kind repository --subject <assessment-identity.json> --draft <evidence-draft.json> --nupkg <exact.nupkg> --output <repository-ledger.json>
+<launcher> evidence ledger-validate --ledger <repository-ledger.json>
+<launcher> evidence bundle --assessment <assessment-identity.json> --source-ledger <repository-ledger.json> --ids <EV1-id,...> --output <evidence.json>
+```
+
+For unified or component scope, use that scope's existing `assessment init` options
+(including the selected component and required package revision), then export its identity
+the same way. A component ledger uses:
+
+```text
+<launcher> evidence ledger-build --kind component --subject <assessment-identity.json> --draft <evidence-draft.json> --nupkg <exact.nupkg> --output <component-ledger.json>
+```
+
+Existing ledger-kind and scope restrictions still apply. A package assessment has no
+component identity and cannot produce a component ledger. Reuse the exported identity
+for bundle construction; select actual ledger record IDs. Export is only a deterministic
+projection of an existing canonical assessment, not validation of its evidence, bindings,
+or readiness. Assessment validation and report verification remain mandatory.
