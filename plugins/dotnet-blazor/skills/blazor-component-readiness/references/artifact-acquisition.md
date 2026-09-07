@@ -47,6 +47,21 @@ entry names. For example, if the archive contains `bundle/src/a.txt`, then
 `--strip-components=1`, use `--source-root extracted` but still keep `--archive-prefix bundle`,
 because the retained archive bytes did not change. Do not flatten the tree with `unzip -j`.
 
+For a large retained inventory, an optional read-only `jq` projection makes the actual numeric IDs
+and repository-relative paths inspectable without rewriting the machine-owned JSON:
+
+```bash
+INVENTORY="<retained-inventory.json>"
+LISTING="<disposable-inspection-listing.tsv>"
+(set -C; jq -r '.entries[] | [.id, .source_path] | @tsv' "$INVENTORY" > "$LISTING")
+```
+
+Use a bounded file-view range to inspect `$LISTING`, then pass only actual IDs from that listing to
+`capture-inventory`, which still revalidates the original inventory. Set `$LISTING` to a separate
+new file; the subshell refuses to overwrite an existing file. The listing is disposable, not an
+inventory replacement or evidence of completeness, provenance, or component/library classification.
+If `jq` is unavailable, use an available JSON/file viewer instead; no installation is required.
+
 Use the retained inventory's actual IDs with:
 
 ```text

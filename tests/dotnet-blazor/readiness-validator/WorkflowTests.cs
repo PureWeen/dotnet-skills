@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -175,6 +176,7 @@ internal static class WorkflowTests
         AssertContracts(referencesRoot);
         AssertWorkerLaunchContract(pluginRoot);
         AssertReadinessLauncherExample(skillRoot);
+        AssertOptionalJqInventoryProjection(pluginRoot);
     }
 
     private static void AssertRubricIsSoleRequirementSource(string referencesRoot)
@@ -640,6 +642,67 @@ internal static class WorkflowTests
             Assert(lines[1] == "argc=2", "readiness forwards argument count");
             Assert(lines[2] == "<arg with spaces>", "readiness preserves spaced argument");
             Assert(lines[3] == "<literal $dollar and apostrophe '>", "readiness preserves literal argument");
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot))
+            {
+                Directory.Delete(testRoot, recursive: true);
+            }
+        }
+    }
+
+    private static void AssertOptionalJqInventoryProjection(string pluginRoot)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var jqCheck = RunHelper("-c", "command -v jq");
+        if (jqCheck.ExitCode == 1)
+        {
+            Console.WriteLine("Skipping optional jq inventory projection: jq is unavailable.");
+            return;
+        }
+
+        Assert(jqCheck.ExitCode == 0, $"jq availability check failed: {jqCheck.StandardError}");
+        var testRoot = Path.Combine(Path.GetTempPath(), $"jq inventory projection {Guid.NewGuid():N}");
+        var inventory = Path.Combine(testRoot, "retained inventory with spaces.json");
+        var listing = Path.Combine(testRoot, "disposable listing with spaces.tsv");
+        var inventoryBytes = Encoding.UTF8.GetBytes(
+            """{"entries":[{"id":7,"source_path":"src/with spaces/$file.razor"},{"id":42,"source_path":"tests/vendor's sample.razor"},{"id":105,"source_path":"styles/theme.css"}]}""");
+        var documentedCommand = File.ReadLines(Path.Combine(
+                pluginRoot,
+                "skills",
+                "blazor-component-readiness",
+                "references",
+                "artifact-acquisition.md"))
+            .Single(line => line.TrimStart().StartsWith(
+                "(set -C; jq -r '.entries[] | [.id, .source_path] | @tsv'",
+                StringComparison.Ordinal))
+            .Trim();
+        var script = $"""
+            set -euo pipefail
+            INVENTORY="$1"
+            LISTING="$2"
+            {documentedCommand}
+            """;
+
+        try
+        {
+            Directory.CreateDirectory(testRoot);
+            File.WriteAllBytes(inventory, inventoryBytes);
+            var invocation = RunHelper("-c", script, "jq-inventory-projection", inventory, listing);
+            Assert(invocation.ExitCode == 0, $"jq inventory projection failed: {invocation.StandardError}");
+            Assert(File.ReadAllBytes(inventory).SequenceEqual(inventoryBytes), "jq projection preserves inventory bytes");
+            Assert(
+                File.ReadAllText(listing) ==
+                "7\tsrc/with spaces/$file.razor\n42\ttests/vendor's sample.razor\n105\tstyles/theme.css\n",
+                "jq projection preserves every ID/path pair");
+            var collision = RunHelper("-c", script, "jq-inventory-projection", inventory, inventory);
+            Assert(collision.ExitCode != 0, "jq projection refuses to overwrite its inventory");
+            Assert(File.ReadAllBytes(inventory).SequenceEqual(inventoryBytes), "rejected projection preserves inventory bytes");
         }
         finally
         {
