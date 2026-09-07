@@ -354,12 +354,18 @@ internal static class ArchiveCaptureTests
     }
 
     private static void TestInventoryCaptureBridge(string testRoot)
+    {
+        foreach (var (rootName, sourceRoot) in new[]
         {
-            var root = Path.Combine(testRoot, "inventory-bridge");
-            var sourceRoot = Path.Combine(root, "extracted");
-            Directory.CreateDirectory(Path.Combine(sourceRoot, "src"));
-            File.WriteAllBytes(Path.Combine(sourceRoot, "src", "a.txt"), Encoding.UTF8.GetBytes("alpha"));
-            File.WriteAllBytes(Path.Combine(sourceRoot, "src", "b.txt"), Encoding.UTF8.GetBytes("bravo"));
+            ("inventory-bridge-flat", "extracted"),
+            ("inventory-bridge-nested", "extracted/bundle")
+        })
+        {
+            var root = Path.Combine(testRoot, rootName);
+            var sourceRootPath = Path.Combine(root, sourceRoot);
+            Directory.CreateDirectory(Path.Combine(sourceRootPath, "src"));
+            File.WriteAllBytes(Path.Combine(sourceRootPath, "src", "a.txt"), Encoding.UTF8.GetBytes("alpha"));
+            File.WriteAllBytes(Path.Combine(sourceRootPath, "src", "b.txt"), Encoding.UTF8.GetBytes("bravo"));
             var archivePath = Path.Combine(root, "archive.tar.gz");
             CreateTarGzip(
                 archivePath,
@@ -371,7 +377,7 @@ internal static class ArchiveCaptureTests
                 "source", "inventory-archive",
                 "--root", root,
                 "--archive", "archive.tar.gz",
-                "--source-root", "extracted",
+                "--source-root", sourceRoot,
                 "--archive-prefix", "bundle",
                 "--archive-format", "tar.gz",
                 "--output", "inventory.json"
@@ -379,19 +385,19 @@ internal static class ArchiveCaptureTests
             AssertEqual(
                 ExitCodes.Success,
                 CliApplication.Run(inventoryArguments, new StringWriter(), new StringWriter()),
-                "inventory archive");
+                $"{rootName} inventory archive");
             var inventoryBytes = File.ReadAllBytes(Path.Combine(root, "inventory.json"));
             using (var inventory = JsonDocument.Parse(inventoryBytes))
             {
-                AssertEqual(2, inventory.RootElement.GetProperty("entries").GetArrayLength(), "inventory entry count");
+                AssertEqual(2, inventory.RootElement.GetProperty("entries").GetArrayLength(), $"{rootName} inventory entry count");
                 AssertEqual(
                     "src/a.txt",
                     inventory.RootElement.GetProperty("entries")[0].GetProperty("source_path").GetString(),
-                    "inventory first path");
+                    $"{rootName} inventory first path");
                 AssertEqual(
                     "src/b.txt",
                     inventory.RootElement.GetProperty("entries")[1].GetProperty("source_path").GetString(),
-                    "inventory second path");
+                    $"{rootName} inventory second path");
             }
 
             var common = new[]
@@ -413,26 +419,33 @@ internal static class ArchiveCaptureTests
             AssertEqual(
                 ExitCodes.Success,
                 CliApplication.Run(bridgedArguments, new StringWriter(), bridgeError),
-                $"capture inventory: {bridgeError}");
+                $"{rootName} capture inventory: {bridgeError}");
             var directArguments = new[]
             {
                 "source", "capture-archive",
                 "--root", root,
                 "--archive", "archive.tar.gz",
-                "--source-root", "extracted",
+                "--source-root", sourceRoot,
                 "--archive-prefix", "bundle",
                 "--archive-format", "tar.gz"
             }.Concat(common).Concat(["--source-path", "src/a.txt", "--output", "direct.json"]).ToArray();
             AssertEqual(
                 ExitCodes.Success,
                 CliApplication.Run(directArguments, new StringWriter(), new StringWriter()),
-                "direct capture counterpart");
+                $"{rootName} direct capture counterpart");
             AssertBytes(
                 File.ReadAllBytes(Path.Combine(root, "direct.json")),
                 File.ReadAllBytes(Path.Combine(root, "bridged.json")),
-                "inventory bridge receipt equivalence");
+                $"{rootName} inventory bridge receipt equivalence");
+            using (var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(root, "bridged.json"))))
+            {
+                AssertEqual(
+                    $"{sourceRoot}/src/a.txt",
+                    receipt.RootElement.GetProperty("source_artifacts")[0].GetProperty("content_path").GetString(),
+                    $"{rootName} local content path");
+            }
 
-            File.WriteAllBytes(Path.Combine(sourceRoot, "src", "a.txt"), Encoding.UTF8.GetBytes("changed"));
+            File.WriteAllBytes(Path.Combine(sourceRootPath, "src", "a.txt"), Encoding.UTF8.GetBytes("changed"));
             var changedError = new StringWriter();
             AssertEqual(
                 ExitCodes.ValidationFailure,
@@ -440,9 +453,10 @@ internal static class ArchiveCaptureTests
                     bridgedArguments.Select(value => value == "bridged.json" ? "changed.json" : value).ToArray(),
                     new StringWriter(),
                     changedError),
-                "changed extracted bytes rejected by inventory bridge");
-            Assert(!File.Exists(Path.Combine(root, "changed.json")), "changed inventory capture writes no receipt");
+                $"{rootName} changed extracted bytes rejected by inventory bridge");
+            Assert(!File.Exists(Path.Combine(root, "changed.json")), $"{rootName} changed inventory capture writes no receipt");
         }
+    }
 
     private static void TestInventoryCoverage(string testRoot)
     {

@@ -218,7 +218,7 @@ public static class CliApplication
 
         Usage:
           readiness-validator source inventory-archive --root <root>
-            --archive <retained.tar.gz|zip> --source-root <extracted-directory>
+            --archive <retained.tar.gz|zip> --source-root <extracted-repository-root>
             [--archive-prefix <directory>] --archive-format <tar.gz|zip>
             [--expected-sha256 <64-hex>] --output <new-inventory.json>
 
@@ -229,12 +229,19 @@ public static class CliApplication
             --acquisition-locator <url> --output <new-receipt.json>
 
           readiness-validator source capture-archive --root <root>
-            --archive <retained.tar.gz|zip> --source-root <extracted-directory>
+            --archive <retained.tar.gz|zip> --source-root <extracted-repository-root>
             [--archive-prefix <directory>] --archive-format <tar.gz|zip>
             --repository-uri <url> --source-commit <40-hex-commit>
             --source-mapping <text> --source-confidence <low|medium|high>
             --acquisition-locator <url> --source-path <repository-path> [--source-path <path> ...]
             [--expected-sha256 <64-hex>] --output <new-receipt.json>
+
+        source-root is the actual local repository root where each repository-relative source_path
+        exists; it may be nested below the extraction destination. archive-prefix applies only to
+        archive entry names and never strips or changes local extraction paths. For example, after
+        'tar -xzf archive.tar.gz -C extracted', use --source-root extracted/bundle with
+        --archive-prefix bundle. With '--strip-components=1', use --source-root extracted but
+        keep --archive-prefix bundle because the retained archive bytes are unchanged.
 
         The operation never invokes Git or extracts an archive. It verifies selected files against
         the retained archive and writes one deterministic, immutable receipt.

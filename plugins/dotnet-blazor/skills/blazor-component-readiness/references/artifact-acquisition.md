@@ -35,9 +35,17 @@ source-file selection, not a component or library assessment inventory:
 
 ```text
 <launcher> source inventory-archive --root <root> --archive <root-relative.tar.gz> \
-  --source-root <root-relative-extracted-source> --archive-prefix <github-top-level-directory> \
+  --source-root <root-relative-extracted-repository-root> --archive-prefix <github-top-level-directory> \
   --archive-format tar.gz --output <new-inventory.json>
 ```
+
+`source-root` is the actual local repository root where each repository-relative `source_path`
+exists; it is not necessarily the extraction destination. `archive-prefix` applies only to archive
+entry names. For example, if the archive contains `bundle/src/a.txt`, then
+`tar -xzf archive.tar.gz -C extracted` is captured with
+`--source-root extracted/bundle --archive-prefix bundle`. If extraction uses
+`--strip-components=1`, use `--source-root extracted` but still keep `--archive-prefix bundle`,
+because the retained archive bytes did not change. Do not flatten the tree with `unzip -j`.
 
 Use the retained inventory's actual IDs with:
 
