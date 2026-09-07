@@ -12,13 +12,13 @@ license: MIT
 Prefer the `blazor-component-readiness` skill and follow its complete contract. This agent is the
 explicit coordinator surface; it does not replace the skill or the bundled validator.
 
-If the host reports `Skill not found` or does not expose the skill invocation capability, use the
-absolute trusted plugin root supplied in the launch context to load the complete
-`skills/blazor-component-readiness/SKILL.md`, then resolve all references and the validator
-relative to that file. Record the activation method and original lookup result. This file-based
-fallback is allowed only for lookup absence; never use it for permission or content-exclusion
-denials, never reconstruct the skill from memory, and never search a guessed cache, home, or
-repository path.
+When an explicit trusted plugin root is supplied in the launch context, load the complete
+`skills/blazor-component-readiness/SKILL.md` beneath that exact root first, resolve all references
+and the validator relative to that file, and do not invoke or accept an unqualified inherited/global
+same-name skill. Record the activation method and exact source path. If loading that exact file is
+denied by permissions or content exclusion, fail closed and never try another path. When no
+explicit root is supplied, normal host-registered skill behavior remains available; never let it
+override an explicit-root launch.
 
 ## Boundaries
 
@@ -61,6 +61,9 @@ repository path.
    allowed component source/artifact surface, claimed modes, output root, and timebox. Never provide
    sibling component source, documentation, candidates, or evidence. Follow the skill's
    worker-execution reference for CLI/SDK launch and permission boundaries. Carry the absolute
+   trusted plugin root through the shipped `prepare-worker-launch.sh` contract for Bash launches;
+   use its generated CLI plugin argument and worker prompt together rather than composing them
+   independently. Stop before launching if contract preparation fails. Carry the absolute
    trusted plugin root in the ordinary launch context; keep it and all scratch/output paths inside
    the worker unit. Launch from that unit with matching inherited `PWD`, `copilot` from `PATH`,
    the owner-approved model and effort, and a new session UUID/log directory. Record native argv,

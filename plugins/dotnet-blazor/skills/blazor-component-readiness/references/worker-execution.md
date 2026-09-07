@@ -33,32 +33,39 @@ reproduced in component artifacts.
 
 Carry the absolute trusted plugin root in the coordinator-to-worker launch context. The trusted
 root is the staged plugin inside the unit, not a host cache or sibling checkout; it is execution
-context, not an assessment-schema field. The worker first uses the host-registered
-`blazor-component-readiness` skill. Only when that lookup returns `Skill not found` or the host
-does not expose the skill invocation capability may it load the complete
-`<trusted-plugin-root>/skills/blazor-component-readiness/SKILL.md` and resolve every referenced
-file, including the validator, relative to that loaded file. Record the activation method and
-the original lookup result. Never use this fallback after a permission, content-exclusion, or
-path-access denial, and never reconstruct the skill from memory or search an unrelated path.
+context, not an assessment-schema field. When this explicit root is supplied, the exact bundled
+`<trusted-plugin-root>/skills/blazor-component-readiness/SKILL.md` is authoritative: load that
+complete file first, do not invoke an unqualified registered skill by name, and do not accept an
+inherited or global same-name skill. Resolve every referenced file, including the validator,
+relative to that loaded file. Record the activation method and exact source path. If loading the
+exact bundled file is denied by permissions or content exclusion, fail closed and never try
+another path. In contexts without an explicit trusted root, normal registered-skill behavior may
+be used; it must not override an explicit-root launch.
 
-Use the unit directory as the validator input root. Keep confirmed package/component inputs and the
-validated package revision directly beneath that root, and place new component artifacts beneath
-the assigned output subdirectory. Do not use the output subdirectory as `--root` or relocate bound
-inputs into it.
-
-## Copilot CLI host
-
-Select the qualified worker as a new top-level process. Use the installed plugin name from
-`plugin.json`; do not guess an unqualified agent name.
+Before launching the worker, use the shipped
+`skills/blazor-component-readiness/scripts/prepare-worker-launch.sh` helper from the installed
+plugin. Give it the unit directory, the staged plugin path, a base prompt without any plugin-root
+line, and an output path below the unit. Source the generated contract and use both
+`--plugin-dir "$CLI_PLUGIN_DIR"` and the generated `WORKER_PROMPT_FILE`; the helper validates the
+same absolute in-unit root for both values. It rejects missing or out-of-unit plugins and rejects
+prompts that independently provide a relative or mismatched plugin root. Do not hand-compose either
+path after the helper succeeds. The output directory must already exist; keep the base prompt,
+generated `worker-prompt.txt`, and shell contract at distinct paths. This helper uses Bash.
 
 ```text
+set -euo pipefail
 UNIT="<absolute-unit-directory>"
 PLUGIN="$UNIT/tooling/plugins/<plugin-name>"
+CONTRACT="$UNIT/launch.env"
+"$PLUGIN/skills/blazor-component-readiness/scripts/prepare-worker-launch.sh" \
+  --unit "$UNIT" --plugin-dir "$PLUGIN" --prompt-file "$UNIT/worker-prompt-base.txt" \
+  --output "$CONTRACT"
+. "$CONTRACT"
 mkdir -p "$UNIT/logs" "$UNIT/tmp"
 cd "$UNIT"
 export PWD="$UNIT" TMPDIR="$UNIT/tmp"
 copilot --agent <plugin-name>:blazor-component-readiness-worker \
-  --plugin-dir "$PLUGIN" \
+  --plugin-dir "$CLI_PLUGIN_DIR" \
   -C "$UNIT" \
   --model <owner-approved-model> \
   --effort <owner-approved-effort> \
@@ -69,8 +76,18 @@ copilot --agent <plugin-name>:blazor-component-readiness-worker \
   --no-ask-user \
   --no-auto-update \
   --silent \
-  -p <bounded-worker-prompt>
+  -p "$(cat "$WORKER_PROMPT_FILE")"
 ```
+
+The coordinator agent must invoke this complete recipe, rather than separately constructing a
+plugin path or worker prompt. Select the qualified worker as a new top-level process. Use the
+installed plugin name from `plugin.json`; do not guess an unqualified agent name. The generated
+prompt is the explicit source-selection handoff and must be passed unchanged.
+
+Use the unit directory as the validator input root. Keep confirmed package/component inputs and the
+validated package revision directly beneath that root, and place new component artifacts beneath
+the assigned output subdirectory. Do not use the output subdirectory as `--root` or relocate bound
+inputs into it.
 
 `--allow-all-tools` is required for non-interactive execution; it does not authorize paths outside
 the worker working directory. Never add `--allow-all-paths`. Permit network URLs only when the

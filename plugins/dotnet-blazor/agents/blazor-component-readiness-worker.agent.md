@@ -43,13 +43,15 @@ sibling identities there as non-evidence and never cite or reproduce them in com
 
 ## Execution
 
-1. Invoke `blazor-component-readiness` and resolve the validator relative to its loaded `SKILL.md`.
-   If the host returns `Skill not found` or does not expose the skill invocation capability, use the
-   absolute trusted plugin root supplied in the coordinator launch context to load the complete
-   `skills/blazor-component-readiness/SKILL.md`, then resolve every reference and the validator
-   relative to that file. Record `activation_method=file-fallback` and the original lookup result.
-   Never use this fallback after a permission or content-exclusion denial, and never search a
-   guessed cache, home, repository, or sibling path.
+1. The explicit trusted plugin root is authoritative for this worker. Load the complete
+   `<trusted-plugin-root>/skills/blazor-component-readiness/SKILL.md` named in the launch context
+   first, then resolve every reference and the validator relative to that exact file. Do not invoke
+   an unqualified `blazor-component-readiness` skill by name and do not accept an inherited or
+   global same-name skill when the explicit root is present. Record
+   `activation_method=explicit-file` and the exact source path. If loading that exact file is denied
+   by permissions or content exclusion, fail closed; never try another path or reconstruct the
+   skill from memory. Normal registered-skill behavior is only applicable when no explicit root is
+   supplied, which is not a valid worker launch.
 2. Validate the confirmed input before investigation.
    In blinded comparison mode, first run `comparison inputs-validate`; fail closed before reading
    raw inputs if it fails. Reconcile every `available` or `blocked` coverage surface. For

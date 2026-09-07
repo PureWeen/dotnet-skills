@@ -30,10 +30,12 @@ from the marketplace. Resolve `SKILL_DIR` to the directory containing the **load
 not a developer's checkout, session cache or global hardcoded path.
 
 For isolated worker startup, stage the tracked plugin inside the unit and carry its absolute path as
-trusted launch context. Prefer the host-registered skill; only a `Skill not found` or absent skill
-capability permits loading the complete staged `SKILL.md` and resolving references/validator beside
-it. Record the activation method and original lookup result. Do not use file fallback for a
-permission/content-exclusion denial, and do not search unrelated caches or repositories.
+trusted launch context. The exact staged `skills/blazor-component-readiness/SKILL.md` is authoritative
+when that root is supplied: load it completely first, resolve references/validator beside it, and
+record the activation method and exact source path. Do not invoke or accept an unqualified inherited
+or global same-name skill in explicit-root mode. If the exact file is denied by permissions or
+content exclusion, fail closed and do not search unrelated caches or repositories. Without an
+explicit root, normal host-registered skill behavior remains available.
 
 The bundled Bash/PowerShell launchers require an active **.NET 11 SDK**. They build the
 BCL-only validator outside the plugin and reviewed source. Do not install SDKs without consent.

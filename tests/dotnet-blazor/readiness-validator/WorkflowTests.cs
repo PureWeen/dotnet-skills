@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -164,6 +165,7 @@ internal static class WorkflowTests
         AssertNoForbiddenCoupling(pluginRoot);
         AssertAgents(pluginRoot);
         AssertContracts(referencesRoot);
+        AssertWorkerLaunchContract(pluginRoot);
     }
 
     private static void AssertRubricIsSoleRequirementSource(string referencesRoot)
@@ -250,8 +252,9 @@ internal static class WorkflowTests
         Assert(!coordinator.Contains("\"Task\"", StringComparison.Ordinal), "coordinator must not expose nested task dispatch");
         AssertContains(coordinator, "Never invoke the worker through a nested agent/task tool.", "nested worker prohibition");
         AssertContains(coordinator, "absolute trusted plugin root", "coordinator trusted plugin context");
-        AssertContains(coordinator, "file-based fallback", "coordinator file activation fallback");
-        AssertContains(coordinator, "permission or content-exclusion denials", "coordinator fallback boundary");
+        AssertContains(coordinator, "explicit trusted plugin root", "coordinator explicit source context");
+        AssertContains(coordinator, "exact source path", "coordinator source identity receipt");
+        AssertContains(coordinator, "permissions or content exclusion", "coordinator denial boundary");
         AssertContains(coordinator, "matching inherited `PWD`", "coordinator cwd/PWD launch contract");
         AssertContains(coordinator, "native argv", "coordinator native launch receipt");
         AssertContains(coordinator, "A validated revision is not proof that the requested investigation finished.", "investigation completion boundary");
@@ -264,9 +267,10 @@ internal static class WorkflowTests
 
         AssertContains(worker, "user-invocable: false", "worker invocation");
         AssertContains(worker, "selected as the top-level agent", "top-level worker requirement");
-        AssertContains(worker, "activation_method=file-fallback", "worker file activation receipt");
+        AssertContains(worker, "activation_method=explicit-file", "worker explicit file activation receipt");
+        AssertContains(worker, "Do not invoke an unqualified `blazor-component-readiness` skill by name", "worker source-first activation");
         AssertContains(worker, "absolute trusted plugin root", "worker trusted plugin context");
-        AssertContains(worker, "permission or content-exclusion denial", "worker fallback boundary");
+        AssertContains(worker, "permissions or content exclusion", "worker denial boundary");
         AssertContains(worker, "unsupported host: readiness worker requires a top-level writable session", "nested worker stop");
         Assert(Regex.IsMatch(worker, @"(?m)^tools:\s*\[(?!\s*\])"), "worker tools must be non-empty");
         AssertContains(worker, "exactly one coordinator-assigned", "worker single-unit scope");
@@ -373,11 +377,254 @@ internal static class WorkflowTests
         AssertContains(workerExecution, "--log-dir \"$UNIT/logs\"", "native log directory");
         AssertContains(workerExecution, "tool-call IDs/results", "raw tool receipt");
         AssertContains(workerExecution, "--agent <plugin-name>:blazor-component-readiness-worker", "qualified CLI worker");
+        AssertContains(workerExecution, "prepare-worker-launch.sh", "validated worker launch helper");
+        AssertContains(workerExecution, "use both `--plugin-dir \"$CLI_PLUGIN_DIR\"` and the generated `WORKER_PROMPT_FILE`", "shared plugin root handoff");
+        AssertContains(workerExecution, "set -euo pipefail", "preparation failure stops launch");
+        AssertContains(workerExecution, "-p \"$(cat \"$WORKER_PROMPT_FILE\")\"", "generated prompt used in launch");
+        Assert(!workerExecution.Contains("-p <bounded-worker-prompt>", StringComparison.Ordinal), "no independent prompt launch recipe");
+        AssertContains(
+            File.ReadAllText(Path.Combine(referencesRoot, "..", "..", "..", "agents", "blazor-component-readiness.agent.md")),
+            "prepare-worker-launch.sh",
+            "coordinator uses shipped launch contract");
         AssertContains(workerExecution, "Never add `--allow-all-paths`", "worker path sandbox");
         AssertContains(workerExecution, "Recomputes the validation-manifest SHA-256", "worker digest acceptance");
         AssertContains(workerExecution, "resolve returned paths to absolute paths", "cross-root verification");
         AssertContains(workerExecution, "accessible requested probes were never attempted is unfinished work", "unattempted coverage rejection");
     }
+
+    private static void AssertWorkerLaunchContract(string pluginRoot)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var helper = Path.Combine(
+            pluginRoot,
+            "skills",
+            "blazor-component-readiness",
+            "scripts",
+            "prepare-worker-launch.sh");
+        Assert(File.Exists(helper), "worker launch helper exists");
+
+        var testRoot = Path.Combine(
+            Directory.GetParent(pluginRoot)?.FullName
+                ?? throw new InvalidOperationException("plugin parent is required"),
+            $"readiness worker launch {Guid.NewGuid():N}");
+        var unitRoot = Path.Combine(testRoot, "unit");
+        var relocatedPlugin = Path.Combine(unitRoot, "tooling", "relocated-plugin");
+        var outsidePlugin = Path.Combine(testRoot, "outside-plugin");
+        var promptFile = Path.Combine(unitRoot, "prompt.txt");
+        var contractFile = Path.Combine(unitRoot, "launch.env");
+
+        try
+        {
+            Directory.CreateDirectory(unitRoot);
+            CopyDirectory(pluginRoot, relocatedPlugin);
+            CopyDirectory(pluginRoot, outsidePlugin);
+            File.WriteAllText(promptFile, "Run the assigned readiness worker.");
+
+            var valid = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", "tooling/relocated-plugin",
+                "--prompt-file", promptFile,
+                "--output", contractFile);
+            Assert(valid.ExitCode == 0, $"valid worker launch contract: {valid.StandardError}");
+
+            var expectedRoot = Path.GetFullPath(relocatedPlugin);
+            var sourced = SourceContract(contractFile);
+            Assert(sourced[0] == expectedRoot, "worker plugin root is absolute");
+            Assert(sourced[1] == expectedRoot, "CLI and worker roots are identical");
+            var generatedPrompt = File.ReadAllText(sourced[2]);
+            var expectedSkill = Path.Combine(
+                expectedRoot,
+                "skills",
+                "blazor-component-readiness",
+                "SKILL.md");
+            Assert(
+                generatedPrompt.Contains($"Authoritative bundled skill source: {expectedSkill}", StringComparison.Ordinal),
+                "worker prompt names exact staged skill source");
+            Assert(
+                generatedPrompt.Contains("load the complete authoritative bundled skill source above first", StringComparison.Ordinal),
+                "worker prompt requires source-first activation");
+            Assert(
+                generatedPrompt.Contains("Do not invoke an unqualified registered skill by name", StringComparison.Ordinal),
+                "worker prompt avoids ambiguous global lookup");
+            Assert(
+                !generatedPrompt.Contains("host-registered", StringComparison.OrdinalIgnoreCase) &&
+                !generatedPrompt.Contains("Skill not found", StringComparison.OrdinalIgnoreCase),
+                "worker prompt does not make explicit-root activation depend on lookup results");
+
+            var missing = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", "tooling/missing-plugin",
+                "--prompt-file", promptFile,
+                "--output", Path.Combine(unitRoot, "missing.env"));
+            Assert(missing.ExitCode != 0 && missing.StandardError.Contains("does not exist", StringComparison.Ordinal), "missing plugin rejected before launch");
+
+            var outside = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", outsidePlugin,
+                "--prompt-file", promptFile,
+                "--output", Path.Combine(unitRoot, "outside.env"));
+            Assert(outside.ExitCode != 0 && outside.StandardError.Contains("inside worker unit", StringComparison.Ordinal), "out-of-unit plugin rejected before launch");
+
+            var outsideOutput = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", Path.GetFullPath(relocatedPlugin),
+                "--prompt-file", promptFile,
+                "--output", Path.Combine(testRoot, "outside.env"));
+            Assert(outsideOutput.ExitCode != 0 && outsideOutput.StandardError.Contains("inside worker unit", StringComparison.Ordinal), "out-of-unit output rejected before launch");
+
+            var missingOutputDirectory = Path.Combine(testRoot, "outside-missing");
+            var missingOutput = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", relocatedPlugin,
+                "--prompt-file", promptFile,
+                "--output", Path.Combine(missingOutputDirectory, "launch.env"));
+            Assert(missingOutput.ExitCode != 0, "missing output parent rejected");
+            Assert(!Directory.Exists(missingOutputDirectory), "rejected output does not create outside directory");
+
+            var originalPrompt = File.ReadAllText(promptFile);
+            var collidingPrompt = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", Path.GetFullPath(relocatedPlugin),
+                "--prompt-file", promptFile,
+                "--output", promptFile);
+            Assert(collidingPrompt.ExitCode != 0 && collidingPrompt.StandardError.Contains("overwrite the worker prompt", StringComparison.Ordinal), "worker prompt is protected from overwrite");
+            Assert(File.ReadAllText(promptFile) == originalPrompt, "rejected output leaves worker prompt unchanged");
+
+            var generatedPromptPath = Path.Combine(unitRoot, "worker-prompt.txt");
+            var collidingGeneratedPrompt = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", Path.GetFullPath(relocatedPlugin),
+                "--prompt-file", promptFile,
+                "--output", generatedPromptPath);
+            Assert(collidingGeneratedPrompt.ExitCode != 0 && collidingGeneratedPrompt.StandardError.Contains("generated worker prompt", StringComparison.Ordinal), "generated worker prompt is protected from overwrite");
+            Assert(File.ReadAllText(promptFile) == originalPrompt, "rejected generated-prompt collision leaves input unchanged");
+
+            File.WriteAllText(generatedPromptPath, originalPrompt);
+            var generatedPromptBefore = File.ReadAllText(generatedPromptPath);
+            var collidingInput = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", relocatedPlugin,
+                "--prompt-file", generatedPromptPath,
+                "--output", contractFile);
+            Assert(collidingInput.ExitCode != 0, "generated prompt cannot be reused as base input");
+            Assert(File.ReadAllText(generatedPromptPath) == generatedPromptBefore, "rejected input collision leaves generated prompt unchanged");
+
+            File.WriteAllText(promptFile, $"Trusted plugin root: {outsidePlugin}");
+            var mismatched = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", relocatedPlugin,
+                "--prompt-file", promptFile,
+                "--output", Path.Combine(unitRoot, "mismatched.env"));
+            Assert(mismatched.ExitCode != 0 && mismatched.StandardError.Contains("independent plugin root", StringComparison.Ordinal), "absolute mismatched worker root rejected");
+            Assert(!File.Exists(Path.Combine(unitRoot, "mismatched.env")), "mismatched handoff produces no contract");
+
+            File.WriteAllText(promptFile, "Plugin root tooling/dotnet-blazor; use fallback if no skill.");
+            var relative = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", Path.GetFullPath(relocatedPlugin),
+                "--prompt-file", promptFile,
+                "--output", Path.Combine(unitRoot, "relative.env"));
+            Assert(relative.ExitCode != 0 && relative.StandardError.Contains("independent plugin root", StringComparison.Ordinal), "relative worker root rejected");
+            Assert(!File.Exists(Path.Combine(unitRoot, "relative.env")), "relative handoff produces no contract");
+
+            File.WriteAllText(promptFile, originalPrompt);
+            var stagedSkill = Path.Combine(relocatedPlugin, "skills", "blazor-component-readiness", "SKILL.md");
+            File.Delete(stagedSkill);
+            var missingSkill = RunHelper(
+                helper,
+                "--unit", unitRoot,
+                "--plugin-dir", relocatedPlugin,
+                "--prompt-file", promptFile,
+                "--output", Path.Combine(unitRoot, "missing-skill.env"));
+            Assert(missingSkill.ExitCode != 0 && missingSkill.StandardError.Contains("missing blazor-component-readiness SKILL.md", StringComparison.Ordinal), "missing bundled skill rejected");
+        }
+        finally
+        {
+            if (Directory.Exists(testRoot))
+            {
+                Directory.Delete(testRoot, recursive: true);
+            }
+        }
+    }
+
+    private static ProcessResult RunHelper(string helper, params string[] arguments)
+    {
+        var startInfo = new ProcessStartInfo("/bin/bash")
+        {
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false
+        };
+        startInfo.ArgumentList.Add(helper);
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("could not start worker launch helper");
+        var standardOutput = process.StandardOutput.ReadToEndAsync();
+        var standardError = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        return new ProcessResult(
+            process.ExitCode,
+            standardOutput.GetAwaiter().GetResult(),
+            standardError.GetAwaiter().GetResult());
+    }
+
+    private static string[] SourceContract(string contract)
+    {
+        var startInfo = new ProcessStartInfo("/bin/bash")
+        {
+            RedirectStandardError = true,
+            RedirectStandardOutput = true,
+            UseShellExecute = false
+        };
+        startInfo.ArgumentList.Add("-c");
+        startInfo.ArgumentList.Add(". \"$1\"; printf '%s\\n' \"$PLUGIN_ROOT\" \"$CLI_PLUGIN_DIR\" \"$WORKER_PROMPT_FILE\"");
+        startInfo.ArgumentList.Add("source-contract");
+        startInfo.ArgumentList.Add(contract);
+
+        using var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException("could not source worker launch contract");
+        var standardOutput = process.StandardOutput.ReadToEndAsync();
+        var standardError = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        var output = standardOutput.GetAwaiter().GetResult();
+        var error = standardError.GetAwaiter().GetResult();
+        Assert(process.ExitCode == 0, $"sourcing worker launch contract: {error}");
+        return output.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+    }
+
+    private static void CopyDirectory(string source, string destination)
+    {
+        Directory.CreateDirectory(destination);
+        foreach (var file in Directory.GetFiles(source))
+        {
+            File.Copy(file, Path.Combine(destination, Path.GetFileName(file)));
+        }
+
+        foreach (var directory in Directory.GetDirectories(source))
+        {
+            CopyDirectory(directory, Path.Combine(destination, Path.GetFileName(directory)));
+        }
+    }
+
+    private sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError);
 
     private static void AssertContains(string value, string expected, string name) =>
         Assert(
