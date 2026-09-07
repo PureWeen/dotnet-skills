@@ -130,6 +130,65 @@ For a package-only assessment:
 <launcher> evidence bundle --assessment <assessment-identity.json> --source-ledger <repository-ledger.json> --ids <EV1-id,...> --output <evidence.json>
 ```
 
+### Passing selected evidence IDs without retyping
+
+For a single validated, immutable ledger, this optional Bash/`jq` example separates assessor
+selection from ID transport. Run the blocks in the same shell, using the `readiness` function
+from SKILL.md. Inspect the listing's zero-based index, ID, claim, kind, and locator; choose
+records for their actual relevance, not their position alone. New output paths are required.
+
+```bash
+set -euo pipefail
+set -o noclobber
+LEDGER="<retained-ledger.json>"
+LISTING="<disposable-ledger-listing.tsv>"
+if ! command -v jq >/dev/null 2>&1; then
+  printf '%s\n' "optional ledger projection skipped: jq is unavailable" >&2
+  exit 2
+fi
+jq -r '.records | to_entries[] | [.key, .value.stable_id, .value.claim, .value.provenance.kind, .value.provenance.locator] | @tsv' "$LEDGER" > "$LISTING"
+```
+
+Read the listing in bounded ranges. The following consumes the assessor's explicit indexes
+against that same ledger and assigns the generated IDs to one explicitly chosen requirement
+in a new untrusted draft. Replace `[1,0]` and the requirement placeholder with your selection;
+they are examples, not defaults. Do not reuse indexes with a different or rebuilt ledger.
+
+```bash
+INDEXES_JSON='[1,0]'
+ROW_ID="<requirement-id>"
+IDS_CSV=$(jq -r --argjson indexes "$INDEXES_JSON" '
+  .records as $records |
+  if ($indexes | type) != "array" or ($indexes | length) == 0 then error("nonempty index array required")
+  elif any($indexes[]; type != "number") then error("numeric indexes required")
+  elif any($indexes[]; . != floor or . < 0 or . >= ($records | length)) then error("integer index out of range")
+  elif ($indexes | unique | length) != ($indexes | length) then error("duplicate index")
+  else [$indexes[] as $index | $records[$index].stable_id] | join(",")
+  end' "$LEDGER")
+jq --arg ids "$IDS_CSV" --arg row "$ROW_ID" '
+  if ([.rows[] | select(.id == $row)] | length) != 1 then error("requirement must resolve exactly once")
+  else .rows |= map(if .id == $row then .evidence_ids = ($ids | split(",")) else . end)
+  end' \
+  "<assessment-draft.json>" > "<assessment-with-selected-ids.json>"
+readiness evidence bundle --assessment "<assessment-identity.json>" \
+  --source-ledger "$LEDGER" --ids "$IDS_CSV" --output "<new-evidence.json>"
+```
+
+The listing and row draft are disposable inspection/authoring outputs, not replacements for the
+machine-owned ledger or canonical assessment. This is not automatic select-all: selection remains
+assessor-owned. Stop on missing, ambiguous, malformed, duplicate, or incompatible records; do not
+fuzzy-match claims, repair/truncate IDs, deduplicate selections, sort bundle selection, or infer
+provenance. This example selects evidence for one row, not every row automatically. For additional
+rows, explicitly select the relevant records and read their IDs from the same ledger rather than
+typing hash strings. Include every intentionally used ID in the explicit bundle selection.
+Preserve its order; use ordinary `assessment canonicalize` for ordinal row/finding/summary
+reference ordering, then validate the final assessment and bundle. The draft above changes no
+statuses or conclusions and is not a completed assessment.
+
+If `jq` is unavailable, record that this optional example could not run; do not install it or
+claim the handoff succeeded. Preserve any partial output on failure and follow the run's recovery
+policy. Canonical ledgers, identities, and accepted reports remain unchanged.
+
 For unified or component scope, use that scope's existing `assessment init` options
 (including the selected component and required package revision), then export its identity
 the same way. A component ledger uses:

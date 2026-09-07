@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using BlazorComponentReadiness.Validator.Cli;
 using BlazorComponentReadiness.Validator.Contracts;
 using BlazorComponentReadiness.Validator.Evidence;
@@ -1610,6 +1611,242 @@ internal static class EvidenceTests
                 File.ReadAllBytes(repositoryLedgerPath));
             var componentLedger = CanonicalEvidenceJson.ParseSourceLedger(
                 File.ReadAllBytes(componentLedgerPath));
+            var selectionDraftPath = Path.Combine(root, "selection-draft.json");
+            var selectionLedgerPath = Path.Combine(root, "selection-ledger.json");
+            File.WriteAllText(
+                selectionDraftPath,
+                DraftJson(
+                [
+                    RepositoryDraft(
+                        EvidenceIdentity.OwnerDeclaredClosedSource,
+                        "source",
+                        "The package owner declared the package closed source."),
+                    RepositoryDraft(
+                        EvidenceIdentity.VendorPublicDocumentation,
+                        "https://docs.example.com/widgets/keyboard",
+                        "Vendor documentation states keyboard support."),
+                    RepositoryDraft(
+                        EvidenceIdentity.ReproducedRuntimeObservation,
+                        "probe://sample-widgets/keyboard",
+                        "The bounded keyboard probe completed successfully.")
+                ]),
+                new UTF8Encoding(false));
+            RunProcess(
+                "dotnet",
+                [
+                    validatorDll,
+                    "evidence",
+                    "ledger-build",
+                    "--kind",
+                    "repository",
+                    "--subject",
+                    subjectPath,
+                    "--draft",
+                    selectionDraftPath,
+                    "--nupkg",
+                    packagePath,
+                    "--output",
+                    selectionLedgerPath
+                ],
+                repositoryRoot,
+                environment,
+                expectedExitCode: 0);
+            var selectionLedgerBytes = File.ReadAllBytes(selectionLedgerPath);
+            var selectionLedger = CanonicalEvidenceJson.ParseSourceLedger(selectionLedgerBytes);
+            var listingPath = Path.Combine(root, "disposable ledger listing.tsv");
+            var inputCandidates = File.ReadAllText(Path.Combine(
+                    pluginRoot,
+                    "skills",
+                    "blazor-component-readiness",
+                    "references",
+                    "input-candidates.md"));
+            var projectionScript = ExtractBashBlock(inputCandidates, "### Passing selected evidence IDs");
+            var selectionScript = ExtractBashBlock(inputCandidates, "following consumes the assessor");
+            if (OperatingSystem.IsWindows())
+            {
+                Console.WriteLine("Skipping optional Bash/jq ledger handoff on Windows.");
+            }
+            else
+            {
+                var jqAvailable = RunProcess(
+                    "/bin/bash", ["-c", "command -v jq"], repositoryRoot, environment, expectedExitCode: null);
+                Assert(jqAvailable.ExitCode is 0 or 1, $"jq discovery failed: {jqAvailable.StandardError}");
+                if (jqAvailable.ExitCode == 1)
+                {
+                    Console.WriteLine("Skipping optional ledger handoff: jq is unavailable.");
+                }
+                else
+                {
+                    var documentedScript = $"""
+                        VALIDATOR="$6"
+                        readiness() ( dotnet "$VALIDATOR" "$@" )
+                        {projectionScript
+                            .Replace("LEDGER=\"<retained-ledger.json>\"", "LEDGER=\"$1\"", StringComparison.Ordinal)
+                            .Replace("LISTING=\"<disposable-ledger-listing.tsv>\"", "LISTING=\"$2\"", StringComparison.Ordinal)}
+                        {selectionScript
+                            .Replace("\"<assessment-draft.json>\"", "\"$3\"", StringComparison.Ordinal)
+                            .Replace("\"<assessment-with-selected-ids.json>\"", "\"$4\"", StringComparison.Ordinal)
+                            .Replace("\"<assessment-identity.json>\"", "\"$7\"", StringComparison.Ordinal)
+                            .Replace("\"<new-evidence.json>\"", "\"$8\"", StringComparison.Ordinal)
+                            .Replace("\"<requirement-id>\"", "\"LP-02\"", StringComparison.Ordinal)}
+                        printf '%s' "$IDS_CSV" > "$5"
+                        """;
+                    var rowDraftPath = Path.Combine(root, "assessment draft with selected IDs.json");
+                    var rowInputPath = Path.Combine(root, "assessment draft.json");
+                    var rowDraftBytes = Encoding.UTF8.GetBytes(
+                        """{"rows":[{"id":"LP-01","observation":"Unchanged first row.","evidence_ids":[]},{"id":"LP-02","observation":"Unchanged selected row.","evidence_ids":[]}]}""");
+                    File.WriteAllBytes(rowInputPath, rowDraftBytes);
+                    var idsPath = Path.Combine(root, "selected IDs.csv");
+                    var selectedBundlePath = Path.Combine(root, "selected.bundle.json");
+                    var projection = RunProcess(
+                        "bash",
+                        [
+                            "-c",
+                            documentedScript,
+                            "ledger-id-projection",
+                            selectionLedgerPath,
+                            listingPath,
+                            rowInputPath,
+                            rowDraftPath,
+                            idsPath,
+                            validatorDll,
+                            assessmentPath,
+                            selectedBundlePath
+                        ],
+                        repositoryRoot,
+                        environment,
+                        expectedExitCode: 0);
+                    Assert(projection.StandardError.Length == 0, "ledger ID projection has no stderr");
+                    AssertBytes(selectionLedgerBytes, File.ReadAllBytes(selectionLedgerPath), "ledger projection preserves source bytes");
+                    AssertBytes(rowDraftBytes, File.ReadAllBytes(rowInputPath), "handoff preserves input draft");
+                    var listingLines = File.ReadAllLines(listingPath);
+                    AssertEqual(selectionLedger.Records.Count, listingLines.Length, "ledger projection record count");
+                    Assert(
+                        listingLines.Select(line => int.Parse(line.Split('\t')[0]))
+                            .SequenceEqual(Enumerable.Range(0, selectionLedger.Records.Count)),
+                        "ledger projection exposes zero-based indexes");
+                    Assert(
+                        listingLines.Select(line => line.Split('\t')[1])
+                            .SequenceEqual(selectionLedger.Records.Select(record => record.StableId)),
+                        "ledger projection preserves stable ID order");
+                    Assert(
+                        listingLines.Select(line => line.Split('\t')[2])
+                            .SequenceEqual(selectionLedger.Records.Select(record => record.Claim)),
+                        "ledger projection preserves stable ID claims");
+                    Assert(
+                        listingLines.Select(line => line.Split('\t')[4])
+                            .SequenceEqual(selectionLedger.Records.Select(record => record.Provenance.Locator)),
+                        "ledger projection exposes exact provenance locators");
+
+                    var selectedIds = File.ReadAllText(idsPath).Split(',', StringSplitOptions.RemoveEmptyEntries);
+                    AssertSequence(
+                        [selectionLedger.Records[1].StableId, selectionLedger.Records[0].StableId],
+                        selectedIds,
+                        "documented selection preserves explicit reverse order");
+                    using (var rowDraft = JsonDocument.Parse(File.ReadAllBytes(rowDraftPath)))
+                    {
+                        AssertSequence(
+                            selectedIds,
+                            rowDraft.RootElement.GetProperty("rows")[1].GetProperty("evidence_ids")
+                                .EnumerateArray()
+                                .Select(value => value.GetString()),
+                            "documented selection reaches row references");
+                        AssertEqual(0, rowDraft.RootElement.GetProperty("rows")[0].GetProperty("evidence_ids").GetArrayLength(),
+                            "explicit requirement selection does not modify first row");
+                        AssertEqual("Unchanged selected row.", rowDraft.RootElement.GetProperty("rows")[1].GetProperty("observation").GetString(),
+                            "selection preserves the assessor's observation");
+                    }
+                    var selectedBundle = CanonicalEvidenceJson.ParseBundle(File.ReadAllBytes(selectedBundlePath));
+                    AssertSequence(selectedIds, selectedBundle.Selection.Select(selection => selection.EvidenceId), "projected explicit ID selection order");
+                    Assert(
+                        !selectedBundle.Selection.Any(selection =>
+                            selection.EvidenceId == selectionLedger.Records[2].StableId),
+                        "projected selection leaves an unselected ledger record");
+                    var truncatedBundlePath = Path.Combine(root, "truncated.bundle.json");
+                    RunProcess(
+                        "dotnet",
+                        [
+                            validatorDll,
+                            "evidence",
+                            "bundle",
+                            "--assessment",
+                            assessmentPath,
+                            "--source-ledger",
+                            selectionLedgerPath,
+                            "--ids",
+                            selectedIds[0][..^1],
+                            "--output",
+                            truncatedBundlePath
+                        ],
+                        repositoryRoot,
+                        environment,
+                        expectedExitCode: ExitCodes.ValidationFailure);
+                    Assert(!File.Exists(truncatedBundlePath), "truncated projected ID writes no bundle");
+
+                    var listingBytes = File.ReadAllBytes(listingPath);
+                    var collision = RunProcess(
+                        "bash",
+                        [
+                            "-c",
+                            documentedScript,
+                            "ledger-id-projection",
+                            selectionLedgerPath,
+                            listingPath,
+                            rowInputPath,
+                            Path.Combine(root, "collision row draft.json"),
+                            Path.Combine(root, "collision IDs.csv"),
+                            validatorDll,
+                            assessmentPath,
+                            Path.Combine(root, "collision.bundle.json")
+                        ],
+                        repositoryRoot,
+                        environment,
+                        expectedExitCode: 1);
+                    Assert(
+                        collision.StandardError.Contains("cannot overwrite", StringComparison.OrdinalIgnoreCase),
+                        "documented projection protects existing listing");
+                    AssertBytes(
+                        listingBytes,
+                        File.ReadAllBytes(listingPath),
+                        "existing listing remains unchanged");
+
+                    foreach (var indexes in new[] { "[]", "[1,1]", "[-1]", "[3]", "[0.5]", "[\"1\"]", "null" })
+                    {
+                        var prefix = Path.Combine(root, $"invalid-index-{Guid.NewGuid():N}");
+                        var invalidScript = documentedScript.Replace("INDEXES_JSON='[1,0]'", $"INDEXES_JSON='{indexes}'", StringComparison.Ordinal);
+                        var invalid = RunProcess(
+                            "bash",
+                            ["-c", invalidScript, "invalid-selection", selectionLedgerPath, prefix + ".tsv",
+                                rowInputPath, prefix + ".row.json", prefix + ".csv", validatorDll,
+                                assessmentPath, prefix + ".bundle.json"],
+                            repositoryRoot, environment, expectedExitCode: 5);
+                        Assert(invalid.StandardError.Contains("index", StringComparison.Ordinal),
+                            "invalid selection fails in the documented selector");
+                        Assert(!File.Exists(prefix + ".row.json") && !File.Exists(prefix + ".bundle.json"),
+                            "invalid selection writes no row draft or bundle");
+                    }
+
+                    foreach (var rows in new[]
+                    {
+                        """{"rows":[{"id":"LP-01","evidence_ids":[]}]}""",
+                        """{"rows":[{"id":"LP-02","evidence_ids":[]},{"id":"LP-02","evidence_ids":[]}]}"""
+                    })
+                    {
+                        var prefix = Path.Combine(root, $"invalid-row-{Guid.NewGuid():N}");
+                        File.WriteAllText(prefix + ".input.json", rows);
+                        var invalid = RunProcess(
+                            "bash",
+                            ["-c", documentedScript, "invalid-row", selectionLedgerPath, prefix + ".tsv",
+                                prefix + ".input.json", prefix + ".row.json", prefix + ".csv", validatorDll,
+                                assessmentPath, prefix + ".bundle.json"],
+                            repositoryRoot, environment, expectedExitCode: 5);
+                        Assert(invalid.StandardError.Contains("requirement must resolve exactly once", StringComparison.Ordinal),
+                            "missing or duplicate requirement fails explicitly");
+                        Assert(!File.Exists(prefix + ".bundle.json"), "invalid requirement writes no bundle");
+                    }
+                    AssertBytes(selectionLedgerBytes, File.ReadAllBytes(selectionLedgerPath), "negative handoffs preserve ledger");
+                }
+            }
             var selected = string.Join(
                 ',',
                 repositoryLedger.Records[0].StableId,
@@ -1909,19 +2146,26 @@ internal static class EvidenceTests
             record.Supersedes);
 
     private static string DraftJson(EvidenceRecordDraft draft)
+        => DraftJson([draft]);
+
+    private static string DraftJson(IReadOnlyList<EvidenceRecordDraft> drafts)
     {
         static string Escape(string value) =>
             value.Replace("\\", "\\\\", StringComparison.Ordinal)
                 .Replace("\"", "\\\"", StringComparison.Ordinal);
 
-        var componentId = draft.Applicability.ComponentId is null
-            ? "null"
-            : $"\"{Escape(draft.Applicability.ComponentId)}\"";
-        var supersedes = string.Join(
-            ',',
-            draft.Supersedes.Select(value => $"\"{Escape(value)}\""));
-        return
-            $$"""{"schema_version":1,"records":[{"claim":"{{Escape(draft.Claim)}}","applicability":{"scope":"{{draft.Applicability.Scope}}","component_id":{{componentId}}},"provenance":{"kind":"{{draft.Provenance.Kind}}","locator":"{{Escape(draft.Provenance.Locator)}}","method":"{{Escape(draft.Provenance.Method)}}","captured_at_utc":"{{draft.Provenance.CapturedAtUtc}}","content_sha256":{"algorithm":"sha256","value":"{{draft.Provenance.ContentDigest.Value}}"},"retention":"commitment-only"},"supersedes":[{{supersedes}}]}]}""";
+        var records = drafts.Select(draft =>
+        {
+            var componentId = draft.Applicability.ComponentId is null
+                ? "null"
+                : $"\"{Escape(draft.Applicability.ComponentId)}\"";
+            var supersedes = string.Join(
+                ',',
+                draft.Supersedes.Select(value => $"\"{Escape(value)}\""));
+            return
+                $$"""{"claim":"{{Escape(draft.Claim)}}","applicability":{"scope":"{{draft.Applicability.Scope}}","component_id":{{componentId}}},"provenance":{"kind":"{{draft.Provenance.Kind}}","locator":"{{Escape(draft.Provenance.Locator)}}","method":"{{Escape(draft.Provenance.Method)}}","captured_at_utc":"{{draft.Provenance.CapturedAtUtc}}","content_sha256":{"algorithm":"sha256","value":"{{draft.Provenance.ContentDigest.Value}}"},"retention":"commitment-only"},"supersedes":[{{supersedes}}]}""";
+        });
+        return $$"""{"schema_version":1,"records":[{{string.Join(',', records)}}]}""";
     }
 
     private static void CreatePackage(
@@ -2011,12 +2255,24 @@ internal static class EvidenceTests
             $"{name} message: {error}");
     }
 
+    private static string ExtractBashBlock(string markdown, string anchor)
+    {
+        var anchorIndex = markdown.IndexOf(anchor, StringComparison.Ordinal);
+        Assert(anchorIndex >= 0, $"documented selection anchor exists: {anchor}");
+        var blockStart = markdown.IndexOf("```bash", anchorIndex, StringComparison.Ordinal);
+        Assert(blockStart >= 0, $"documented Bash block exists: {anchor}");
+        blockStart += "```bash".Length;
+        var blockEnd = markdown.IndexOf("```", blockStart, StringComparison.Ordinal);
+        Assert(blockEnd >= 0, $"documented Bash block closes: {anchor}");
+        return markdown[blockStart..blockEnd].Trim();
+    }
+
     private static ProcessResult RunProcess(
         string executable,
         IReadOnlyList<string> arguments,
         string workingDirectory,
         IReadOnlyDictionary<string, string> environment,
-        int expectedExitCode)
+        int? expectedExitCode)
     {
         var startInfo = new ProcessStartInfo(executable)
         {
@@ -2058,9 +2314,12 @@ internal static class EvidenceTests
             process.ExitCode,
             standardOutput.Result,
             standardError.Result);
-        Assert(
-            result.ExitCode == expectedExitCode,
-            $"{executable} exit code: expected {expectedExitCode}, actual {result.ExitCode}.\n{result}");
+        if (expectedExitCode is { } expected)
+        {
+            Assert(
+                result.ExitCode == expected,
+                $"{executable} exit code: expected {expected}, actual {result.ExitCode}.\n{result}");
+        }
         return result;
     }
 
