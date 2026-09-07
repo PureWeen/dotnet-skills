@@ -33,6 +33,7 @@ internal static class AssessmentTests
         try
         {
             var fixture = CreateInputFixture(root);
+            TestCandidateBuilder(fixture);
             var packageRevision = CreatePackageRevision(fixture);
             TestRevisionPathSafety(fixture, packageRevision);
             var packageBinding = RevisionService.LoadPackageBinding(
@@ -60,6 +61,103 @@ internal static class AssessmentTests
                 Directory.Delete(root, recursive: true);
             }
         }
+    }
+
+    private static void TestCandidateBuilder(Fixture fixture)
+    {
+        var sequence = 0;
+        var current = string.Empty;
+        string Run(string command, params string[] arguments)
+        {
+            var next = Path.Combine(fixture.Root, $"constructed-{sequence++}.json");
+            string[] input = command == "init" ? [] : ["--input", current];
+            var stdout = new StringWriter();
+            var stderr = new StringWriter();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    ["inputs", "candidates", command, .. input, .. arguments, "--output", next],
+                    stdout, stderr),
+                $"candidate construction {command}: {stderr}");
+            current = next;
+            return next;
+        }
+
+        var initial = Run("init",
+            "--acquisition", "release-candidate",
+            "--package-locator", "Sample.Widgets.01.002.000.nupkg",
+            "--package-method", "local-file",
+            "--source-availability", "source-available",
+            "--repository-uri", "HTTPS://GitHub.Example.COM/Vendor/Widgets/",
+            "--source-commit", "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "--source-mapping", "Package metadata and source tag map to this commit.",
+            "--source-confidence", "HIGH");
+        var initialBytes = File.ReadAllBytes(initial);
+        var first = Run("add-document", "--url", "HTTPS://Docs.Example.COM/Widgets/", "--path", "docs.html");
+        current = initial;
+        var repeated = Run("add-document", "--url", "HTTPS://Docs.Example.COM/Widgets/", "--path", "docs.html");
+        Assert(File.ReadAllBytes(first).SequenceEqual(File.ReadAllBytes(repeated)), "candidate command is deterministic");
+        Assert(initialBytes.SequenceEqual(File.ReadAllBytes(initial)), "candidate commands preserve predecessor bytes");
+
+        Run("add-retrieval", "--subject", "package", "--locator", "Sample.Widgets.01.002.000.nupkg",
+            "--method", "local-file", "--result", "succeeded");
+        Run("add-retrieval", "--subject", "source", "--locator", "https://source.example.test/widgets",
+            "--method", "repository-fetch", "--result", "succeeded", "--detail", "The exact source commit was acquired.");
+        Run("add-package-source", "--kind", "package-readme", "--locator", "package:entry/README.md", "--path", "package-readme.md");
+        Run("add-source-artifact", "--source-path", "src/FancyTree.razor", "--path", "source-captures/FancyTree.razor");
+        Run("add-owner-input", "--path", "owner-audit.txt", "--provenance", "owner-supplied-internal-evidence");
+        Run("add-component", "--id", " Fancy Tree ", "--name", "Fancy Tree",
+            "--mode", "Server", "--mode", "STATIC SSR", "--mode", "WASM",
+            "--source-path", "src/FancyTree.razor", "--source-path", "src/FancyTree.razor.cs",
+            "--lifecycle-applicability", "not-applicable",
+            "--lifecycle-rationale", "This bounded fixture does not manage grouped, registered, selected, or composite children.");
+        Run("add-exclusion", "--subject", "Mobile browser matrix", "--rationale", "Explicitly outside this bounded assessment.");
+        var built = File.ReadAllBytes(current);
+
+        using (var document = JsonDocument.Parse(built))
+        {
+            var documentation = document.RootElement.GetProperty("documentation").EnumerateArray().Single();
+            AssertSequence(
+                ["url", "content_path"],
+                documentation.EnumerateObject().Select(property => property.Name),
+                "candidate documentation facts shape");
+            Assert(
+                !documentation.TryGetProperty("content_sha256", out _),
+                "candidate builder leaves content hashes to discovery");
+        }
+
+        var discovered = InputManifestService.Discover(fixture.Root, fixture.NupkgPath, built);
+        var confirmed = InputManifestService.Confirm(discovered, fixture.Root);
+        InputManifestService.Validate(confirmed, fixture.Root, requireConfirmed: true);
+
+        var rejected = Path.Combine(fixture.Root, "rejected-candidate.json");
+        var output = new StringWriter();
+        var error = new StringWriter();
+        AssertEqual(
+            ExitCodes.InvalidUsage,
+            CliApplication.Run(["inputs", "candidates", "add-document", "--input", current,
+                "--url", "https://example.test", "--path", "docs.html", "--content-sha256", new string('a', 64),
+                "--output", rejected], output, error),
+            "candidate command rejects hash arguments");
+        Assert(!File.Exists(rejected), "invalid options do not create a candidate");
+
+        var invalid = JsonNode.Parse(built)!.AsObject();
+        invalid["documentation"]![0]!["content_sha256"] = new JsonObject
+        {
+            ["algorithm"] = "sha256",
+            ["value"] = new string('a', 64)
+        };
+        var malformed = Path.Combine(fixture.Root, "malformed-candidate.json");
+        File.WriteAllText(malformed, invalid.ToJsonString());
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(["inputs", "candidates", "add-document", "--input", malformed,
+                "--url", "https://example.test", "--path", "docs.html", "--output", rejected], output, error),
+            "candidate command rejects malformed existing state without stripping fields");
+        Assert(!File.Exists(rejected), "malformed state does not create a candidate");
+        ExpectValidation(
+            () => InputManifestService.Discover(fixture.Root, fixture.NupkgPath, File.ReadAllBytes(malformed)),
+            "original discovery remains strict");
     }
 
     internal static Fixture CreateInputFixture(string root)
@@ -852,6 +950,14 @@ internal static class AssessmentTests
             ExitCodes.Success,
             CliApplication.Run(["report", "--help"], output, error),
             "report help");
+        output.GetStringBuilder().Clear();
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(["inputs", "candidates", "add-document", "--help"], output, error),
+            "inputs candidates add-document help");
+        Assert(
+            output.ToString().Contains("without authoring JSON", StringComparison.Ordinal),
+            "candidate help explains the typed command input");
         foreach (var command in new[] { "discover", "confirm", "validate" })
         {
             output.GetStringBuilder().Clear();

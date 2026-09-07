@@ -57,4 +57,19 @@ internal sealed class CommandOptions
 
         return values[0];
     }
+
+    public IReadOnlyList<string> Many(string name)
+    {
+        if (!_values.TryGetValue(name, out var values))
+        {
+            return [];
+        }
+
+        if (values.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new UsageException($"Option '{name}' requires nonempty values.");
+        }
+
+        return values;
+    }
 }

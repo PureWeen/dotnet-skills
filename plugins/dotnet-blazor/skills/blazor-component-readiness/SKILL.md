@@ -139,13 +139,8 @@ Use the same launcher prefix below. Exit `0` means completion, not that all rows
    original project/source closure; see [library assessment](references/library-assessment.md).
 7. Show package/version/digest, sources, documents, inputs, modes, exclusions, and feedback before
    scoring. Ask owner.
-8. Canonicalize and freeze the manifest:
-
-   ```text
-   <launcher> inputs discover --root <output> --nupkg <exact.nupkg> --candidates <candidates.json> --output <input.draft.json>
-   <launcher> inputs confirm --root <output> --draft <input.draft.json> --output <input.confirmed.json>
-   <launcher> inputs validate --root <output> --manifest <input.confirmed.json>
-   ```
+8. Use [candidate construction](references/input-candidates.md): `inputs candidates` owns the JSON;
+   never hand-author it. Then run `inputs discover`, `inputs confirm`, and `inputs validate`.
 
 For a library, use the inventory commands and [library assessment](references/library-assessment.md):
 

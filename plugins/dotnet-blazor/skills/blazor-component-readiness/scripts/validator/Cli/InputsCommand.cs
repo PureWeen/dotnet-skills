@@ -10,6 +10,7 @@ public static class InputsCommand
         Canonical input manifests
 
         Usage:
+          readiness-validator inputs candidates <init|add-...> --help
           readiness-validator inputs discover --root <dir> --nupkg <path> --candidates <json> --output <draft>
           readiness-validator inputs confirm --root <dir> --draft <json> --output <confirmed>
           readiness-validator inputs validate --root <dir> --manifest <confirmed>
@@ -25,6 +26,7 @@ public static class InputsCommand
 
         return args[0] switch
         {
+            "candidates" => InputCandidatesCommand.Run(args.Skip(1).ToArray(), output),
             "discover" => Discover(args.Skip(1).ToArray(), output),
             "confirm" => Confirm(args.Skip(1).ToArray(), output),
             "validate" => Validate(args.Skip(1).ToArray(), output),

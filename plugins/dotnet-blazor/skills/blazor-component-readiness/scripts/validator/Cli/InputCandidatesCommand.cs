@@ -1,0 +1,135 @@
+using BlazorComponentReadiness.Validator.Inputs;
+using BlazorComponentReadiness.Validator.IO;
+
+namespace BlazorComponentReadiness.Validator.Cli;
+
+internal static class InputCandidatesCommand
+{
+    private const string Help =
+        """
+        Construct discovery candidates with typed options, without authoring JSON.
+
+        Usage: readiness-validator inputs candidates <command> [options]
+
+        init --acquisition <published|release-candidate>
+             --package-locator <url|path> --package-method <method>
+             --source-availability <source-available|closed-source|unresolved>
+             [--repository-uri <url>] [--source-commit <commit>]
+             [--source-mapping <text>] [--source-confidence <confidence>] --output <new.json>
+
+        Each add command requires --input <previous.json> --output <new.json>:
+          add-document --url <url> --path <local-path>
+          add-package-source --kind <kind> --locator <locator> --path <local-path>
+          add-source-artifact --source-path <repository-path> --path <local-path>
+          add-retrieval --subject <subject> --locator <locator> --method <method>
+                        --result <result> [--detail <text>]
+          add-evidence --path <local-path> --kind <kind>
+          add-owner-input --path <local-path> --provenance <provenance>
+          add-component --id <id> --name <name> --mode <mode> [--mode <mode> ...]
+                        [--source-path <path> ...] --lifecycle-applicability <value>
+                        [--lifecycle-trigger <trigger> ...] [--lifecycle-rationale <text>]
+          add-exclusion --subject <subject> --rationale <text>
+
+        All output files must be new. Pass the latest output to the next command.
+        Empty collections mean nothing has been recorded yet, not confirmed absence.
+        Do not edit generated JSON or supply hashes. inputs discover computes hashes
+        and validates completeness and semantics against the retained package/files.
+        Creation does not confirm owner inputs or the assessment scope.
+        """;
+
+    public static int Run(IReadOnlyList<string> args, TextWriter output)
+    {
+        if (args.Count == 0 || args[0] is "--help" or "-h" ||
+            (args.Count == 2 && args[1] is "--help" or "-h"))
+        {
+            output.WriteLine(Help);
+            return ExitCodes.Success;
+        }
+
+        string[] allowed = args[0] switch
+        {
+            "init" => new[] { "--acquisition", "--package-locator", "--package-method",
+                "--source-availability", "--repository-uri", "--source-commit",
+                "--source-mapping", "--source-confidence" },
+            "add-document" => ["--url", "--path"],
+            "add-package-source" => ["--kind", "--locator", "--path"],
+            "add-source-artifact" => ["--source-path", "--path"],
+            "add-retrieval" => ["--subject", "--locator", "--method", "--result", "--detail"],
+            "add-evidence" => ["--path", "--kind"],
+            "add-owner-input" => ["--path", "--provenance"],
+            "add-component" => ["--id", "--name", "--mode", "--source-path",
+                "--lifecycle-applicability", "--lifecycle-trigger", "--lifecycle-rationale"],
+            "add-exclusion" => ["--subject", "--rationale"],
+            _ => throw new UsageException($"Unknown inputs candidates command '{args[0]}'.")
+        };
+        var options = CommandOptions.Parse(
+            args.Skip(1).ToArray(),
+            args[0] == "init" ? [.. allowed, "--output"] : [.. allowed, "--input", "--output"]);
+        var facts = args[0] == "init" ? Initialize(options) : Add(args[0], options);
+        var bytes = InputCandidateBuilder.Build(facts);
+        var fullPath = Path.GetFullPath(options.Single("--output"));
+        var parent = Path.GetDirectoryName(fullPath)
+            ?? throw new UsageException("Output path requires a parent directory.");
+        Directory.CreateDirectory(parent);
+        AtomicFile.WriteNew(parent, Path.GetFileName(fullPath), bytes);
+        return ExitCodes.Success;
+    }
+
+    private static InputCandidateFacts Initialize(CommandOptions options) => new(
+        InputManifestService.SchemaVersion,
+        options.Single("--acquisition"),
+        options.Single("--package-locator"),
+        options.Single("--package-method"),
+        options.Single("--source-availability"),
+        options.Optional("--repository-uri"),
+        options.Optional("--source-commit"),
+        options.Optional("--source-mapping"),
+        options.Optional("--source-confidence"),
+        [], [], [], [], [], [], [], []);
+
+    private static InputCandidateFacts Add(string command, CommandOptions options)
+    {
+        var facts = InputCandidateBuilder.Read(BoundedIO.ReadAllBytes(
+            options.Single("--input"), ResourceLimits.SerializedArtifactBytes, "input candidates"));
+        return command switch
+        {
+            "add-document" => facts with
+            {
+                Documentation = [.. facts.Documentation, new(options.Single("--url"), options.Single("--path"))]
+            },
+            "add-package-source" => facts with
+            {
+                PackageSources = [.. facts.PackageSources, new(options.Single("--kind"),
+                    options.Single("--locator"), options.Single("--path"))]
+            },
+            "add-source-artifact" => facts with
+            {
+                SourceArtifacts = [.. facts.SourceArtifacts, new(options.Single("--source-path"), options.Single("--path"))]
+            },
+            "add-retrieval" => facts with
+            {
+                RetrievalAttempts = [.. facts.RetrievalAttempts, new(options.Single("--subject"),
+                    options.Single("--locator"), options.Single("--method"), options.Single("--result"), options.Optional("--detail"))]
+            },
+            "add-evidence" => facts with
+            {
+                EvidenceInputs = [.. facts.EvidenceInputs, new(options.Single("--path"), options.Single("--kind"))]
+            },
+            "add-owner-input" => facts with
+            {
+                OwnerInputs = [.. facts.OwnerInputs, new(options.Single("--path"), options.Single("--provenance"))]
+            },
+            "add-component" => facts with
+            {
+                Components = [.. facts.Components, new(options.Single("--id"), options.Single("--name"),
+                    options.Many("--mode"), options.Many("--source-path"), options.Single("--lifecycle-applicability"),
+                    options.Many("--lifecycle-trigger"), options.Optional("--lifecycle-rationale"))]
+            },
+            "add-exclusion" => facts with
+            {
+                Exclusions = [.. facts.Exclusions, new(options.Single("--subject"), options.Single("--rationale"))]
+            },
+            _ => throw new UsageException($"Unknown inputs candidates command '{command}'.")
+        };
+    }
+}

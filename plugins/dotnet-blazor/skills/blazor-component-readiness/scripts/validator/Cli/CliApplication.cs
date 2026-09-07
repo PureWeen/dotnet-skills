@@ -14,6 +14,7 @@ public static class CliApplication
 
         Commands:
           package inspect    Inspect the exact identity and digest of a local .nupkg.
+          inputs candidates  Construct discovery candidates with typed init/add options.
           inputs discover    Canonicalize discovery candidates into a draft input manifest.
           inputs confirm     Freeze a validated draft as an immutable confirmed manifest.
           inputs validate    Recheck confirmed manifest package and local input bytes.
