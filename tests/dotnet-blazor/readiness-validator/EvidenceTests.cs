@@ -21,6 +21,7 @@ internal static class EvidenceTests
     {
         TestKnownAnswersAndCanonicalBytes();
         TestCliCommandSurface();
+        TestPackageInspectionPersistence(repositoryRoot);
         TestAssessmentKindsAndManifestBinding();
         TestNuGetVersionNormalization(repositoryRoot);
         TestPublicProvenanceKinds();
@@ -146,6 +147,15 @@ internal static class EvidenceTests
         var error = new StringWriter();
         AssertEqual(
             ExitCodes.Success,
+            CliApplication.Run(["package", "inspect", "--help"], output, error),
+            "package inspection help exit");
+        Assert(
+            output.ToString().Contains("--output <new-file>", StringComparison.Ordinal),
+            "package inspection help documents persisted output");
+        output.GetStringBuilder().Clear();
+        error.GetStringBuilder().Clear();
+        AssertEqual(
+            ExitCodes.Success,
             CliApplication.Run(["evidence", "--help"], output, error),
             "evidence help exit");
         foreach (var command in new[] { "ledger-build", "ledger-validate", "bundle" })
@@ -222,6 +232,146 @@ internal static class EvidenceTests
                 "2.4.0-beta.1+build.9",
                 result.RootElement.GetProperty("package_version").GetString(),
                 "package inspect emits canonical version");
+        }
+        finally
+        {
+            if (Directory.Exists(root))
+            {
+                Directory.Delete(root, recursive: true);
+            }
+        }
+    }
+
+    private static void TestPackageInspectionPersistence(string repositoryRoot)
+    {
+        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-package-inspection-tests");
+        if (Directory.Exists(root))
+        {
+            Directory.Delete(root, recursive: true);
+        }
+
+        Directory.CreateDirectory(root);
+        try
+        {
+            var packagePath = Path.Combine(root, "Inspection.Sample.1.2.3.nupkg");
+            CreatePackage(packagePath, "Inspection.Sample", "1.2.3");
+            var packageBytes = File.ReadAllBytes(packagePath);
+            var stdout = new StringWriter { NewLine = Environment.NewLine };
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(["package", "inspect", "--nupkg", packagePath], stdout, new StringWriter()),
+                "package inspection stdout exit");
+            var expectedBytes = Encoding.UTF8.GetBytes(stdout.ToString());
+            var outputPath = Path.Combine(root, "package-inspection.json");
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    ["package", "inspect", "--nupkg", packagePath, "--output", outputPath],
+                    new StringWriter(),
+                    new StringWriter()),
+                "package inspection persisted exit");
+            var persistedOutput = new StringWriter();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    ["package", "inspect", "--nupkg", packagePath, "--output", Path.Combine(root, "stdout-empty.json")],
+                    persistedOutput,
+                    new StringWriter()),
+                "package inspection persisted stdout exit");
+            AssertEqual(
+                string.Empty,
+                persistedOutput.ToString(),
+                "persisted package inspection does not write stdout");
+            AssertBytes(expectedBytes, File.ReadAllBytes(outputPath), "persisted package inspection bytes");
+            AssertBytes(packageBytes, File.ReadAllBytes(packagePath), "package inspection leaves input unchanged");
+            using var stdoutJson = StrictJson.Parse(
+                expectedBytes.AsSpan(..^Environment.NewLine.Length).ToArray(),
+                4096,
+                "stdout package inspection");
+            using var persistedJson = StrictJson.Parse(
+                File.ReadAllBytes(outputPath).AsSpan(..^Environment.NewLine.Length).ToArray(),
+                4096,
+                "persisted package inspection");
+            AssertEqual(
+                stdoutJson.RootElement.GetRawText(),
+                persistedJson.RootElement.GetRawText(),
+                "persisted package inspection identity");
+            var secondOutputPath = Path.Combine(root, "package-inspection-second.json");
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    ["package", "inspect", "--nupkg", packagePath, "--output", secondOutputPath],
+                    new StringWriter(),
+                    new StringWriter()),
+                "repeat package inspection persisted exit");
+            AssertBytes(
+                File.ReadAllBytes(outputPath),
+                File.ReadAllBytes(secondOutputPath),
+                "deterministic persisted package inspection");
+
+            foreach (var arguments in new IReadOnlyList<string>[]
+            {
+                ["package", "inspect", "--unknown", packagePath],
+                ["package", "inspect", "--nupkg", packagePath, "--nupkg", packagePath],
+                ["package", "inspect", "--nupkg", packagePath, "--output", outputPath, "--output", secondOutputPath],
+                ["package", "inspect", "--nupkg", ""],
+                ["package", "inspect", "--nupkg", packagePath, "--output", ""]
+            })
+            {
+                AssertEqual(
+                    ExitCodes.InvalidUsage,
+                    CliApplication.Run(arguments, new StringWriter(), new StringWriter()),
+                    $"package inspection invalid options '{string.Join(' ', arguments)}'");
+            }
+
+            var existingBytes = Encoding.UTF8.GetBytes("existing");
+            var existingPath = Path.Combine(root, "existing.json");
+            File.WriteAllBytes(existingPath, existingBytes);
+            AssertPackageInspectionFailure(
+                ["package", "inspect", "--nupkg", packagePath, "--output", existingPath],
+                ExitCodes.EnvironmentFailure,
+                existingPath,
+                "existing package inspection output",
+                requireAbsentOutput: false);
+            AssertBytes(existingBytes, File.ReadAllBytes(existingPath), "existing output remains unchanged");
+
+            var directoryPath = Path.Combine(root, "directory-output");
+            Directory.CreateDirectory(directoryPath);
+            AssertPackageInspectionFailure(
+                ["package", "inspect", "--nupkg", packagePath, "--output", directoryPath],
+                ExitCodes.ValidationFailure,
+                directoryPath,
+                "directory package inspection output");
+            var missingOutput = Path.Combine(root, "missing", "result.json");
+            AssertPackageInspectionFailure(
+                ["package", "inspect", "--nupkg", packagePath, "--output", missingOutput],
+                ExitCodes.EnvironmentFailure,
+                missingOutput,
+                "missing parent package inspection output");
+            AssertPackageInspectionFailure(
+                ["package", "inspect", "--nupkg", Path.Combine(root, "missing.nupkg"), "--output", Path.Combine(root, "missing-input.json")],
+                ExitCodes.EnvironmentFailure,
+                Path.Combine(root, "missing-input.json"),
+                "missing package inspection input");
+
+            var malformedPath = Path.Combine(root, "malformed.nupkg");
+            File.WriteAllText(malformedPath, "not a package", new UTF8Encoding(false));
+            AssertPackageInspectionFailure(
+                ["package", "inspect", "--nupkg", malformedPath, "--output", Path.Combine(root, "malformed.json")],
+                ExitCodes.ValidationFailure,
+                Path.Combine(root, "malformed.json"),
+                "malformed package inspection input");
+            var linkedPath = Path.Combine(root, "linked-output.json");
+            if (TryCreateFileSymlink(linkedPath, existingPath))
+            {
+                AssertPackageInspectionFailure(
+                    ["package", "inspect", "--nupkg", packagePath, "--output", linkedPath],
+                    ExitCodes.ValidationFailure,
+                    linkedPath,
+                    "symbolic-link package inspection output",
+                    requireAbsentOutput: false);
+                AssertBytes(existingBytes, File.ReadAllBytes(existingPath), "symlink target remains unchanged");
+            }
         }
         finally
         {
@@ -856,6 +1006,34 @@ internal static class EvidenceTests
                 "Release",
                 "net11.0",
                 "BlazorComponentReadiness.Validator.dll");
+            var inspectionPath = Path.Combine(root, "package-inspection.json");
+            var launcherInspection = RunProcess(
+                "bash",
+                [
+                    Path.Combine(validatorDirectory, "run-validator.sh"),
+                    "package",
+                    "inspect",
+                    "--nupkg",
+                    packagePath,
+                    "--output",
+                    inspectionPath
+                ],
+                repositoryRoot,
+                environment,
+                expectedExitCode: ExitCodes.Success);
+            Assert(
+                !launcherInspection.StandardOutput.Contains("\"package_id\"", StringComparison.Ordinal),
+                "launcher package inspection does not duplicate JSON on mixed stdout");
+            using (var launcherInspectionJson = StrictJson.Parse(
+                       File.ReadAllBytes(inspectionPath).AsSpan(..^Environment.NewLine.Length).ToArray(),
+                       4096,
+                       "launcher persisted package inspection"))
+            {
+                AssertEqual(
+                    "sample.widgets",
+                    launcherInspectionJson.RootElement.GetProperty("package_id").GetString(),
+                    "launcher persisted package inspection identity");
+            }
             RunProcess(
                 "dotnet",
                 [
@@ -1230,6 +1408,51 @@ internal static class EvidenceTests
                 using var output = additional.Open();
                 output.Write(pair.Value);
             }
+        }
+    }
+
+    private static void AssertPackageInspectionFailure(
+        IReadOnlyList<string> arguments,
+        int expectedExitCode,
+        string outputPath,
+        string name,
+        bool requireAbsentOutput = true)
+    {
+        AssertEqual(
+            expectedExitCode,
+            CliApplication.Run(arguments, new StringWriter(), new StringWriter()),
+            $"{name} exit");
+        if (requireAbsentOutput)
+        {
+            Assert(!File.Exists(outputPath), $"{name} does not create an output file");
+        }
+        var parent = Path.GetDirectoryName(outputPath);
+        if (parent is not null && Directory.Exists(parent))
+        {
+            Assert(
+                !Directory.EnumerateFiles(parent, $".{Path.GetFileName(outputPath)}.*.tmp").Any(),
+                $"{name} does not strand a temporary output");
+        }
+    }
+
+    private static bool TryCreateFileSymlink(string linkPath, string targetPath)
+    {
+        try
+        {
+            File.CreateSymbolicLink(linkPath, targetPath);
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return false;
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return false;
+        }
+        catch (IOException)
+        {
+            return false;
         }
     }
 

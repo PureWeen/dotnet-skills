@@ -122,8 +122,11 @@ Use the same launcher prefix below. Exit `0` means completion, not that all rows
 1. Inspect the package:
 
    ```text
-   <launcher> package inspect --nupkg <exact.nupkg>
+   <launcher> package inspect --nupkg <exact.nupkg> --output <output>/package-inspection.json
    ```
+
+   Read the retained six-field JSON; never redirect or filter launcher stdout (build diagnostics
+   can precede it).
 
 2. For published packages, follow [artifact acquisition](references/artifact-acquisition.md).
    Default to discovering the latest stable version, then ask the owner to confirm it. An explicit

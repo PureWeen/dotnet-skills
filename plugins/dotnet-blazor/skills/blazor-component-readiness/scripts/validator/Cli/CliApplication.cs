@@ -51,11 +51,12 @@ public static class CliApplication
         Inspect a local NuGet package
 
         Usage:
-          readiness-validator package inspect --nupkg <path>
+          readiness-validator package inspect --nupkg <path> [--output <new-file>]
 
         Output:
           Canonical JSON containing the exact package ID, version, archive digest,
-          archive size, and nuspec entry name.
+          archive size, and nuspec entry name. When --output is supplied, the
+          canonical JSON is written once to the new file instead of stdout.
         """;
 
     public static int Run(IReadOnlyList<string> args, TextWriter output, TextWriter error)
@@ -164,17 +165,10 @@ public static class CliApplication
             return ExitCodes.Success;
         }
 
-        if (args.Count != 3 || !string.Equals(args[1], "--nupkg", StringComparison.Ordinal))
-        {
-            throw new UsageException("Package inspection requires exactly '--nupkg <path>'.");
-        }
-
-        if (string.IsNullOrWhiteSpace(args[2]))
-        {
-            throw new UsageException("The --nupkg path cannot be empty.");
-        }
-
-        var identity = NupkgInspector.Inspect(args[2]);
+        var options = CommandOptions.Parse(args.Skip(1).ToArray(), "--nupkg", "--output");
+        var packagePath = options.Single("--nupkg");
+        var outputPath = options.Optional("--output");
+        var identity = NupkgInspector.Inspect(packagePath);
         var json = StrictJson.SerializeCanonical(writer =>
         {
             writer.WriteStartObject();
@@ -186,6 +180,17 @@ public static class CliApplication
             writer.WriteString("nuspec_entry", identity.NuspecEntry);
             writer.WriteEndObject();
         });
+
+        if (outputPath is not null)
+        {
+            var result = json.Concat(Encoding.UTF8.GetBytes(Environment.NewLine)).ToArray();
+            var fullOutputPath = Path.GetFullPath(outputPath);
+            var outputParent = Path.GetDirectoryName(fullOutputPath)
+                ?? throw new UsageException("Output path requires a parent directory.");
+            AtomicFile.WriteNew(outputParent, Path.GetFileName(fullOutputPath), result);
+            return ExitCodes.Success;
+        }
+
         output.Write(Encoding.UTF8.GetString(json));
         output.WriteLine();
         return ExitCodes.Success;

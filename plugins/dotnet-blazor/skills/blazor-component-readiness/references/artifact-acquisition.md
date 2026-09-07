@@ -27,6 +27,15 @@ and start a distinct package root when bytes change even if the semantic version
 
 ## Minimum package inspection
 
+Persist the canonical six-field package identity before inspecting its contents:
+
+```text
+<launcher> package inspect --nupkg <exact.nupkg> --output <output>/package-inspection.json
+```
+
+Read that retained JSON artifact rather than redirecting or filtering launcher stdout, because
+launcher build diagnostics can precede command output.
+
 - nuspec identity, license, repository, authors, project, and source-commit metadata;
 - files, target frameworks, dependencies, bundled scripts/styles/fonts/themes/notices;
 - every shipped managed assembly, keeping strong-name, Authenticode, and package signatures
