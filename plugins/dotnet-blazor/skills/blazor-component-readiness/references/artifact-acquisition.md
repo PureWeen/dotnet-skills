@@ -29,23 +29,37 @@ and start a distinct package root when bytes change even if the semantic version
 
 When the selected source is an already retained GitHub archive, extraction is an acquisition step,
 not a checkout. For a GitHub codeload archive, record the repository URI, exact commit, archive
-locator, top-level entry prefix, mapping rationale, and confidence, then verify selected files with:
+locator, top-level entry prefix, mapping rationale, and confidence. First inventory actual regular
+archive entries, then choose relevant entries by their numeric IDs; the inventory is structural
+source-file selection, not a component or library assessment inventory:
 
 ```text
-<launcher> source capture-archive --root <root> --archive <root-relative.tar.gz> \
+<launcher> source inventory-archive --root <root> --archive <root-relative.tar.gz> \
   --source-root <root-relative-extracted-source> --archive-prefix <github-top-level-directory> \
-  --archive-format tar.gz --repository-uri <repository-uri> --source-commit <40-hex-commit> \
+  --archive-format tar.gz --output <new-inventory.json>
+```
+
+Use the retained inventory's actual IDs with:
+
+```text
+<launcher> source capture-inventory --root <root> --inventory <inventory.json> \
+  --entry-id <1-based-entry-id> --repository-uri <repository-uri> --source-commit <40-hex-commit> \
   --source-mapping "<mapping-rationale>" --source-confidence <low|medium|high> \
-  --acquisition-locator <codeload-archive-url> --source-path <repository-relative-path> \
+  --acquisition-locator <codeload-archive-url> \
   --output <new-receipt.json>
 ```
 
-Read the retained receipt, not launcher stdout. `declared_source` records supplied provenance;
+Read the retained inventory and receipt, not launcher stdout. Repeat `--entry-id` for each
+selected file. IDs are local inventory references, not evidence IDs. The inventory is machine-owned:
+do not edit or reformat it. Inventory mappings are recomputed against the retained archive before
+capture; do not guess filenames or reconstruct paths manually.
+`declared_source` records supplied provenance;
 `archive` and `source_artifacts` record observed hashes and selected-file correspondence. The
 helper never invokes Git, extracts bytes, executes archive contents, or establishes remote commit
 truth. It does not establish complete project/import closure. Keep the receipt outside the extracted
 source tree. ZIP archives use `--archive-format zip`; `--expected-sha256` can bind an independently
-retained archive digest. Repeat `--source-path` for each selected file.
+retained archive digest. Existing `source capture-archive` remains available when exact source paths
+are already known.
 
 Use the same declared repository/commit/mapping/confidence in `inputs candidates init`. For each
 captured file, pass its `source_path` and `content_path` to

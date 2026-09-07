@@ -26,6 +26,9 @@ internal static class ArchiveCaptureTests
             TestTarGzipCapture(testRoot);
             TestCaptureFailures(testRoot);
             TestZipCapture(testRoot);
+            TestInventoryCaptureBridge(testRoot);
+            TestInventoryCoverage(testRoot);
+            TestInventoryHazards(testRoot);
         }
         finally
         {
@@ -350,18 +353,579 @@ internal static class ArchiveCaptureTests
             $"ZIP source capture: {error}");
     }
 
+    private static void TestInventoryCaptureBridge(string testRoot)
+        {
+            var root = Path.Combine(testRoot, "inventory-bridge");
+            var sourceRoot = Path.Combine(root, "extracted");
+            Directory.CreateDirectory(Path.Combine(sourceRoot, "src"));
+            File.WriteAllBytes(Path.Combine(sourceRoot, "src", "a.txt"), Encoding.UTF8.GetBytes("alpha"));
+            File.WriteAllBytes(Path.Combine(sourceRoot, "src", "b.txt"), Encoding.UTF8.GetBytes("bravo"));
+            var archivePath = Path.Combine(root, "archive.tar.gz");
+            CreateTarGzip(
+                archivePath,
+                ("bundle/src/a.txt", Encoding.UTF8.GetBytes("alpha")),
+                ("bundle/src/b.txt", Encoding.UTF8.GetBytes("bravo")));
+
+            var inventoryArguments = new[]
+            {
+                "source", "inventory-archive",
+                "--root", root,
+                "--archive", "archive.tar.gz",
+                "--source-root", "extracted",
+                "--archive-prefix", "bundle",
+                "--archive-format", "tar.gz",
+                "--output", "inventory.json"
+            };
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(inventoryArguments, new StringWriter(), new StringWriter()),
+                "inventory archive");
+            var inventoryBytes = File.ReadAllBytes(Path.Combine(root, "inventory.json"));
+            using (var inventory = JsonDocument.Parse(inventoryBytes))
+            {
+                AssertEqual(2, inventory.RootElement.GetProperty("entries").GetArrayLength(), "inventory entry count");
+                AssertEqual(
+                    "src/a.txt",
+                    inventory.RootElement.GetProperty("entries")[0].GetProperty("source_path").GetString(),
+                    "inventory first path");
+                AssertEqual(
+                    "src/b.txt",
+                    inventory.RootElement.GetProperty("entries")[1].GetProperty("source_path").GetString(),
+                    "inventory second path");
+            }
+
+            var common = new[]
+            {
+                "--repository-uri", "https://example.test/repository",
+                "--source-commit", "0123456789012345678901234567890123456789",
+                "--source-mapping", "selected retained archive",
+                "--source-confidence", "high",
+                "--acquisition-locator", "https://example.test/archive.tar.gz"
+            };
+            var bridgedArguments = new[]
+            {
+                "source", "capture-inventory",
+                "--root", root,
+                "--inventory", "inventory.json",
+                "--entry-id", "1"
+            }.Concat(common).Concat(["--output", "bridged.json"]).ToArray();
+            var bridgeError = new StringWriter();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(bridgedArguments, new StringWriter(), bridgeError),
+                $"capture inventory: {bridgeError}");
+            var directArguments = new[]
+            {
+                "source", "capture-archive",
+                "--root", root,
+                "--archive", "archive.tar.gz",
+                "--source-root", "extracted",
+                "--archive-prefix", "bundle",
+                "--archive-format", "tar.gz"
+            }.Concat(common).Concat(["--source-path", "src/a.txt", "--output", "direct.json"]).ToArray();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(directArguments, new StringWriter(), new StringWriter()),
+                "direct capture counterpart");
+            AssertBytes(
+                File.ReadAllBytes(Path.Combine(root, "direct.json")),
+                File.ReadAllBytes(Path.Combine(root, "bridged.json")),
+                "inventory bridge receipt equivalence");
+
+            File.WriteAllBytes(Path.Combine(sourceRoot, "src", "a.txt"), Encoding.UTF8.GetBytes("changed"));
+            var changedError = new StringWriter();
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    bridgedArguments.Select(value => value == "bridged.json" ? "changed.json" : value).ToArray(),
+                    new StringWriter(),
+                    changedError),
+                "changed extracted bytes rejected by inventory bridge");
+            Assert(!File.Exists(Path.Combine(root, "changed.json")), "changed inventory capture writes no receipt");
+        }
+
+    private static void TestInventoryCoverage(string testRoot)
+    {
+        var root = Path.Combine(testRoot, "inventory-coverage");
+        var sourceRoot = Path.Combine(root, "source");
+        Directory.CreateDirectory(Path.Combine(sourceRoot, "src"));
+        File.WriteAllBytes(Path.Combine(sourceRoot, "src", "A.txt"), Encoding.UTF8.GetBytes("upper"));
+        File.WriteAllBytes(Path.Combine(sourceRoot, "src", "a.txt"), Encoding.UTF8.GetBytes("lower"));
+        File.WriteAllBytes(Path.Combine(sourceRoot, "src", "z.txt"), Encoding.UTF8.GetBytes("zulu"));
+
+        var tarPath = Path.Combine(root, "prefixed.tar.gz");
+        CreateTarGzip(
+            tarPath,
+            ("bundle/src/z.txt", Encoding.UTF8.GetBytes("zulu")),
+            ("bundle/src/a.txt", Encoding.UTF8.GetBytes("lower")),
+            ("bundle/src/A.txt", Encoding.UTF8.GetBytes("upper")));
+        var tarInventory = RunInventory(
+            root,
+            "prefixed.tar.gz",
+            "source",
+            "bundle",
+            "tar.gz",
+            "prefixed-inventory.json");
+        AssertInventoryEntries(tarInventory, ["src/A.txt", "src/a.txt", "src/z.txt"], "prefixed TAR ordering");
+
+        var repeatedInventory = RunInventory(
+            root,
+            "prefixed.tar.gz",
+            "source",
+            "bundle",
+            "tar.gz",
+            "prefixed-inventory-2.json");
+        AssertBytes(tarInventory, repeatedInventory, "repeated TAR inventory bytes");
+        var inventoryPath = Path.Combine(root, "prefixed-inventory.json");
+        var originalInventory = File.ReadAllBytes(inventoryPath);
+        var collisionError = new StringWriter();
+        AssertEqual(
+            ExitCodes.EnvironmentFailure,
+            CliApplication.Run(
+                [
+                    "source", "inventory-archive", "--root", root, "--archive", "prefixed.tar.gz",
+                    "--source-root", "source", "--archive-prefix", "bundle", "--archive-format", "tar.gz",
+                    "--output", "prefixed-inventory.json"
+                ],
+                new StringWriter(),
+                collisionError),
+            "inventory output is immutable");
+        AssertBytes(originalInventory, File.ReadAllBytes(inventoryPath), "immutable inventory content");
+
+        var zipPath = Path.Combine(root, "unprefixed.zip");
+        using (var zip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+        {
+            foreach (var name in new[] { "src/A.txt", "src/a.txt", "src/z.txt" })
+            {
+                using var stream = zip.CreateEntry(name).Open();
+                stream.Write(File.ReadAllBytes(Path.Combine(sourceRoot, name)));
+            }
+        }
+
+        var zipInventory = RunInventory(root, "unprefixed.zip", "source", null, "zip", "unprefixed-inventory.json");
+        AssertInventoryEntries(zipInventory, ["src/A.txt", "src/a.txt", "src/z.txt"], "unprefixed ZIP ordering");
+        using (var document = JsonDocument.Parse(zipInventory))
+        {
+            AssertEqual(
+                string.Empty,
+                document.RootElement.GetProperty("archive_entry_prefix").GetString(),
+                "omitted prefix is represented canonically");
+        }
+
+        var expectedShaError = new StringWriter();
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                [
+                    "source", "inventory-archive", "--root", root, "--archive", "unprefixed.zip",
+                    "--source-root", "source", "--archive-format", "zip",
+                    "--expected-sha256", new string('0', 64), "--output", "wrong-sha.json"
+                ],
+                new StringWriter(),
+                expectedShaError),
+            "inventory expected digest mismatch");
+        Assert(!File.Exists(Path.Combine(root, "wrong-sha.json")), "wrong digest writes no inventory");
+
+        var common = new[]
+        {
+            "--repository-uri", "https://example.test/repository",
+            "--source-commit", "0123456789012345678901234567890123456789",
+            "--source-mapping", "selected retained archive",
+            "--source-confidence", "high",
+            "--acquisition-locator", "https://example.test/archive.zip"
+        };
+        var inventoryText = Encoding.UTF8.GetString(zipInventory);
+        RejectInventory("missing-property", Encoding.UTF8.GetBytes("{}"), common);
+        RejectInventory("wrong-type", Encoding.UTF8.GetBytes(inventoryText.Replace("\"schema_version\":1", "\"schema_version\":\"one\"", StringComparison.Ordinal)), common);
+        RejectInventory("null-property", Encoding.UTF8.GetBytes(inventoryText.Replace("\"archive_path\":\"unprefixed.zip\"", "\"archive_path\":null", StringComparison.Ordinal)), common);
+        RejectInventory("overflow-id", Encoding.UTF8.GetBytes(inventoryText.Replace("\"id\":1", "\"id\":2147483648", StringComparison.Ordinal)), common);
+        RejectInventory("altered-prefix", Encoding.UTF8.GetBytes(inventoryText.Replace("\"archive_entry_prefix\":\"\"", "\"archive_entry_prefix\":\"other\"", StringComparison.Ordinal)), common);
+        RejectInventory("altered-format", Encoding.UTF8.GetBytes(inventoryText.Replace("\"archive_format\":\"zip\"", "\"archive_format\":\"tar.gz\"", StringComparison.Ordinal)), common);
+        RejectInventory("altered-digest", Encoding.UTF8.GetBytes(inventoryText.Replace("\"archive_sha256\":\"", "\"archive_sha256\":\"0", StringComparison.Ordinal)), common);
+        RejectInventory("omitted-entry", Encoding.UTF8.GetBytes(inventoryText.Replace(",{\"id\":3,\"source_path\":\"src/z.txt\",\"archive_entry\":\"src/z.txt\"}", string.Empty, StringComparison.Ordinal)), common);
+        RejectInventory("altered-order", Encoding.UTF8.GetBytes(inventoryText.Replace(
+            "{\"id\":1,\"source_path\":\"src/A.txt\",\"archive_entry\":\"src/A.txt\"},{\"id\":2,\"source_path\":\"src/a.txt\",\"archive_entry\":\"src/a.txt\"}",
+            "{\"id\":2,\"source_path\":\"src/a.txt\",\"archive_entry\":\"src/a.txt\"},{\"id\":1,\"source_path\":\"src/A.txt\",\"archive_entry\":\"src/A.txt\"}",
+            StringComparison.Ordinal)), common);
+        RejectInventory("remapped-ids", Encoding.UTF8.GetBytes(inventoryText.Replace(
+            "{\"id\":1,\"source_path\":\"src/A.txt\",\"archive_entry\":\"src/A.txt\"},{\"id\":2,\"source_path\":\"src/a.txt\",\"archive_entry\":\"src/a.txt\"}",
+            "{\"id\":1,\"source_path\":\"src/a.txt\",\"archive_entry\":\"src/a.txt\"},{\"id\":2,\"source_path\":\"src/A.txt\",\"archive_entry\":\"src/A.txt\"}",
+            StringComparison.Ordinal)), common, "does not match the retained archive");
+        RejectSelection("unknown-id", ["999"], common);
+        RejectSelection("duplicate-id", ["1", "1"], common);
+        RejectSelection("nonnumeric-id", ["abc"], common);
+        RejectSelection("overflow-selection-id", ["999999999999999999999"], common);
+        RejectSelection("selection-count", Enumerable.Range(1, ResourceLimits.SourceArchiveSelectionCount + 1).Select(id => id.ToString()).ToArray(), common);
+
+        var archiveBytes = File.ReadAllBytes(zipPath);
+        File.Delete(zipPath);
+        using (var changedZip = ZipFile.Open(zipPath, ZipArchiveMode.Create))
+        {
+            changedZip.CreateEntry("src/A.txt");
+        }
+
+        var staleError = new StringWriter();
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                CaptureArgumentsFor("stale-receipt.json", ["1", "2", "3"]),
+                new StringWriter(),
+                staleError),
+            $"stale archive rejection: {staleError}");
+        Assert(!File.Exists(Path.Combine(root, "stale-receipt.json")), "stale archive writes no receipt");
+        File.WriteAllBytes(zipPath, archiveBytes);
+
+        var protectedError = new StringWriter();
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                [
+                    "source", "inventory-archive", "--root", root, "--archive", "unprefixed.zip",
+                    "--source-root", "source", "--archive-format", "zip", "--output", "source/inventory.json"
+                ],
+                new StringWriter(),
+                protectedError),
+            $"inventory output source protection: {protectedError}");
+        Assert(!File.Exists(Path.Combine(sourceRoot, "inventory.json")), "inventory never writes into source tree");
+
+        void RejectInventory(string name, byte[] bytes, string[] metadata, string? expectedMessage = null)
+        {
+            var inventoryName = name + ".json";
+            File.WriteAllBytes(Path.Combine(root, inventoryName), bytes);
+            var outputName = name + "-receipt.json";
+            var error = new StringWriter();
+            var exitCode = CliApplication.Run(
+                new[]
+                {
+                    "source", "capture-inventory", "--root", root, "--inventory", inventoryName, "--entry-id", "1"
+                }.Concat(metadata).Concat(["--output", outputName]).ToArray(),
+                new StringWriter(),
+                error);
+            AssertEqual(ExitCodes.ValidationFailure, exitCode, $"{name} malformed inventory must fail validation: {error}");
+            if (expectedMessage is not null)
+            {
+                Assert(error.ToString().Contains(expectedMessage, StringComparison.Ordinal),
+                    $"{name} reaches the expected validation boundary: {error}");
+            }
+
+            Assert(!File.Exists(Path.Combine(root, outputName)), $"{name} writes no receipt");
+        }
+
+        void RejectSelection(string name, string[] ids, string[] metadata)
+        {
+            var outputName = name + "-receipt.json";
+            var error = new StringWriter();
+            var arguments = new[] { "source", "capture-inventory", "--root", root, "--inventory", "unprefixed-inventory.json" }
+                .Concat(ids.SelectMany(id => new[] { "--entry-id", id }))
+                .Concat(metadata)
+                .Concat(["--output", outputName])
+                .ToArray();
+            var exitCode = CliApplication.Run(arguments, new StringWriter(), error);
+            Assert(exitCode == ExitCodes.ValidationFailure, $"{name} must be a validation failure: {error}");
+            Assert(!File.Exists(Path.Combine(root, outputName)), $"{name} writes no receipt");
+        }
+
+        string[] CaptureArgumentsFor(string outputName, string[] ids) =>
+        [
+            "source", "capture-inventory", "--root", root, "--inventory", "unprefixed-inventory.json",
+            .. ids.SelectMany(id => new[] { "--entry-id", id }),
+            .. common, "--output", outputName
+        ];
+
+        var captureArguments = CaptureArgumentsFor("source-receipt.json", ["1", "2", "3"]);
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(captureArguments, new StringWriter(), new StringWriter()),
+            "ZIP inventory capture");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                CaptureArgumentsFor("reversed-receipt.json", ["3", "2", "1"]),
+                new StringWriter(),
+                new StringWriter()),
+            "reversed inventory selection capture");
+        AssertBytes(
+            File.ReadAllBytes(Path.Combine(root, "source-receipt.json")),
+            File.ReadAllBytes(Path.Combine(root, "reversed-receipt.json")),
+            "caller selection order does not change receipt bytes");
+
+        var packagePath = Path.Combine(root, "package.nupkg");
+        CreatePackage(packagePath);
+        var candidates = Path.Combine(root, "candidates.json");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                [
+                    "inputs", "candidates", "init", "--acquisition", "published",
+                    "--package-locator", "package.nupkg", "--package-method", "local-file",
+                    "--source-availability", "source-available",
+                    "--repository-uri", "https://example.test/repository",
+                    "--source-commit", "0123456789012345678901234567890123456789",
+                    "--source-mapping", "selected retained archive", "--source-confidence", "high",
+                    "--output", candidates
+                ],
+                new StringWriter(),
+                new StringWriter()),
+            "candidate init from inventory capture");
+        var withSource = Path.Combine(root, "candidates-source.json");
+        var withRetrieval = Path.Combine(root, "candidates-retrieval.json");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                [
+                    "inputs", "candidates", "add-retrieval", "--input", candidates,
+                    "--subject", "package", "--locator", "package.nupkg", "--method", "local-file",
+                    "--result", "succeeded", "--output", withRetrieval
+                ],
+                new StringWriter(),
+                new StringWriter()),
+            "candidate retrieval from inventory capture");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                [
+                    "inputs", "candidates", "add-source-artifact", "--input", withRetrieval,
+                    "--source-path", "src/A.txt", "--path", "source/src/A.txt", "--output", withSource
+                ],
+                new StringWriter(),
+                new StringWriter()),
+            "candidate source artifact from inventory capture");
+        var manifest = InputManifestService.Discover(root, packagePath, File.ReadAllBytes(withSource));
+        AssertEqual(1, manifest.SourceArtifacts.Count, "inventory candidate source count");
+        AssertEqual("confirmed", InputManifestService.Confirm(manifest, root).State, "inventory candidate confirm");
+    }
+
+    private static void TestInventoryHazards(string testRoot)
+    {
+        var root = Path.Combine(testRoot, "inventory-hazards");
+        var sourceRoot = Path.Combine(root, "source");
+        Directory.CreateDirectory(Path.Combine(sourceRoot, "src"));
+        File.WriteAllText(Path.Combine(sourceRoot, "src", "file.txt"), "safe", Encoding.UTF8);
+
+        void RejectArchive(string name, Action<string> createArchive, string expectedMessage)
+        {
+            var archivePath = Path.Combine(root, name + ".tar.gz");
+            createArchive(archivePath);
+            var error = new StringWriter();
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    [
+                        "source", "inventory-archive", "--root", root, "--archive", Path.GetFileName(archivePath),
+                        "--source-root", "source", "--archive-prefix", "selected", "--archive-format", "tar.gz",
+                        "--output", name + ".json"
+                    ],
+                    new StringWriter(),
+                    error),
+                $"{name} inventory rejection");
+            Assert(
+                error.ToString().Contains(expectedMessage, StringComparison.OrdinalIgnoreCase),
+                $"{name} reports deterministic validation: {error}");
+            Assert(!File.Exists(Path.Combine(root, name + ".json")), $"{name} writes no inventory");
+        }
+
+        RejectArchive(
+            "unselected-traversal",
+            path => CreateTarGzip(path, ("selected/src/file.txt", Encoding.UTF8.GetBytes("safe")), ("../outside.txt", Encoding.UTF8.GetBytes("bad"))),
+            "safe regular archive path");
+        RejectArchive(
+            "out-of-prefix-duplicate",
+            path => CreateTarGzip(path, ("selected/src/file.txt", Encoding.UTF8.GetBytes("safe")), ("other/file.txt", Encoding.UTF8.GetBytes("one")), ("other/file.txt", Encoding.UTF8.GetBytes("two"))),
+            "duplicate entry");
+        RejectArchive(
+            "out-of-prefix-symlink",
+            path => CreateTarGzipWithEntries(path, writer =>
+            {
+                writer.WriteEntry(new PaxTarEntry(TarEntryType.RegularFile, "selected/src/file.txt")
+                {
+                    DataStream = new MemoryStream(Encoding.UTF8.GetBytes("safe"))
+                });
+                writer.WriteEntry(new PaxTarEntry(TarEntryType.SymbolicLink, "other/link")
+                {
+                    LinkName = "target"
+                });
+            }),
+            "not a regular file");
+        RejectArchive(
+            "out-of-prefix-special",
+            path => CreateTarGzipWithEntries(path, writer =>
+                writer.WriteEntry(new PaxTarEntry(TarEntryType.BlockDevice, "other/device"))),
+            "not a regular file");
+
+        var zipTraversal = Path.Combine(root, "unselected-traversal.zip");
+        using (var archive = ZipFile.Open(zipTraversal, ZipArchiveMode.Create))
+        {
+            using (var safe = archive.CreateEntry("selected/src/file.txt").Open())
+            {
+                safe.Write(Encoding.UTF8.GetBytes("safe"));
+            }
+
+            using (var unsafeEntry = archive.CreateEntry("../outside.txt").Open())
+            {
+                unsafeEntry.Write(Encoding.UTF8.GetBytes("bad"));
+            }
+        }
+
+        var zipTraversalError = new StringWriter();
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                [
+                    "source", "inventory-archive", "--root", root, "--archive", "unselected-traversal.zip",
+                    "--source-root", "source", "--archive-format", "zip", "--output", "zip-traversal.json"
+                ],
+                new StringWriter(),
+                zipTraversalError),
+            $"ZIP traversal inventory rejection: {zipTraversalError}");
+        Assert(!File.Exists(Path.Combine(root, "zip-traversal.json")), "ZIP traversal writes no inventory");
+
+        var zipDuplicate = Path.Combine(root, "unselected-duplicate.zip");
+        using (var archive = ZipFile.Open(zipDuplicate, ZipArchiveMode.Create))
+        {
+            foreach (var value in new[] { "one", "two" })
+            {
+                using (var duplicate = archive.CreateEntry("other/file.txt").Open())
+                {
+                    duplicate.Write(Encoding.UTF8.GetBytes(value));
+                }
+            }
+        }
+
+        var zipDuplicateError = new StringWriter();
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                [
+                    "source", "inventory-archive", "--root", root, "--archive", "unselected-duplicate.zip",
+                    "--source-root", "source", "--archive-format", "zip", "--output", "zip-duplicate.json"
+                ],
+                new StringWriter(),
+                zipDuplicateError),
+            $"ZIP duplicate inventory rejection: {zipDuplicateError}");
+        Assert(!File.Exists(Path.Combine(root, "zip-duplicate.json")), "ZIP duplicate writes no inventory");
+
+        var zipSymlink = Path.Combine(root, "unselected-symlink.zip");
+        using (var archive = ZipFile.Open(zipSymlink, ZipArchiveMode.Create))
+        {
+            var entry = archive.CreateEntry("other/link");
+            entry.ExternalAttributes = unchecked((int)(0xA000 << 16));
+        }
+
+        var zipSymlinkError = new StringWriter();
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                [
+                    "source", "inventory-archive", "--root", root, "--archive", "unselected-symlink.zip",
+                    "--source-root", "source", "--archive-format", "zip", "--output", "zip-symlink.json"
+                ],
+                new StringWriter(),
+                zipSymlinkError),
+            $"ZIP symlink inventory rejection: {zipSymlinkError}");
+        Assert(!File.Exists(Path.Combine(root, "zip-symlink.json")), "ZIP symlink writes no inventory");
+
+        var oversizedArchive = Path.Combine(root, "oversized.tar.gz");
+        using (var file = File.Create(oversizedArchive))
+        {
+            file.SetLength(ResourceLimits.SourceArchiveBytes + 1);
+        }
+
+        var oversizedError = new StringWriter();
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                [
+                    "source", "inventory-archive", "--root", root, "--archive", "oversized.tar.gz",
+                    "--source-root", "source", "--archive-format", "tar.gz", "--output", "oversized.json"
+                ],
+                new StringWriter(),
+                oversizedError),
+            $"inventory archive size rejection: {oversizedError}");
+        Assert(!File.Exists(Path.Combine(root, "oversized.json")), "oversized archive writes no inventory");
+
+        var missingInventoryError = new StringWriter();
+        var missingInventoryExitCode = CliApplication.Run(
+                [
+                    "source", "capture-inventory", "--root", root, "--inventory", "missing.json",
+                    "--entry-id", "1", "--repository-uri", "https://example.test/repository",
+                    "--source-commit", "0123456789012345678901234567890123456789",
+                    "--source-mapping", "mapping", "--source-confidence", "high",
+                    "--acquisition-locator", "https://example.test/archive.tar.gz", "--output", "missing-receipt.json"
+                ],
+                new StringWriter(),
+                missingInventoryError);
+        Assert(
+            missingInventoryExitCode != ExitCodes.Success &&
+            missingInventoryError.ToString().Contains("does not exist", StringComparison.OrdinalIgnoreCase),
+            $"missing inventory rejection is deterministic: {missingInventoryError}");
+        Assert(!File.Exists(Path.Combine(root, "missing-receipt.json")), "missing inventory writes no receipt");
+    }
+
+    private static byte[] RunInventory(
+        string root,
+        string archive,
+        string sourceRoot,
+        string? prefix,
+        string format,
+        string output)
+    {
+        var arguments = new List<string>
+        {
+            "source", "inventory-archive", "--root", root, "--archive", archive,
+            "--source-root", sourceRoot, "--archive-format", format, "--output", output
+        };
+        if (prefix is not null)
+        {
+            arguments.Add("--archive-prefix");
+            arguments.Add(prefix);
+        }
+
+        var error = new StringWriter();
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(arguments, new StringWriter(), error),
+            $"inventory {archive}: {error}");
+        return File.ReadAllBytes(Path.Combine(root, output));
+    }
+
+    private static void AssertInventoryEntries(byte[] bytes, string[] expected, string name)
+    {
+        using var document = JsonDocument.Parse(bytes);
+        var actual = document.RootElement.GetProperty("entries")
+            .EnumerateArray()
+            .Select(entry => entry.GetProperty("source_path").GetString())
+            .ToArray();
+        Assert(actual.SequenceEqual(expected), $"{name}: paths differ.");
+    }
+
     private static void CreateTarGzip(string path, string entryName, byte[] content)
+        => CreateTarGzip(path, [(entryName, content)]);
+
+    private static void CreateTarGzip(string path, params (string EntryName, byte[] Content)[] entries)
     {
         using var file = File.Create(path);
         using var gzip = new GZipStream(file, CompressionLevel.NoCompression);
         using var writer = new TarWriter(gzip, TarEntryFormat.Pax, leaveOpen: false);
         writer.WriteEntry(new PaxGlobalExtendedAttributesTarEntry(
             [new KeyValuePair<string, string>("comment", "Declared archive metadata, not remote identity proof")]));
-        var entry = new PaxTarEntry(TarEntryType.RegularFile, entryName)
+        foreach (var (entryName, content) in entries)
         {
-            DataStream = new MemoryStream(content, writable: false)
-        };
-        writer.WriteEntry(entry);
+            var entry = new PaxTarEntry(TarEntryType.RegularFile, entryName)
+            {
+                DataStream = new MemoryStream(content, writable: false)
+            };
+            writer.WriteEntry(entry);
+        }
+    }
+
+    private static void CreateTarGzipWithEntries(string path, Action<TarWriter> writeEntries)
+    {
+        using var file = File.Create(path);
+        using var gzip = new GZipStream(file, CompressionLevel.NoCompression);
+        using var writer = new TarWriter(gzip, TarEntryFormat.Pax, leaveOpen: false);
+        writer.WriteEntry(new PaxGlobalExtendedAttributesTarEntry(
+            [new KeyValuePair<string, string>("comment", "Declared archive metadata, not remote identity proof")]));
+        writeEntries(writer);
     }
 
     private static void CreatePackage(string path)

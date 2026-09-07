@@ -14,6 +14,10 @@ public static class CliApplication
 
         Commands:
           package inspect    Inspect the exact identity and digest of a local .nupkg.
+          source inventory-archive
+                             Inventory regular files in a retained source archive.
+          source capture-inventory
+                             Capture selected inventory entry IDs from an extracted source archive.
           source capture-archive
                              Capture selected files from an already extracted source archive.
           inputs candidates  Construct discovery candidates with typed init/add options.
@@ -210,9 +214,20 @@ public static class CliApplication
 
     private const string SourceCaptureHelp =
         """
-        Capture selected files from an already extracted source archive.
+        Inventory and capture selected files from an already extracted source archive.
 
         Usage:
+          readiness-validator source inventory-archive --root <root>
+            --archive <retained.tar.gz|zip> --source-root <extracted-directory>
+            [--archive-prefix <directory>] --archive-format <tar.gz|zip>
+            [--expected-sha256 <64-hex>] --output <new-inventory.json>
+
+          readiness-validator source capture-inventory --root <root>
+            --inventory <inventory.json> --entry-id <1-based-id> [--entry-id <id> ...]
+            --repository-uri <url> --source-commit <40-hex-commit>
+            --source-mapping <text> --source-confidence <low|medium|high>
+            --acquisition-locator <url> --output <new-receipt.json>
+
           readiness-validator source capture-archive --root <root>
             --archive <retained.tar.gz|zip> --source-root <extracted-directory>
             [--archive-prefix <directory>] --archive-format <tar.gz|zip>
@@ -233,7 +248,7 @@ public static class CliApplication
             return ExitCodes.Success;
         }
 
-        if (!string.Equals(args[0], "capture-archive", StringComparison.Ordinal))
+        if (args[0] is not ("inventory-archive" or "capture-inventory" or "capture-archive"))
         {
             throw new UsageException($"Unknown source command '{args[0]}'.");
         }
@@ -244,7 +259,55 @@ public static class CliApplication
             return ExitCodes.Success;
         }
 
-        var options = CommandOptions.Parse(
+        if (args[0] == "inventory-archive")
+        {
+            var options = CommandOptions.Parse(
+                args.Skip(1).ToArray(),
+                "--root",
+                "--archive",
+                "--source-root",
+                "--archive-prefix",
+                "--archive-format",
+                "--expected-sha256",
+                "--output");
+            _ = SourceArchiveCaptureService.InventoryArchive(
+                options.Single("--root"),
+                options.Single("--archive"),
+                options.Single("--source-root"),
+                options.Optional("--archive-prefix"),
+                options.Single("--archive-format"),
+                options.Optional("--expected-sha256"),
+                options.Single("--output"));
+            return ExitCodes.Success;
+        }
+
+        if (args[0] == "capture-inventory")
+        {
+            var options = CommandOptions.Parse(
+                args.Skip(1).ToArray(),
+                "--root",
+                "--inventory",
+                "--entry-id",
+                "--repository-uri",
+                "--source-commit",
+                "--source-mapping",
+                "--source-confidence",
+                "--acquisition-locator",
+                "--output");
+            _ = SourceArchiveCaptureService.CaptureInventory(
+                options.Single("--root"),
+                options.Single("--inventory"),
+                options.Many("--entry-id"),
+                options.Single("--repository-uri"),
+                options.Single("--source-commit"),
+                options.Single("--source-mapping"),
+                options.Single("--source-confidence"),
+                options.Single("--acquisition-locator"),
+                options.Single("--output"));
+            return ExitCodes.Success;
+        }
+
+        var captureOptions = CommandOptions.Parse(
             args.Skip(1).ToArray(),
             "--root",
             "--archive",
@@ -260,19 +323,19 @@ public static class CliApplication
             "--expected-sha256",
             "--output");
         _ = SourceArchiveCaptureService.Capture(
-            options.Single("--root"),
-            options.Single("--archive"),
-            options.Single("--source-root"),
-            options.Optional("--archive-prefix"),
-            options.Single("--archive-format"),
-            options.Single("--repository-uri"),
-            options.Single("--source-commit"),
-            options.Single("--source-mapping"),
-            options.Single("--source-confidence"),
-            options.Single("--acquisition-locator"),
-            options.Many("--source-path"),
-            options.Optional("--expected-sha256"),
-            options.Single("--output"));
+            captureOptions.Single("--root"),
+            captureOptions.Single("--archive"),
+            captureOptions.Single("--source-root"),
+            captureOptions.Optional("--archive-prefix"),
+            captureOptions.Single("--archive-format"),
+            captureOptions.Single("--repository-uri"),
+            captureOptions.Single("--source-commit"),
+            captureOptions.Single("--source-mapping"),
+            captureOptions.Single("--source-confidence"),
+            captureOptions.Single("--acquisition-locator"),
+            captureOptions.Many("--source-path"),
+            captureOptions.Optional("--expected-sha256"),
+            captureOptions.Single("--output"));
         return ExitCodes.Success;
     }
 

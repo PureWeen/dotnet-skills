@@ -1,4 +1,5 @@
 using System.Formats.Tar;
+using System.Globalization;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
@@ -11,6 +12,106 @@ namespace BlazorComponentReadiness.Validator.IO;
 /// </summary>
 public static class SourceArchiveCaptureService
 {
+    /// <summary>
+    /// Inventories actual archive paths without establishing source provenance or project completeness.
+    /// </summary>
+    public static byte[] InventoryArchive(
+        string root,
+        string archivePath,
+        string sourceRoot,
+        string? archivePrefix,
+        string archiveFormat,
+        string? expectedArchiveSha256,
+        string outputPath)
+    {
+        var document = BuildInventory(
+            root,
+            archivePath,
+            sourceRoot,
+            archivePrefix,
+            archiveFormat,
+            expectedArchiveSha256,
+            outputPath);
+        var bytes = SerializeInventory(document);
+        byte[] persistedBytes = [.. bytes, (byte)'\n'];
+        BoundedIO.EnsureLength(persistedBytes.Length, ResourceLimits.SerializedArtifactBytes, "source inventory");
+        var fullRoot = EnsureRoot(root);
+        AtomicFile.WriteNew(
+            fullRoot,
+            ResolveOutput(fullRoot, outputPath),
+            persistedBytes);
+        return bytes;
+    }
+
+    /// <summary>
+    /// Revalidates an inventory and resolves its selected IDs through the existing source capture verifier.
+    /// </summary>
+    public static byte[] CaptureInventory(
+        string root,
+        string inventoryPath,
+        IReadOnlyList<string> selectedEntryIds,
+        string repositoryUri,
+        string sourceCommit,
+        string sourceMapping,
+        string sourceConfidence,
+        string acquisitionLocator,
+        string outputPath)
+    {
+        var fullRoot = EnsureRoot(root);
+        var (inventoryRelativePath, inventoryFullPath) = ResolveFile(
+            fullRoot,
+            inventoryPath,
+            "source inventory");
+        var inventoryBytes = BoundedIO.ReadAllBytes(
+            inventoryFullPath,
+            ResourceLimits.SerializedArtifactBytes,
+            "source inventory");
+        var inventory = ParseInventory(inventoryBytes);
+        var canonicalInventory = SerializeInventory(inventory);
+        var inventoryWithoutFinalNewline = inventoryBytes.Length > 0 &&
+            inventoryBytes[^1] == (byte)'\n'
+                ? inventoryBytes[..^1]
+                : inventoryBytes;
+        if (!inventoryWithoutFinalNewline.AsSpan().SequenceEqual(canonicalInventory))
+        {
+            throw new DeterministicValidationException(
+                "The source inventory is not canonical.");
+        }
+
+        var archivePrefix = inventory.ArchiveEntryPrefix.Length == 0
+            ? null
+            : inventory.ArchiveEntryPrefix;
+        var recomputed = BuildInventory(
+            fullRoot,
+            inventory.ArchivePath,
+            inventory.SourceRoot,
+            archivePrefix,
+            inventory.ArchiveFormat,
+            inventory.ArchiveSha256,
+            inventoryRelativePath);
+        if (!SerializeInventory(recomputed).AsSpan().SequenceEqual(canonicalInventory))
+        {
+            throw new DeterministicValidationException(
+                "The source inventory does not match the retained archive.");
+        }
+
+        var selected = ResolveInventoryEntryIds(inventory, selectedEntryIds);
+        return Capture(
+            fullRoot,
+            inventory.ArchivePath,
+            inventory.SourceRoot,
+            archivePrefix,
+            inventory.ArchiveFormat,
+            repositoryUri,
+            sourceCommit,
+            sourceMapping,
+            sourceConfidence,
+            acquisitionLocator,
+            selected,
+            inventory.ArchiveSha256,
+            outputPath);
+    }
+
     /// <summary>
     /// Captures selected source files and writes a new deterministic receipt beneath <paramref name="root"/>.
     /// </summary>
@@ -168,7 +269,9 @@ public static class SourceArchiveCaptureService
 
     private static Dictionary<string, CapturedArchiveContent> ReadZip(
         byte[] archiveBytes,
-        IReadOnlyDictionary<string, string> selectedEntries)
+        IReadOnlyDictionary<string, string> selectedEntries,
+        string? inventoryPrefix = null,
+        ICollection<InventoryEntry>? inventoryEntries = null)
     {
         try
         {
@@ -200,6 +303,7 @@ public static class SourceArchiveCaptureService
                     continue;
                 }
 
+                AddInventoryEntry(inventoryEntries, inventoryPrefix, entry.FullName);
                 BoundedIO.EnsureLength(
                     entry.Length,
                     ResourceLimits.SourceArchiveExpandedBytes,
@@ -229,7 +333,9 @@ public static class SourceArchiveCaptureService
 
     private static Dictionary<string, CapturedArchiveContent> ReadTarGzip(
         byte[] archiveBytes,
-        IReadOnlyDictionary<string, string> selectedEntries)
+        IReadOnlyDictionary<string, string> selectedEntries,
+        string? inventoryPrefix = null,
+        ICollection<InventoryEntry>? inventoryEntries = null)
     {
         try
         {
@@ -284,6 +390,7 @@ public static class SourceArchiveCaptureService
                         $"The source archive file entry '{entry.Name}' has no data stream.");
                 }
 
+                AddInventoryEntry(inventoryEntries, inventoryPrefix, entry.Name);
                 var selected = selectedEntries.ContainsKey(entry.Name);
                 var content = ReadEntry(entry.DataStream ?? Stream.Null, selected, ref expandedBytes);
                 if (selected)
@@ -388,6 +495,213 @@ public static class SourceArchiveCaptureService
             : Path.GetFullPath(Path.Combine(root, path));
         var relative = Path.GetRelativePath(root, fullPath).Replace('\\', '/');
         return Canonicalization.RelativePath(relative, $"{resource} path");
+    }
+
+    private static SourceInventory BuildInventory(
+        string root,
+        string archivePath,
+        string sourceRoot,
+        string? archivePrefix,
+        string archiveFormat,
+        string? expectedArchiveSha256,
+        string outputPath)
+    {
+        var fullRoot = EnsureRoot(root);
+        var (archiveRelativePath, fullArchivePath) = ResolveFile(fullRoot, archivePath, "archive");
+        var (sourceRootRelativePath, _) = ResolveDirectory(fullRoot, sourceRoot, "source root");
+        var outputRelativePath = ResolveOutput(fullRoot, outputPath);
+        if (outputRelativePath.StartsWith(sourceRootRelativePath + "/", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new DeterministicValidationException(
+                "The source inventory must be outside the extracted source directory.");
+        }
+
+        var format = NormalizeFormat(archiveFormat, fullArchivePath);
+        var prefix = NormalizeArchivePrefix(archivePrefix);
+        var archiveBytes = BoundedIO.ReadAllBytes(
+            fullArchivePath,
+            ResourceLimits.SourceArchiveBytes,
+            "source archive");
+        var archiveSha256 = Convert.ToHexStringLower(SHA256.HashData(archiveBytes));
+        if (expectedArchiveSha256 is not null &&
+            !string.Equals(
+                NormalizeSha256(expectedArchiveSha256, "expected archive SHA-256"),
+                archiveSha256,
+                StringComparison.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                "The retained source archive does not match the expected SHA-256.");
+        }
+
+        var inventoryEntries = new List<InventoryEntry>();
+        _ = format switch
+        {
+            "tar.gz" => ReadTarGzip(archiveBytes, new Dictionary<string, string>(StringComparer.Ordinal), prefix, inventoryEntries),
+            "zip" => ReadZip(archiveBytes, new Dictionary<string, string>(StringComparer.Ordinal), prefix, inventoryEntries),
+            _ => throw new DeterministicValidationException($"Unsupported source archive format '{format}'.")
+        };
+        var ordered = inventoryEntries
+            .OrderBy(entry => entry.SourcePath, StringComparer.Ordinal)
+            .ToArray();
+        if (ordered.Length == 0)
+        {
+            throw new DeterministicValidationException(
+                "The source archive prefix contains no regular files.");
+        }
+
+        return new SourceInventory(
+            1,
+            archiveRelativePath,
+            sourceRootRelativePath,
+            format,
+            prefix,
+            archiveSha256,
+            archiveBytes.LongLength,
+            ordered.Select((entry, index) => entry with { Id = index + 1 }).ToArray());
+    }
+
+    private static byte[] SerializeInventory(SourceInventory inventory)
+    {
+        var bytes = StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            writer.WriteNumber("schema_version", inventory.SchemaVersion);
+            writer.WriteString("archive_path", inventory.ArchivePath);
+            writer.WriteString("source_root", inventory.SourceRoot);
+            writer.WriteString("archive_format", inventory.ArchiveFormat);
+            writer.WriteString("archive_entry_prefix", inventory.ArchiveEntryPrefix);
+            writer.WriteString("archive_sha256", inventory.ArchiveSha256);
+            writer.WriteNumber("archive_size", inventory.ArchiveSize);
+            writer.WritePropertyName("entries");
+            writer.WriteStartArray();
+            foreach (var entry in inventory.Entries)
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("id", entry.Id);
+                writer.WriteString("source_path", entry.SourcePath);
+                writer.WriteString("archive_entry", entry.ArchiveEntry);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
+        });
+        BoundedIO.EnsureLength(bytes.Length, ResourceLimits.SerializedArtifactBytes, "source inventory");
+        return bytes;
+    }
+
+    private static SourceInventory ParseInventory(ReadOnlyMemory<byte> bytes)
+    {
+        using var document = StrictJson.Parse(bytes, ResourceLimits.SerializedArtifactBytes, "source inventory");
+        var root = document.RootElement;
+        ContractJson.RequireProperties(
+            root,
+            "schema_version",
+            "archive_path",
+            "source_root",
+            "archive_format",
+            "archive_entry_prefix",
+            "archive_sha256",
+            "archive_size",
+            "entries");
+        var entryArray = ContractJson.Array(root, "entries");
+        if (entryArray.GetArrayLength() is 0 or > ResourceLimits.SourceArchiveEntryCount)
+        {
+            throw new DeterministicValidationException(
+                $"The source inventory requires between 1 and {ResourceLimits.SourceArchiveEntryCount} entries.");
+        }
+
+        var entries = entryArray.EnumerateArray()
+            .Select(element =>
+            {
+                ContractJson.RequireProperties(element, "id", "source_path", "archive_entry");
+                return new InventoryEntry(
+                    ContractJson.Int32(element, "id"),
+                    ContractJson.String(element, "source_path"),
+                    ContractJson.String(element, "archive_entry"));
+            })
+            .ToArray();
+        var inventory = new SourceInventory(
+            ContractJson.Int32(root, "schema_version"),
+            ContractJson.String(root, "archive_path"),
+            ContractJson.String(root, "source_root"),
+            ContractJson.String(root, "archive_format"),
+            ContractJson.String(root, "archive_entry_prefix"),
+            ContractJson.String(root, "archive_sha256"),
+            ContractJson.Int64(root, "archive_size"),
+            entries);
+        if (inventory.SchemaVersion != 1 ||
+            !inventory.Entries.Select(entry => entry.Id).SequenceEqual(Enumerable.Range(1, inventory.Entries.Count)) ||
+            inventory.Entries.Select(entry => entry.SourcePath).Distinct(StringComparer.Ordinal).Count() != inventory.Entries.Count)
+        {
+            throw new DeterministicValidationException(
+                "The source inventory has invalid entry IDs.");
+        }
+
+        if (inventory.ArchiveSize is <= 0 or > ResourceLimits.SourceArchiveBytes)
+        {
+            throw new DeterministicValidationException(
+                "The source inventory archive size is outside the source archive bounds.");
+        }
+
+        _ = NormalizeFormat(inventory.ArchiveFormat, inventory.ArchivePath);
+        _ = NormalizeArchivePrefix(
+            inventory.ArchiveEntryPrefix.Length == 0 ? null : inventory.ArchiveEntryPrefix);
+        _ = NormalizeSha256(inventory.ArchiveSha256, "archive SHA-256");
+        _ = Canonicalization.RelativePath(inventory.ArchivePath, "archive path");
+        _ = Canonicalization.RelativePath(inventory.SourceRoot, "source root");
+        foreach (var entry in inventory.Entries)
+        {
+            _ = Canonicalization.RelativePath(entry.SourcePath, "inventory source path");
+            SafePath.ValidateArchiveEntry(entry.ArchiveEntry, isSymbolicLink: false);
+            if (entry.SourcePath.Length == 0 ||
+                entry.ArchiveEntry.Length == 0 ||
+                !string.Equals(
+                    entry.ArchiveEntry,
+                    ArchivePath(inventory.ArchiveEntryPrefix, entry.SourcePath),
+                    StringComparison.Ordinal))
+            {
+                throw new DeterministicValidationException(
+                    "The source inventory contains an invalid entry mapping.");
+            }
+        }
+
+        return inventory;
+    }
+
+    private static string[] ResolveInventoryEntryIds(
+        SourceInventory inventory,
+        IReadOnlyList<string> values)
+    {
+        if (values.Count is 0 or > ResourceLimits.SourceArchiveSelectionCount)
+        {
+            throw new DeterministicValidationException(
+                $"source inventory IDs require between 1 and {ResourceLimits.SourceArchiveSelectionCount} entries.");
+        }
+
+        var ids = values.Select(value =>
+        {
+            if (!int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var id) ||
+                id <= 0)
+            {
+                throw new DeterministicValidationException(
+                    $"Source inventory entry ID '{value}' is not a positive number.");
+            }
+
+            return id;
+        }).ToArray();
+        if (ids.Distinct().Count() != ids.Length)
+        {
+            throw new DeterministicValidationException(
+                "Source inventory entry IDs must be unique.");
+        }
+
+        var byId = inventory.Entries.ToDictionary(entry => entry.Id);
+        return ids.Select(id => byId.TryGetValue(id, out var entry)
+                ? entry.SourcePath
+                : throw new DeterministicValidationException(
+                    $"Source inventory entry ID '{id}' is unknown."))
+            .ToArray();
     }
 
     private static string NormalizeFormat(string value, string archivePath)
@@ -505,6 +819,28 @@ public static class SourceArchiveCaptureService
     private static string ArchivePath(string prefix, string sourcePath) =>
         prefix.Length == 0 ? sourcePath : $"{prefix}/{sourcePath}";
 
+    private static void AddInventoryEntry(
+        ICollection<InventoryEntry>? inventoryEntries,
+        string? prefix,
+        string archiveEntry)
+    {
+        if (inventoryEntries is null || prefix is null)
+        {
+            return;
+        }
+
+        var sourcePath = prefix.Length == 0
+            ? archiveEntry
+            : archiveEntry.StartsWith(prefix + "/", StringComparison.Ordinal)
+                ? archiveEntry[(prefix.Length + 1)..]
+                : null;
+        if (sourcePath is not null && sourcePath.Length != 0)
+        {
+            _ = Canonicalization.RelativePath(sourcePath, "inventory source path");
+            inventoryEntries.Add(new InventoryEntry(0, sourcePath, archiveEntry));
+        }
+    }
+
     private static string CanonicalArchiveName(string name) =>
         name.EndsWith('/', StringComparison.Ordinal) ? name[..^1] : name;
 
@@ -525,4 +861,19 @@ public static class SourceArchiveCaptureService
         string ContentPath,
         string ArchiveEntry,
         string ContentSha256);
+
+    private sealed record InventoryEntry(
+        int Id,
+        string SourcePath,
+        string ArchiveEntry);
+
+    private sealed record SourceInventory(
+        int SchemaVersion,
+        string ArchivePath,
+        string SourceRoot,
+        string ArchiveFormat,
+        string ArchiveEntryPrefix,
+        string ArchiveSha256,
+        long ArchiveSize,
+        IReadOnlyList<InventoryEntry> Entries);
 }
