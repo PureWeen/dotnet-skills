@@ -102,6 +102,10 @@ internal static class WorkflowTests
         AssertContains(skill, "component assignment through a public `[Parameter]` setter is mutation", "parameter mutation boundary");
         AssertContains(skill, "mutable cascade proves `PERF-05` applicability, not a gap", "cascading rerender measurement boundary");
         AssertContains(skill, "legacy v1", "legacy assessment verification");
+        AssertContains(skill, "Package-only", "package-only mode");
+        AssertContains(skill, "components: []", "empty package inventory");
+        AssertContains(skill, "no component worker", "package-only worker boundary");
+        AssertContains(skill, "Skip this step for package-only.", "package-only skips library orchestration");
         AssertContains(skill, "Single component, unified", "unified mode");
         AssertContains(skill, "Single package, split", "split mode");
         AssertContains(skill, "Full library", "library mode");
@@ -251,6 +255,10 @@ internal static class WorkflowTests
         Assert(!coordinator.Contains("\"agent\"", StringComparison.Ordinal), "coordinator must not expose nested agent dispatch");
         Assert(!coordinator.Contains("\"Task\"", StringComparison.Ordinal), "coordinator must not expose nested task dispatch");
         AssertContains(coordinator, "Never invoke the worker through a nested agent/task tool.", "nested worker prohibition");
+        AssertContains(coordinator, "package-only", "coordinator package-only mode");
+        AssertContains(coordinator, "no component worker", "coordinator package-only worker boundary");
+        AssertContains(coordinator, "assessment init --kind package", "code-owned package assessment kind");
+        AssertContains(coordinator, "do not require inventory, workers, or an index", "package-only completion boundary");
         AssertContains(coordinator, "absolute trusted plugin root", "coordinator trusted plugin context");
         AssertContains(coordinator, "explicit trusted plugin root", "coordinator explicit source context");
         AssertContains(coordinator, "exact source path", "coordinator source identity receipt");
@@ -267,6 +275,7 @@ internal static class WorkflowTests
 
         AssertContains(worker, "user-invocable: false", "worker invocation");
         AssertContains(worker, "selected as the top-level agent", "top-level worker requirement");
+        AssertContains(worker, "A package unit may have", "worker empty package input");
         AssertContains(worker, "activation_method=explicit-file", "worker explicit file activation receipt");
         AssertContains(worker, "Do not invoke an unqualified `blazor-component-readiness` skill by name", "worker source-first activation");
         AssertContains(worker, "absolute trusted plugin root", "worker trusted plugin context");

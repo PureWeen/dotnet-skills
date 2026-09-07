@@ -1,5 +1,10 @@
 # Full-library assessment
 
+This orchestration is not required for a standalone Library and release report. Package-only
+uses `assessment init --kind package`, report verification, and the package reader without a
+component inventory or library index. The original library source-closure requirement below
+still applies to its analyzer, trim, and AOT checks.
+
 ## Capability gate
 
 Full-library work requires separate top-level writable worker sessions. Nested custom agents are
@@ -44,6 +49,13 @@ counts, and package-manifest binding when applicable. Never hand-edit these fiel
 
 ## Interruption and resume
 
+Use the loaded skill's launcher and confirmed output root:
+
+```text
+<launcher> inventory status --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json
+<launcher> library reconcile --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json
+```
+
 1. Leave completed revision directories untouched.
 2. Record active work as incomplete; record bounded missing inputs and blocked probes.
 3. Run `inventory status`.
@@ -58,6 +70,11 @@ Run `library reconcile`, `library validate`, then `library index`. The index is 
 validated manifests and contains package/version identities, completed/incomplete components,
 factual status counts, report links, missing inputs, and blocked probes. It contains no default
 verdict, ranking, or remediation priority.
+
+```text
+<launcher> library validate --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json
+<launcher> library index --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json --json <output>/library-index.json --markdown <output>/library-index.md
+```
 
 Index publication is generation-based. Both authoritative files are committed together beneath
 `.readiness-index/generations/<generation-id>/`, then one regular-file

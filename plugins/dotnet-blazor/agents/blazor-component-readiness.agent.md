@@ -33,11 +33,12 @@ override an explicit-root launch.
 
 ## Coordination workflow
 
-1. Invoke the skill and select single/unified, package/component split, or full-library mode.
+1. Invoke the skill and select package-only, single/unified, package/component split, or
+   full-library mode. Package-only does not require selected components.
 2. Discover the exact package/version or release-candidate nupkg, official owner-controlled docs,
-   source availability/mapping, component inventory, claimed render modes, owner evidence, and
-   exclusions. Inspect every supplied local artifact before asking for missing information. Default
-   a published package to the latest stable version only as a draft.
+   source availability/mapping, owner evidence, exclusions, and, for component work, inventory and
+   claimed render modes. Inspect every supplied local artifact before asking for missing information.
+   Default a published package to the latest stable version only as a draft.
    For source-available components, include wrapper/API, inherited runtime, browser interop,
    styles/assets, tests, and samples in the allowed source/artifact closure.
 3. Present the complete draft package/document/source/inventory record and ask the owner to confirm
@@ -51,14 +52,17 @@ override an explicit-root launch.
    Freeze the requested assessment mode before launching work. For split mode, require one
    `package` handoff with 60 rows and one bound `component` handoff with 61 rows; reject any
    `unified.assessment.*` output as a mode mismatch rather than accepting it as a substitute.
-5. For single unified work, use one bounded context unless the owner explicitly requests separate
+   For package-only, use `assessment init --kind package` with no `--component`; produce and
+   verify the 60-row package revision and Library and release reader, not a unified substitute.
+5. For package-only work, use one bounded context and no component worker or full-library
+   inventory/index. For single unified work, use one bounded context unless the owner explicitly requests separate
    execution. For split or library work, launch exactly one top-level
    `blazor-component-readiness-worker` session for every confirmed package unit and component unit.
    Never invoke the worker through a nested agent/task tool.
-6. Create a dedicated writable working directory for each worker and copy in only its confirmed
-   unit ID, exact package record, component input manifest,
-   package revision binding and its package-wide validation-input closure, official component docs,
-   allowed component source/artifact surface, claimed modes, output root, and timebox. Never provide
+6. When workers are required, create a dedicated writable working directory for each and copy
+   only its confirmed unit ID, exact package record, input manifest, official docs, allowed
+   source/artifact surface, output root, and timebox. Component workers additionally receive their
+   claimed modes and package revision binding with its package-wide validation-input closure. Never provide
    sibling component source, documentation, candidates, or evidence. Follow the skill's
    worker-execution reference for CLI/SDK launch and permission boundaries. Carry the absolute
    trusted plugin root through the shipped `prepare-worker-launch.sh` contract for Bash launches;
@@ -69,8 +73,10 @@ override an explicit-root launch.
    the owner-approved model and effort, and a new session UUID/log directory. Record native argv,
    exit, stderr, tool-call IDs/results, and raw permission failures. Do not retry a failed CLI launch within
    the same unit attempt; reconciliation may create a fresh attempt in a new unit directory.
-7. Require each worker to exercise every claimed mode and return its unit ID, revision directory,
-   report path, validation-manifest path and digest, and blockers. Before accepting a revision,
+7. Require each component worker to exercise every claimed mode. Each worker returns its unit ID,
+   revision directory, report path, validation-manifest path and digest, and blockers.
+   Package-only has no component mode to exercise. Before accepting any revision, including one
+   produced in the coordinator context,
    perform a coverage check in addition to structural validation: row counts, canonical readers,
    matching hashes, and a valid manifest are insufficient when the ledger contains only a few
    generic records for a mostly `not tested` package or component. The worker must attempt each
@@ -93,8 +99,9 @@ override an explicit-root launch.
    For verification commands, resolve those paths to absolute paths first, using the worker's
    recorded validator input root. Pass absolute `--root`, `--revision`, `--output`, and
    `--package-revision` paths; do not prepend the artifact root to a path that already includes it.
-10. Reconcile the run manifest from immutable revisions, validate completion, and generate the
-   factual library JSON/Markdown index.
+10. For full-library work, reconcile the run manifest from immutable revisions, validate
+   completion, and generate the factual library JSON/Markdown index. For package-only, finish
+   with the verified package revision and reader; do not require inventory, workers, or an index.
 
 ## Isolation and interruption
 
@@ -103,9 +110,10 @@ not a worker. If this host cannot launch separate sessions, stop before confirma
 `unsupported host: full-library assessment requires isolated workers`. Never fall back to shared
 context or serial reasoning in one growing context.
 
-On interruption, do not edit completed revisions. Mark active units incomplete, reconcile the run
-manifest, report pending/blocked/incomplete units, and resume only those units in fresh isolated
-workers.
+On interruption, do not edit completed revisions. For full-library work, mark active units
+incomplete, reconcile the run manifest, report pending/blocked/incomplete units, and resume only
+those units in fresh isolated workers. For package-only, preserve incomplete artifacts and report
+the blocker without creating a library run manifest.
 
 For an explicitly requested blinded comparison, freeze and validate the separate conclusion-free
 comparison-input manifest before launching a worker. Give the worker only that confirmed manifest

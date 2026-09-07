@@ -52,7 +52,8 @@ sibling identities there as non-evidence and never cite or reproduce them in com
    by permissions or content exclusion, fail closed; never try another path or reconstruct the
    skill from memory. Normal registered-skill behavior is only applicable when no explicit root is
    supplied, which is not a valid worker launch.
-2. Validate the confirmed input before investigation.
+2. Validate the confirmed input before investigation. A package unit may have
+   `components: []`; do not invent a component, component source closure, or component probe for it.
    In blinded comparison mode, first run `comparison inputs-validate`; fail closed before reading
    raw inputs if it fails. Reconcile every `available` or `blocked` coverage surface. For
    source-available component work, materialize the wrapper/API, inherited runtime, browser

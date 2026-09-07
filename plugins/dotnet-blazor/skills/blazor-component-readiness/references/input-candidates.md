@@ -50,6 +50,9 @@ Use the relevant typed commands for the rest of the discovered input closure:
 options. Only record real confirmed components when in scope; do not invent a component
 to satisfy validation. Empty collections in a newly initialized candidate mean no records
 have been added yet, not an owner-confirmed absence or an applicability decision.
+For package-only scope, omit `add-component`; discovery and confirmation accept an empty selected
+component list. It does not claim the package contains no controls. Package/source/evidence
+requirements still apply, and full-library inventories still require confirmed components.
 
 After the complete candidate record and owner confirmation required by the skill:
 

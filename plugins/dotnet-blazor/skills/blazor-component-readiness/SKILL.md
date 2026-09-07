@@ -38,7 +38,7 @@ stop with an environment limitation; do not weaken the launcher isolation.
 | Output root | Yes | User-approved local directory outside the reviewed repository. |
 | Package | Yes | Exact published package/version or supplied release-candidate `.nupkg`; confirm identity and SHA-256. |
 | Scope | Yes | One component, one package, or full library; full library requires confirmed inventory and isolated workers. |
-| Components | Yes | IDs/display names and every claimed render mode; owner confirms before probes. |
+| Components | Conditional | Unified/component/full-library require IDs/display names and every claimed mode; owner confirms before probes. Package-only may confirm `components: []`. |
 | Source | Yes | Record `source-available`, `closed-source`, or `unresolved`; never infer closed source from retrieval failure. |
 | Documentation | Yes | Discover official owner-controlled docs, package metadata/README, and source docs when available; owner confirms the set. |
 | Dynamic children | Conditional | Declare whether the component groups, registers, selects, or composes children; required surfaces use the post-initialization lifecycle matrix. |
@@ -102,16 +102,19 @@ Use the same launcher prefix below. Exit `0` means completion, not that all rows
 
 ## Select the mode
 
-1. **Single component, unified**: default when no already validated package revision exists. Assess
+1. **Package-only**: use `assessment init --kind package`, then report/reader validation.
+   May confirm `components: []`; no component worker or library inventory/index. Owns 60 current
+   package rows, including package contents, dependency, and SBOM checks.
+2. **Single component, unified**: default when no already validated package revision exists. Assess
    all 121 canonical rows for one component/package in one isolated context.
-2. **Single package, split**: create one 60-row package assessment, then a bound 61-row component
+3. **Single package, split**: create one 60-row package assessment, then a bound 61-row component
    assessment per confirmed component.
-3. **Full library**: create package assessments and one top-level writable worker per component.
+4. **Full library**: create package assessments and one top-level writable worker per component.
    Nested custom agents are not workers. If separate sessions are unavailable, fail before
    inventory confirmation with
    `unsupported host: full-library assessment requires isolated workers`; never use a shared-context
    or serialized fallback.
-4. **Targeted follow-up**: only for named rows or a bounded correction. It is not a complete
+5. **Targeted follow-up**: only for named rows or a bounded correction. It is not a complete
    readiness result; record selection and exclusions using
    [targeted profiles](references/targeted-profiles.md).
 
@@ -133,10 +136,11 @@ Use the same launcher prefix below. Exit `0` means completion, not that all rows
    package/version remains authoritative; a failed retrieval is an attempt, not proof of a gap.
 3. Discover official sources using [documentation discovery](references/documentation-discovery.md).
    Classify source as `source-available`, `closed-source`, or `unresolved`.
-4. Discover components and every claimed mode (`static-ssr`, `interactive-server`,
-   `interactive-webassembly`, `interactive-auto`, or `standalone-webassembly`).
-5. For each component, declare whether grouped, registered, selected, or composite children make
-   the dynamic-child lifecycle matrix required. Do not infer not-applicable from a missing probe.
+4. Package-only needs no component selection; otherwise discover components and every claimed
+   mode (`static-ssr`, `interactive-server`, `interactive-webassembly`, `interactive-auto`, or
+   `standalone-webassembly`).
+5. For each selected component, declare whether grouped, registered, selected, or composite children
+   require the dynamic-child lifecycle matrix. Do not infer not-applicable from a missing probe.
 6. For source-available components, capture wrapper/API, runtime, interop, styles/assets, tests,
    and samples. An archive alone is not closure. For library analyzer/trim/AOT checks, require the
    original project/source closure; see [library assessment](references/library-assessment.md).
@@ -182,7 +186,10 @@ Read the applicable area playbooks while collecting evidence:
 [CI/release](references/area-ci-release.md), and
 [support/lifecycle](references/area-support-lifecycle.md).
 
-### 3. Exercise every claimed render mode
+### 3. Run applicable probes
+
+Component assessments exercise every claimed render mode. Package-only still requires applicable
+package/source/toolchain probes, but no component runtime or lifecycle matrix.
 
 Create disposable consumer apps outside the reviewed repository. Use the exact package, not a local
 rebuild. For each claimed mode, record restore/build/start commands, runtime observations, browser
@@ -248,33 +255,15 @@ validation-manifest SHA-256, and blockers.
 
 ### 5. Coordinate a full library
 
-Follow [worker execution](references/worker-execution.md) and
-[library assessment](references/library-assessment.md). Launch one top-level writable worker per
-unit; nested agent/task invocations cannot produce artifacts. Exclude sibling inputs, then validate
-every path and digest. `library reconcile` derives package/component kind; filenames alone cannot
-satisfy a handoff.
-
-After interruption, leave completed revisions untouched, mark active units incomplete, run:
-
-```text
-<launcher> inventory status --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json
-<launcher> library reconcile --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json
-```
-
-Resume only pending, blocked-after-input, or incomplete units in new isolated contexts. When all
-units validate, run:
-
-```text
-<launcher> library validate --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json
-<launcher> library index --root <output> --inventory <output>/inventory.confirmed.json --run-manifest <output>/run-manifest.json --json <output>/library-index.json --markdown <output>/library-index.md
-```
-
-The JSON and Markdown arguments are compatibility caches. The authoritative index is the immutable
-generation named by `<output>/.readiness-index/current-generation.json`; rerunning `library index`
-repairs missing or mismatched caches under the library run lock.
-
-The index is factual only: packages/versions, completion state, status counts, report links,
-missing inputs, and blocked probes.
+Skip this step for package-only. For full-library work, follow
+[worker execution](references/worker-execution.md) and the complete
+[library commands and resume contract](references/library-assessment.md).
+Use `inventory status`, `library reconcile`, `library validate`, and `library index`.
+After interruption, preserve completed revisions, mark active units incomplete, and reconcile;
+resume only pending, blocked-after-input, or incomplete units in fresh isolated workers.
+Reconciliation derives package/component kind; filenames alone cannot satisfy a handoff.
+The factual index's authoritative generation is named by
+`<output>/.readiness-index/current-generation.json`, not the compatibility caches.
 
 ### 6. Apply feedback or corrections
 

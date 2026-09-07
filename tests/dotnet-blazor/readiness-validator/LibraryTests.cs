@@ -33,6 +33,7 @@ internal static class LibraryTests
             TestReleaseCandidateDigestRoots(Path.Combine(root, "same-version-candidates"));
             var fixture = CreateFixture(root);
             TestDiscoveryAndConfirmation(fixture);
+            TestPackageInputInventoryBoundary(fixture);
             TestDraftCannotRun(fixture);
             TestInterruptedAndIncompleteState(fixture);
             var packageRevisions = CreatePackageRevisions(fixture);
@@ -575,6 +576,67 @@ internal static class LibraryTests
         ExpectValidation(
             () => InventoryService.Discover(fixture.Root, Encoding.UTF8.GetBytes(badCandidate)),
             "sibling component input leakage");
+    }
+
+    private static void TestPackageInputInventoryBoundary(Fixture fixture)
+    {
+        var package = fixture.Packages[0];
+        var packageInputPath = Path.Combine(fixture.Root, package.PackageInputPath);
+        var packageInput = InputManifestService.Parse(File.ReadAllBytes(packageInputPath));
+        var emptyInput = packageInput with { Components = [] };
+        var emptyInputRelativePath = $"inputs/{package.Package.PackageId}.empty.package.input-manifest.json";
+        File.WriteAllBytes(
+            Path.Combine(fixture.Root, emptyInputRelativePath),
+            InputManifestService.Serialize(emptyInput));
+        InputManifestService.Validate(emptyInput, fixture.Root, requireConfirmed: true);
+
+        var emptyInventoryCandidate = JsonSerializer.Serialize(new
+        {
+            schema_version = 1,
+            packages = new[]
+            {
+                new
+                {
+                    input_manifest_path = emptyInputRelativePath,
+                    revision_root = PackageRevisionRoot(package),
+                    components = Array.Empty<object>(),
+                    exclusions = Array.Empty<object>()
+                }
+            }
+        });
+        ExpectValidation(
+            () => InventoryService.Discover(fixture.Root, Encoding.UTF8.GetBytes(emptyInventoryCandidate)),
+            "full-library inventory cannot select zero components");
+
+        string NonemptyInventoryCandidate(string inputPath) => JsonSerializer.Serialize(new
+        {
+            schema_version = 1,
+            packages = new[]
+            {
+                new
+                {
+                    input_manifest_path = inputPath,
+                    revision_root = PackageRevisionRoot(package),
+                    components = package.Components.Select(component => new
+                    {
+                        component_id = component.Id,
+                        input_manifest_path = package.ComponentInputPaths[component.Id],
+                        revision_root = ComponentRevisionRoot(package, component.Id),
+                        render_modes = component.RenderModes,
+                        exclusions = Array.Empty<object>()
+                    }).ToArray(),
+                    exclusions = Array.Empty<object>()
+                }
+            }
+        });
+        _ = InventoryService.Discover(
+            fixture.Root,
+            Encoding.UTF8.GetBytes(NonemptyInventoryCandidate(package.PackageInputPath)));
+        ExpectValidation(
+            () => InventoryService.Discover(
+                fixture.Root,
+                Encoding.UTF8.GetBytes(NonemptyInventoryCandidate(emptyInputRelativePath))),
+            "full-library inventory cannot reference components absent from package input");
     }
 
     private static void TestDraftCannotRun(Fixture fixture)

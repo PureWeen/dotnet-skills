@@ -81,8 +81,10 @@ public static class ReportService
             : input.OwnerInputs.Select(owner =>
                 $"   - `{Escape(owner.Basename)}` [{owner.Provenance}] (`{owner.ContentDigest.Value}`)"));
         lines.Add(" - Confirmed component inventory:");
-        lines.AddRange(input.Components.Select(component =>
-            $"   - `{component.Id}` ({string.Join(", ", component.RenderModes.Select(mode => $"`{mode}`"))})"));
+        lines.AddRange(input.Components.Count == 0
+            ? ["   - no components selected for this package assessment"]
+            : input.Components.Select(component =>
+                $"   - `{component.Id}` ({string.Join(", ", component.RenderModes.Select(mode => $"`{mode}`"))})"));
         lines.Add(" - Explicit exclusions:");
         lines.AddRange(input.Exclusions.Count == 0
             ? ["   - None recorded."]

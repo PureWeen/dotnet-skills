@@ -259,11 +259,6 @@ public static class InputManifestService
         }
 
         ValidateUniqueAndSorted(manifest.Components, item => item.Id, "components");
-        if (manifest.Components.Count == 0)
-        {
-            throw new DeterministicValidationException("Input manifest requires a confirmed component inventory.");
-        }
-
         foreach (var component in manifest.Components)
         {
             if (Canonicalization.ComponentId(component.Id) != component.Id ||

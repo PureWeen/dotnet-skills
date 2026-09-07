@@ -12,6 +12,7 @@ using BlazorComponentReadiness.Validator.IO;
 using BlazorComponentReadiness.Validator.Rendering;
 using BlazorComponentReadiness.Validator.Validation;
 using AssessmentService = LegacyAssessmentService;
+using CurrentAssessmentService = BlazorComponentReadiness.Validator.Assessment.AssessmentService;
 
 internal static class AssessmentTests
 {
@@ -33,7 +34,8 @@ internal static class AssessmentTests
         try
         {
             var fixture = CreateInputFixture(root);
-            TestCandidateBuilder(fixture);
+            var packageCandidates = TestCandidateBuilder(fixture);
+            TestPackageOnlyCliPath(fixture, packageCandidates);
             var packageRevision = CreatePackageRevision(fixture);
             TestRevisionPathSafety(fixture, packageRevision);
             var packageBinding = RevisionService.LoadPackageBinding(
@@ -63,7 +65,7 @@ internal static class AssessmentTests
         }
     }
 
-    private static void TestCandidateBuilder(Fixture fixture)
+    private static string TestCandidateBuilder(Fixture fixture)
     {
         var sequence = 0;
         var current = string.Empty;
@@ -104,7 +106,7 @@ internal static class AssessmentTests
         Run("add-retrieval", "--subject", "source", "--locator", "https://source.example.test/widgets",
             "--method", "repository-fetch", "--result", "succeeded", "--detail", "The exact source commit was acquired.");
         Run("add-package-source", "--kind", "package-readme", "--locator", "package:entry/README.md", "--path", "package-readme.md");
-        Run("add-source-artifact", "--source-path", "src/FancyTree.razor", "--path", "source-captures/FancyTree.razor");
+        var packageCandidates = Run("add-source-artifact", "--source-path", "src/FancyTree.razor", "--path", "source-captures/FancyTree.razor");
         Run("add-owner-input", "--path", "owner-audit.txt", "--provenance", "owner-supplied-internal-evidence");
         Run("add-component", "--id", " Fancy Tree ", "--name", "Fancy Tree",
             "--mode", "Server", "--mode", "STATIC SSR", "--mode", "WASM",
@@ -158,6 +160,206 @@ internal static class AssessmentTests
         ExpectValidation(
             () => InputManifestService.Discover(fixture.Root, fixture.NupkgPath, File.ReadAllBytes(malformed)),
             "original discovery remains strict");
+
+        return packageCandidates;
+    }
+
+    private static void TestPackageOnlyCliPath(Fixture fixture, string candidatesPath)
+    {
+        var draftPath = Path.Combine(fixture.Root, "package-only.input.draft.json");
+        var confirmedPath = Path.Combine(fixture.Root, "package-only.input.confirmed.json");
+        var output = new StringWriter();
+        var error = new StringWriter();
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["inputs", "discover", "--root", fixture.Root, "--nupkg", fixture.NupkgPath,
+                    "--candidates", candidatesPath, "--output", draftPath],
+                output,
+                error),
+            $"package-only inputs discover: {error}");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["inputs", "confirm", "--root", fixture.Root, "--draft", draftPath, "--output", confirmedPath],
+                output,
+                error),
+            $"package-only inputs confirm: {error}");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["inputs", "validate", "--root", fixture.Root, "--manifest", confirmedPath],
+                output,
+                error),
+            $"package-only inputs validate: {error}");
+
+        var inputBytes = File.ReadAllBytes(confirmedPath);
+        var input = InputManifestService.Parse(inputBytes);
+        AssertEqual(0, input.Components.Count, "package-only input has no selected components");
+        foreach (var kind in new[] { "component", "unified" })
+        {
+            foreach (var componentId in new string?[] { null, "fancy-tree" })
+            {
+                ExpectValidation(
+                    () => CurrentAssessmentService.Initialize(
+                        kind, fixture.Root, input, inputBytes, componentId, []),
+                    $"{kind} cannot initialize without a confirmed selected component");
+            }
+        }
+
+        ExpectValidation(
+            () => CurrentAssessmentService.Initialize(
+                "package", fixture.Root, input, inputBytes, "fancy-tree", []),
+            "package cannot initialize with a component identity");
+        ExpectValidation(
+            () => InputManifestService.Validate(
+                input with { Components = [fixture.Confirmed.Components[0] with { RenderModes = [] }] },
+                fixture.Root,
+                requireConfirmed: true),
+            "package facts still validate every supplied component");
+        var assessmentPath = Path.Combine(fixture.Root, "package-only.assessment.json");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["assessment", "init", "--kind", "package", "--root", fixture.Root,
+                    "--input", confirmedPath, "--output", assessmentPath],
+                output,
+                error),
+            $"package-only assessment init: {error}");
+        var initialized = CurrentAssessmentService.Parse(File.ReadAllBytes(assessmentPath));
+        AssertEqual(60, initialized.Rows.Count, "package-only assessment owns current 60 rows");
+        Assert(initialized.Identity.ComponentId is null, "package-only assessment has no component identity");
+
+        var evidence = BuildEvidence(initialized.Identity);
+        var assessment = Complete(initialized, evidence, "gap");
+        var completedAssessmentPath = Path.Combine(fixture.Root, "package-only.complete.assessment.json");
+        var evidencePath = Path.Combine(fixture.Root, "package-only.evidence.json");
+        File.WriteAllBytes(completedAssessmentPath, CurrentAssessmentService.Serialize(assessment));
+        File.WriteAllBytes(evidencePath, CanonicalEvidenceJson.SerializeBundle(evidence));
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["assessment", "validate", "--root", fixture.Root, "--input", confirmedPath,
+                    "--assessment", completedAssessmentPath, "--evidence", evidencePath],
+                output,
+                error),
+            $"package-only assessment validate: {error}");
+
+        var revisions = Path.Combine(fixture.Root, "package-only.revisions");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["report", "render", "--root", fixture.Root, "--input", confirmedPath,
+                    "--assessment", completedAssessmentPath, "--evidence", evidencePath, "--output", revisions],
+                output,
+                error),
+            $"package-only report render: {error}");
+        var revision = Path.Combine(revisions, "0001");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["report", "verify", "--root", fixture.Root, "--revision", revision],
+                output,
+                error),
+            $"package-only report verify: {error}");
+        var report = File.ReadAllText(Path.Combine(revision, "package.report.md"));
+        Assert(report.Contains("Confirmed component inventory:", StringComparison.Ordinal),
+            "package-only report retains inventory heading");
+        Assert(report.Contains("no components selected for this package assessment", StringComparison.Ordinal),
+            "package-only report states empty selection truthfully");
+        Assert(!report.Contains("package has no controls", StringComparison.OrdinalIgnoreCase),
+            "package-only report does not assert the package has no controls");
+
+        var reader = Path.Combine(fixture.Root, "package-only.reader");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["reader", "render", "--root", fixture.Root, "--revision", revision, "--output", reader],
+                output,
+                error),
+            $"package-only reader render: {error}");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["reader", "verify", "--root", fixture.Root, "--revision", revision, "--output", reader],
+                output,
+                error),
+            $"package-only reader verify: {error}");
+        Assert(
+            File.ReadAllText(Path.Combine(reader, "report.md"))
+                .Contains("# Library and release report", StringComparison.Ordinal),
+            "package-only reader uses the package title");
+
+        var predecessor = ContractJson.RawDigest(
+            File.ReadAllBytes(Path.Combine(revision, "package.validation.json")));
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["report", "render", "--root", fixture.Root, "--input", confirmedPath,
+                    "--assessment", completedAssessmentPath, "--evidence", evidencePath,
+                    "--output", revisions, "--predecessor", predecessor.Value],
+                output,
+                error),
+            $"package-only successor revision: {error}");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["report", "verify", "--root", fixture.Root, "--revision", Path.Combine(revisions, "0002")],
+                output,
+                error),
+            $"package-only revision chain: {error}");
+
+        foreach (var kind in new[] { "component", "unified" })
+        {
+            var identity = assessment.Identity with { AssessmentKind = kind, ComponentId = "fancy-tree" };
+            var invalidAssessment = assessment with { AssessmentKind = kind, Identity = identity };
+            var invalidEvidence = BuildEvidence(identity);
+            var invalidBytes = CurrentAssessmentService.Serialize(invalidAssessment);
+            var invalidRoot = Path.Combine(fixture.Root, $"package-only-invalid-{kind}");
+            var invalidRevision = Path.Combine(invalidRoot, "0001");
+            var invalidReader = Path.Combine(fixture.Root, $"package-only-invalid-{kind}.reader");
+            Directory.CreateDirectory(invalidRevision);
+            foreach (var path in Directory.GetFiles(revision))
+            {
+                File.Copy(path, Path.Combine(
+                    invalidRevision,
+                    Path.GetFileName(path).Replace("package.", $"{kind}.", StringComparison.Ordinal)));
+            }
+
+            File.WriteAllBytes(Path.Combine(invalidRevision, $"{kind}.assessment.json"), invalidBytes);
+            File.WriteAllBytes(
+                Path.Combine(invalidRevision, $"{kind}.evidence.json"),
+                CanonicalEvidenceJson.SerializeBundle(invalidEvidence));
+            string[] packageArguments = kind == "component" ? ["--package-revision", revision] : [];
+            foreach (var command in new[]
+            {
+                new[] { "assessment", "validate", "--root", fixture.Root, "--input", confirmedPath,
+                    "--assessment", Path.Combine(invalidRevision, $"{kind}.assessment.json"),
+                    "--evidence", Path.Combine(invalidRevision, $"{kind}.evidence.json") },
+                new[] { "report", "render", "--root", fixture.Root, "--input", confirmedPath,
+                    "--assessment", Path.Combine(invalidRevision, $"{kind}.assessment.json"),
+                    "--evidence", Path.Combine(invalidRevision, $"{kind}.evidence.json"),
+                    "--output", Path.Combine(invalidRoot, "rejected-output") },
+                new[] { "report", "verify", "--root", fixture.Root, "--revision", invalidRevision },
+                new[] { "reader", "render", "--root", fixture.Root, "--revision", invalidRevision,
+                    "--output", invalidReader }
+            })
+            {
+                var failure = new StringWriter();
+                AssertEqual(
+                    ExitCodes.ValidationFailure,
+                    CliApplication.Run([.. command, .. packageArguments], new StringWriter(), failure),
+                    $"{kind} cannot consume empty-component input through {command[0]} {command[1]}");
+                Assert(
+                    failure.ToString().Contains(
+                        "Assessment component must be present in the confirmed input manifest.",
+                        StringComparison.Ordinal),
+                    $"{kind} fails at component membership, not an incidental hash or row mismatch: {failure}");
+            }
+
+            Assert(!Directory.Exists(Path.Combine(invalidRoot, "rejected-output")), "invalid scope publishes no revision");
+            Assert(!Directory.Exists(invalidReader), "invalid scope publishes no reader");
+        }
     }
 
     internal static Fixture CreateInputFixture(string root)
