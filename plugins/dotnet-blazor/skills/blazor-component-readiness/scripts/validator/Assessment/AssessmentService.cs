@@ -333,12 +333,13 @@ public static class AssessmentService
     public static byte[] SerializeRow(AssessmentRow row) =>
         StrictJson.SerializeCanonical(writer => WriteRow(writer, row));
 
-    public static ReadinessAssessment Parse(ReadOnlyMemory<byte> bytes)
+    public static ReadinessAssessment Parse(ReadOnlyMemory<byte> bytes, bool requireCanonical = true)
     {
         using var document = StrictJson.Parse(bytes, ResourceLimits.SerializedArtifactBytes, "assessment");
         var root = document.RootElement;
-        ContractJson.RequireProperties(
+        RequireAssessmentProperties(
             root,
+            requireCanonical,
             "schema_version",
             "assessment_kind",
             "identity",
@@ -356,19 +357,23 @@ public static class AssessmentService
         var assessment = new ReadinessAssessment(
             ContractJson.Int32(root, "schema_version"),
             ContractJson.String(root, "assessment_kind"),
-            ParseIdentity(ContractJson.Object(root, "identity")),
+            ParseIdentity(ContractJson.Object(root, "identity"), requireCanonical),
             ContractJson.String(root, "rubric_version"),
             ContractJson.Int32(root, "scope_schema_version"),
-            ContractJson.Digest(ContractJson.Object(root, "rubric_sha256")),
-            ContractJson.Digest(ContractJson.Object(root, "scope_map_sha256")),
-            ContractJson.Array(root, "overlays").EnumerateArray().Select(ParseOverlay).ToArray(),
+            ParseAssessmentDigest(ContractJson.Object(root, "rubric_sha256"), requireCanonical),
+            ParseAssessmentDigest(ContractJson.Object(root, "scope_map_sha256"), requireCanonical),
+            ContractJson.Array(root, "overlays").EnumerateArray().Select(element => ParseOverlay(element, requireCanonical)).ToArray(),
             ContractJson.StringArray(root, "selected_ids"),
-            ParsePackageReference(ContractJson.NullableObject(root, "package_reference")),
-            ContractJson.Array(root, "rows").EnumerateArray().Select(ParseRow).ToArray(),
-            ContractJson.Array(root, "findings").EnumerateArray().Select(ParseFinding).ToArray(),
-            ContractJson.Array(root, "summary_groups").EnumerateArray().Select(ParseSummary).ToArray(),
+            ParsePackageReference(ContractJson.NullableObject(root, "package_reference"), requireCanonical),
+            ContractJson.Array(root, "rows").EnumerateArray().Select(element => ParseRow(element, requireCanonical)).ToArray(),
+            ContractJson.Array(root, "findings").EnumerateArray().Select(element => ParseFinding(element, requireCanonical)).ToArray(),
+            ContractJson.Array(root, "summary_groups").EnumerateArray().Select(element => ParseSummary(element, requireCanonical)).ToArray(),
             ContractJson.String(root, "completion_state"));
-        ContractJson.RequireCanonical(bytes.Span, Serialize(assessment), "assessment");
+        if (requireCanonical)
+        {
+            ContractJson.RequireCanonical(bytes.Span, Serialize(assessment), "assessment");
+        }
+
         return assessment;
     }
 
@@ -755,40 +760,41 @@ public static class AssessmentService
         writer.WriteEndObject();
     }
 
-    private static ExactAssessmentIdentity ParseIdentity(JsonElement element)
+    private static ExactAssessmentIdentity ParseIdentity(JsonElement element, bool requireCanonical)
     {
-        ContractJson.RequireProperties(
+        RequireAssessmentProperties(
             element,
+            requireCanonical,
             "assessment_kind",
             "package",
             "input_manifest_sha256",
             "component_id");
         return new ExactAssessmentIdentity(
             ContractJson.String(element, "assessment_kind"),
-            ParsePackage(ContractJson.Object(element, "package")),
-            ContractJson.Digest(ContractJson.Object(element, "input_manifest_sha256")),
+            ParsePackage(ContractJson.Object(element, "package"), requireCanonical),
+            ParseAssessmentDigest(ContractJson.Object(element, "input_manifest_sha256"), requireCanonical),
             ContractJson.NullableString(element, "component_id"));
     }
 
-    private static EvidencePackageIdentity ParsePackage(JsonElement element)
+    private static EvidencePackageIdentity ParsePackage(JsonElement element, bool requireCanonical)
     {
-        ContractJson.RequireProperties(element, "package_id", "version", "nupkg_sha256");
+        RequireAssessmentProperties(element, requireCanonical, "package_id", "version", "nupkg_sha256");
         return new EvidencePackageIdentity(
             ContractJson.String(element, "package_id"),
             ContractJson.String(element, "version"),
-            ContractJson.Digest(ContractJson.Object(element, "nupkg_sha256")));
+            ParseAssessmentDigest(ContractJson.Object(element, "nupkg_sha256"), requireCanonical));
     }
 
-    private static AssessmentOverlay ParseOverlay(JsonElement element)
+    private static AssessmentOverlay ParseOverlay(JsonElement element, bool requireCanonical)
     {
-        ContractJson.RequireProperties(element, "id", "version", "sha256");
+        RequireAssessmentProperties(element, requireCanonical, "id", "version", "sha256");
         return new AssessmentOverlay(
             ContractJson.String(element, "id"),
             ContractJson.String(element, "version"),
-            ContractJson.Digest(ContractJson.Object(element, "sha256")));
+            ParseAssessmentDigest(ContractJson.Object(element, "sha256"), requireCanonical));
     }
 
-    private static PackageAssessmentReference? ParsePackageReference(JsonElement? element)
+    private static PackageAssessmentReference? ParsePackageReference(JsonElement? element, bool requireCanonical)
     {
         if (element is null)
         {
@@ -796,25 +802,27 @@ public static class AssessmentService
         }
 
         var value = element.Value;
-        ContractJson.RequireProperties(
+        RequireAssessmentProperties(
             value,
+            requireCanonical,
             "package",
             "input_manifest_sha256",
             "assessment_sha256",
             "report_sha256",
             "validation_sha256");
         return new PackageAssessmentReference(
-            ParsePackage(ContractJson.Object(value, "package")),
-            ContractJson.Digest(ContractJson.Object(value, "input_manifest_sha256")),
-            ParseNullableDigest(value, "assessment_sha256"),
-            ParseNullableDigest(value, "report_sha256"),
-            ContractJson.Digest(ContractJson.Object(value, "validation_sha256")));
+            ParsePackage(ContractJson.Object(value, "package"), requireCanonical),
+            ParseAssessmentDigest(ContractJson.Object(value, "input_manifest_sha256"), requireCanonical),
+            ParseNullableDigest(value, "assessment_sha256", requireCanonical),
+            ParseNullableDigest(value, "report_sha256", requireCanonical),
+            ParseAssessmentDigest(ContractJson.Object(value, "validation_sha256"), requireCanonical));
     }
 
-    private static AssessmentRow ParseRow(JsonElement element)
+    private static AssessmentRow ParseRow(JsonElement element, bool requireCanonical)
     {
-        ContractJson.RequireProperties(
+        RequireAssessmentProperties(
             element,
+            requireCanonical,
             "id",
             "requirement",
             "scope",
@@ -838,9 +846,9 @@ public static class AssessmentService
             ContractJson.NullableString(element, "not_applicable_rationale"));
     }
 
-    private static AssessmentFinding ParseFinding(JsonElement element)
+    private static AssessmentFinding ParseFinding(JsonElement element, bool requireCanonical)
     {
-        ContractJson.RequireProperties(element, "title", "factual_summary", "requirement_ids", "evidence_ids");
+        RequireAssessmentProperties(element, requireCanonical, "title", "factual_summary", "requirement_ids", "evidence_ids");
         return new AssessmentFinding(
             ContractJson.String(element, "title"),
             ContractJson.String(element, "factual_summary"),
@@ -848,9 +856,9 @@ public static class AssessmentService
             ContractJson.StringArray(element, "evidence_ids"));
     }
 
-    private static AssessmentSummaryGroup ParseSummary(JsonElement element)
+    private static AssessmentSummaryGroup ParseSummary(JsonElement element, bool requireCanonical)
     {
-        ContractJson.RequireProperties(element, "name", "factual_summary", "requirement_ids", "evidence_ids");
+        RequireAssessmentProperties(element, requireCanonical, "name", "factual_summary", "requirement_ids", "evidence_ids");
         return new AssessmentSummaryGroup(
             ContractJson.String(element, "name"),
             ContractJson.String(element, "factual_summary"),
@@ -858,10 +866,30 @@ public static class AssessmentService
             ContractJson.StringArray(element, "evidence_ids"));
     }
 
-    private static Sha256Digest? ParseNullableDigest(JsonElement element, string property)
+    private static Sha256Digest? ParseNullableDigest(JsonElement element, string property, bool requireCanonical)
     {
         var value = ContractJson.NullableObject(element, property);
-        return value is null ? null : ContractJson.Digest(value.Value);
+        return value is null ? null : ParseAssessmentDigest(value.Value, requireCanonical);
+    }
+
+    private static Sha256Digest ParseAssessmentDigest(JsonElement element, bool requireCanonical)
+    {
+        RequireAssessmentProperties(element, requireCanonical, "algorithm", "value");
+        var digest = new Sha256Digest(ContractJson.String(element, "algorithm"), ContractJson.String(element, "value"));
+        EvidenceIdentity.ValidateDigest(digest, "digest");
+        return digest;
+    }
+
+    private static void RequireAssessmentProperties(JsonElement element, bool requireCanonical, params string[] names)
+    {
+        if (requireCanonical)
+        {
+            ContractJson.RequireProperties(element, names);
+        }
+        else
+        {
+            ContractJson.RequirePropertiesUnordered(element, names);
+        }
     }
 
     private static void WriteStrings(Utf8JsonWriter writer, IEnumerable<string> values)

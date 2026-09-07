@@ -25,6 +25,12 @@ A component handoff receives only its unit inputs and exact package revision. Re
 documents/source/evidence, duplicate unit IDs, changed package identities, missing modes, or
 repository-wide rows in a component result.
 
+Before library analyzer, trim, or AOT checks, acquire and record the original library source
+closure for the exact package identity: repository/archive provenance, source revision, and the
+actual library project or solution. A synthetic consumer that references the package is not the
+reviewed library target. If the original project or closure is unavailable, record the bounded
+missing input and keep the corresponding result incomplete.
+
 ## Run state and receipts
 
 `inventory.confirmed.json` is immutable. `run-manifest.json` is an atomically replaced,

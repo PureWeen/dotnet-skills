@@ -1,11 +1,13 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using BlazorComponentReadiness.Validator.Assessment;
 using BlazorComponentReadiness.Validator.Cli;
 using BlazorComponentReadiness.Validator.Contracts;
 using BlazorComponentReadiness.Validator.Evidence;
 using BlazorComponentReadiness.Validator.IO;
+using BlazorComponentReadiness.Validator.Inputs;
 using BlazorComponentReadiness.Validator.Rendering;
 using BlazorComponentReadiness.Validator.Validation;
 
@@ -229,6 +231,18 @@ internal static class NormativeContractTests
         Assert(initialized.Rows.Count == 60, "CLI defaults to normative package inventory");
         var completed = CompleteNotTested(initialized, false);
         File.WriteAllBytes(path, AssessmentService.Serialize(completed));
+        var packageDraftPath = Path.Combine(fixture.Root, "current.package.reordered.json");
+        File.WriteAllText(packageDraftPath, ReorderJson(File.ReadAllBytes(path)).ToJsonString(
+            new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
+        Reject(() => AssessmentService.Parse(File.ReadAllBytes(packageDraftPath)),
+            "current package reordered draft remains rejected");
+        var packageCanonicalPath = Path.Combine(fixture.Root, "current.package.canonical.json");
+        Assert(CliApplication.Run(["assessment", "canonicalize", "--assessment", packageDraftPath,
+            "--output", packageCanonicalPath], output, error) == ExitCodes.Success,
+            $"current package canonicalize: {error}");
+        Assert(File.ReadAllBytes(path).SequenceEqual(File.ReadAllBytes(packageCanonicalPath)) &&
+            AssessmentService.Parse(File.ReadAllBytes(packageCanonicalPath)).Rows.Count == 60,
+            "current package canonicalize restores exact 60-row bytes");
         var evidencePath = Path.Combine(fixture.Root, "current.evidence.json");
         File.WriteAllBytes(evidencePath, CanonicalEvidenceJson.SerializeBundle(RetainedEvidence(completed)));
         var revisions = Path.Combine(fixture.Root, "current-revisions");
@@ -238,6 +252,94 @@ internal static class NormativeContractTests
         Assert(CliApplication.Run(["report", "verify", "--root", fixture.Root, "--revision", Path.Combine(revisions, "0001")],
             output, error) == ExitCodes.Success, $"current immutable revision verifies: {error}");
         Assert(output.ToString().Length == 0 && error.ToString().Length == 0, "current render/verify remain quiet");
+
+        var packageBinding = RevisionService.LoadPackageBinding(
+            fixture.Root, Path.Combine(revisions, "0001"), feedbackBytes: null);
+        var component = CompleteNotTested(AssessmentService.Initialize(
+            "component", fixture.Root, fixture.Confirmed, fixture.ConfirmedBytes, "fancy-tree", [], packageBinding), false);
+        var componentPath = Path.Combine(fixture.Root, "current.component.assessment.json");
+        var componentEvidencePath = Path.Combine(fixture.Root, "current.component.evidence.json");
+        File.WriteAllBytes(componentPath, AssessmentService.Serialize(component));
+        File.WriteAllBytes(componentEvidencePath, CanonicalEvidenceJson.SerializeBundle(RetainedEvidence(component)));
+        var componentDraftPath = Path.Combine(fixture.Root, "current.component.draft.json");
+        File.WriteAllText(componentDraftPath, ReorderJson(File.ReadAllBytes(componentPath)).ToJsonString(
+            new JsonSerializerOptions { WriteIndented = true }), new UTF8Encoding(false));
+
+        Reject(() => AssessmentService.Parse(File.ReadAllBytes(componentDraftPath)),
+            "current component noncanonical draft remains rejected");
+        var componentCanonicalPath = Path.Combine(fixture.Root, "current.component.canonical.json");
+        Assert(CliApplication.Run(["assessment", "canonicalize", "--assessment", componentDraftPath,
+            "--output", componentCanonicalPath], output, error) == ExitCodes.Success,
+            $"current component canonicalize: {error}");
+        Assert(AssessmentService.Parse(File.ReadAllBytes(componentCanonicalPath)).Rows.Count == 61,
+            "current component canonical output retains 61 rows");
+        Assert(File.ReadAllBytes(componentPath).SequenceEqual(File.ReadAllBytes(componentCanonicalPath)),
+            "current component canonicalize restores exact bytes");
+        var unknownDraft = JsonNode.Parse(File.ReadAllBytes(componentPath))!.AsObject();
+        unknownDraft["unexpected"] = 1;
+        Reject(() => AssessmentService.Parse(
+                Encoding.UTF8.GetBytes(unknownDraft.ToJsonString()), requireCanonical: false),
+            "canonicalize rejects unknown root property");
+        var duplicateDraft = Encoding.UTF8.GetString(File.ReadAllBytes(componentPath))
+            .Replace("\"schema_version\":", "\"schema_version\":1,\"schema_version\":", StringComparison.Ordinal);
+        Reject(() => AssessmentService.Parse(Encoding.UTF8.GetBytes(duplicateDraft), requireCanonical: false),
+            "canonicalize rejects duplicate root property");
+
+        var componentRevisions = Path.Combine(fixture.Root, "current-component-revisions");
+        Assert(CliApplication.Run(["report", "render", "--root", fixture.Root, "--input", fixture.ConfirmedPath,
+            "--assessment", componentPath, "--evidence", componentEvidencePath, "--output", componentRevisions,
+            "--package-revision", Path.Combine(revisions, "0001")], output, error) == ExitCodes.Success,
+            $"current component immutable revision renders: {error}");
+        var componentRevision = Path.Combine(componentRevisions, "0001");
+        Assert(CliApplication.Run(["report", "verify", "--root", fixture.Root, "--revision", componentRevision,
+            "--package-revision", Path.Combine(revisions, "0001")], output, error) == ExitCodes.Success,
+            $"current component immutable revision verifies: {error}");
+        var publicInput = fixture.Confirmed with { OwnerInputs = [] };
+        var publicInputBytes = InputManifestService.Serialize(publicInput);
+        var publicInputPath = Path.Combine(fixture.Root, "current.public.input.json");
+        File.WriteAllBytes(publicInputPath, publicInputBytes);
+        var publicPackage = CompleteNotTested(AssessmentService.Initialize(
+            "package", fixture.Root, publicInput, publicInputBytes, null, []), false);
+        var publicPackagePath = Path.Combine(fixture.Root, "current.public.package.assessment.json");
+        var publicPackageEvidencePath = Path.Combine(fixture.Root, "current.public.package.evidence.json");
+        File.WriteAllBytes(publicPackagePath, AssessmentService.Serialize(publicPackage));
+        File.WriteAllBytes(publicPackageEvidencePath,
+            CanonicalEvidenceJson.SerializeBundle(RetainedEvidence(publicPackage)));
+        var publicRevisions = Path.Combine(fixture.Root, "current-public-revisions");
+        Assert(CliApplication.Run(["report", "render", "--root", fixture.Root, "--input", publicInputPath,
+            "--assessment", publicPackagePath, "--evidence", publicPackageEvidencePath, "--output", publicRevisions],
+            output, error) == ExitCodes.Success, $"public package revision renders: {error}");
+        var publicPackageRevision = Path.Combine(publicRevisions, "0001");
+        Assert(CliApplication.Run(["report", "verify", "--root", fixture.Root, "--revision",
+            publicPackageRevision], output, error) == ExitCodes.Success,
+            $"public package revision verifies: {error}");
+        var publicBinding = RevisionService.LoadPackageBinding(fixture.Root, publicPackageRevision, null);
+        var publicComponent = CompleteNotTested(AssessmentService.Initialize(
+            "component", fixture.Root, publicInput, publicInputBytes, "fancy-tree", [], publicBinding), false);
+        var publicComponentPath = Path.Combine(fixture.Root, "current.public.component.assessment.json");
+        var publicComponentEvidencePath = Path.Combine(fixture.Root, "current.public.component.evidence.json");
+        File.WriteAllBytes(publicComponentPath, AssessmentService.Serialize(publicComponent));
+        File.WriteAllBytes(publicComponentEvidencePath,
+            CanonicalEvidenceJson.SerializeBundle(RetainedEvidence(publicComponent)));
+        var publicComponentRevisions = Path.Combine(fixture.Root, "current-public-component-revisions");
+        Assert(CliApplication.Run(["report", "render", "--root", fixture.Root, "--input", publicInputPath,
+            "--assessment", publicComponentPath, "--evidence", publicComponentEvidencePath,
+            "--output", publicComponentRevisions, "--package-revision", publicPackageRevision],
+            output, error) == ExitCodes.Success, $"public component revision renders: {error}");
+        var publicComponentRevision = Path.Combine(publicComponentRevisions, "0001");
+        Assert(CliApplication.Run(["report", "verify", "--root", fixture.Root, "--revision",
+            publicComponentRevision, "--package-revision", publicPackageRevision], output, error) == ExitCodes.Success,
+            $"public component revision verifies: {error}");
+        Assert(CliApplication.Run(["reader", "render", "--root", fixture.Root, "--revision",
+            publicPackageRevision, "--output", "current-package-reader"], output, error) == ExitCodes.Success,
+            $"current package reader renders: {error}");
+        Assert(CliApplication.Run(["reader", "render", "--root", fixture.Root, "--revision",
+            publicComponentRevision, "--output", "current-component-reader", "--package-revision",
+            publicPackageRevision], output, error) == ExitCodes.Success,
+            $"current component reader renders: {error}");
+        Assert(Directory.GetFiles(Path.Combine(fixture.Root, "current-package-reader"), "*", SearchOption.AllDirectories).Length > 0 &&
+            Directory.GetFiles(Path.Combine(fixture.Root, "current-component-reader"), "*", SearchOption.AllDirectories).Length > 0,
+            "current package/component readers materialize output");
     }
 
     private static void TestLegacyFeedback(AssessmentTests.Fixture fixture)
@@ -305,5 +407,35 @@ internal static class NormativeContractTests
     private static void Assert(bool condition, string name)
     {
         if (!condition) throw new InvalidOperationException(name);
+    }
+
+    private static JsonNode ReorderJson(ReadOnlySpan<byte> bytes) =>
+        ReorderJson(JsonNode.Parse(bytes) ?? throw new InvalidOperationException("Expected JSON object."));
+
+    private static JsonNode ReorderJson(JsonNode node)
+    {
+        if (node is JsonObject objectNode)
+        {
+            var reordered = new JsonObject();
+            foreach (var property in objectNode.Reverse())
+            {
+                reordered[property.Key] = property.Value is null ? null : ReorderJson(property.Value);
+            }
+
+            return reordered;
+        }
+
+        if (node is JsonArray arrayNode)
+        {
+            var reordered = new JsonArray();
+            foreach (var value in arrayNode)
+            {
+                reordered.Add(value is null ? null : ReorderJson(value));
+            }
+
+            return reordered;
+        }
+
+        return node.DeepClone();
     }
 }

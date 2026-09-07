@@ -135,6 +135,7 @@ internal static class WorkflowTests
             "assessment init --kind unified",
             "assessment init --kind package",
             "assessment init --kind component",
+            "assessment canonicalize",
             "assessment validate",
             "assessment revise",
             "report render",

@@ -134,8 +134,9 @@ Use the same launcher prefix below. Exit `0` means completion, not that all rows
    `interactive-webassembly`, `interactive-auto`, or `standalone-webassembly`).
 5. For each component, declare whether grouped, registered, selected, or composite children make
    the dynamic-child lifecycle matrix required. Do not infer not-applicable from a missing probe.
-6. For source-available components, capture wrapper/API, inherited runtime, interop, styles/assets,
-   tests, and samples. A source archive alone is not closure.
+6. For source-available components, capture wrapper/API, runtime, interop, styles/assets, tests,
+   and samples. An archive alone is not closure. For library analyzer/trim/AOT checks, require the
+   original project/source closure; see [library assessment](references/library-assessment.md).
 7. Show package/version/digest, sources, documents, inputs, modes, exclusions, and feedback before
    scoring. Ask owner.
 8. Canonicalize and freeze the manifest:
@@ -204,16 +205,13 @@ When `dynamic_child_lifecycle.applicability` is `required`, run the complete con
 observation digest in one canonical lifecycle protocol. A blocked operation remains `not tested`
 with its exact reason; never substitute an initial-state-only pass.
 
-Before closing a unit, reconcile the immutable ledger with the confirmed scope and show that each
-accessible evidence family was attempted: package/artifact, source, documentation, and applicable
-consumer/runtime or trim/toolchain checks. Canonical row counts, matching hashes, and reader shape
-are not coverage. Apply each row's existing status-specific evidence, provenance, and rationale
-contract: bind evidence where required, while preserving legitimate `not applicable` and owner
-evidence-required rationale/ownership paths. A handful of generic ledger records for a 60- or
-61-row unit is premature placeholder completion; keep the unit incomplete and create a new
-immutable revision after the missing checks. A low record count alone is not failure when compact
-shared evidence substantively supports every cited claim. Do not inflate coverage by repeating one
-blocked probe across unrelated rows.
+Before closing a unit, reconcile the immutable ledger with confirmed scope and show attempts for
+each accessible family: package/artifact, source, documentation, and applicable consumer/runtime
+or trim/toolchain checks. Row counts, hashes, and reader shape are not coverage. Apply each row's
+status-specific evidence, provenance, and rationale contract; preserve legitimate `not applicable`
+and owner-evidence paths. Generic records are not completion for a 60- or 61-row unit; create a
+new immutable revision after missing checks. Do not inflate coverage by repeating one blocked probe.
+Low record count alone is not a failure when shared evidence supports every cited claim.
 For structured proof boundaries, use `source-proof-v1`, `public-absence-v1`, or
 `direct-failure-v1`; free-text assertions are not substitutes. same-job source build plus
 privileged signing/publishing is a gap. one mutable path is not a digest-bound immutable handoff.
@@ -226,14 +224,17 @@ Initialize the appropriate row ownership:
 
 ```text
 <launcher> assessment init --kind unified --root <output> --input <input.confirmed.json> --component <component-id> --output <unified.assessment.json>
-<launcher> assessment init --kind package --root <output> --input <package.input.confirmed.json> --output <package.assessment.json>
-<launcher> assessment init --kind component --root <output> --input <component.input.confirmed.json> --component <component-id> --package-revision <package-revision> --output <component.assessment.json>
+<launcher> assessment init --kind package --root <output> --input <input> --output <assessment>
+<launcher> assessment init --kind component --root <output> --input <input> --component <id> --package-revision <revision> --output <assessment>
+<launcher> assessment canonicalize --assessment <draft> --output <canonical>
 ```
 
 Omit `--rubric-version` for new work; the validator defaults to `2.0.0`. If a command contains
 `--rubric-version 1.3.0`, confirm explicit legacy reproduction; never use it for current work.
 
-Populate all rows from evidence. Use schema 2; retain legacy v1 verification.
+Edit a **DRAFT**; canonicalize to **new** file before validation,
+rendering, or revision. It checks JSON structure, not evidence/claims/bindings/completion.
+Use schema 2; legacy v1 remains supported.
 Follow [report contract](references/report-contract.md); deliver the
 [reader](references/partner-preview.md) after validation:
 

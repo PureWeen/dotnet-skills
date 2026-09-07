@@ -916,6 +916,40 @@ internal static class AssessmentTests
             116,
             AssessmentService.Parse(File.ReadAllBytes(cliAssessment)).Rows.Count,
             "assessment init CLI exact selected rows");
+        var draftAssessment = Path.Combine(fixture.Root, "cli-unordered.assessment.json");
+        using (var draftDocument = JsonDocument.Parse(File.ReadAllBytes(cliAssessment)))
+        {
+            File.WriteAllText(
+                draftAssessment,
+                JsonSerializer.Serialize(
+                    draftDocument.RootElement,
+                    new JsonSerializerOptions { WriteIndented = true }),
+                new UTF8Encoding(false));
+        }
+
+        ExpectValidation(
+            () => AssessmentService.Parse(File.ReadAllBytes(draftAssessment)),
+            "noncanonical assessment remains rejected by strict parser");
+        var canonicalAssessment = Path.Combine(fixture.Root, "cli-canonical.assessment.json");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                [
+                    "assessment", "canonicalize",
+                    "--assessment", draftAssessment,
+                    "--output", canonicalAssessment
+                ],
+                output,
+                error),
+            "assessment canonicalize CLI");
+        AssertBytes(
+            File.ReadAllBytes(cliAssessment),
+            File.ReadAllBytes(canonicalAssessment),
+            "canonicalize restores validator-owned assessment bytes");
+        AssertEqual(
+            116,
+            AssessmentService.Parse(File.ReadAllBytes(canonicalAssessment)).Rows.Count,
+            "canonicalize output remains strict and complete");
 
         var initialized = AssessmentService.Initialize(
             "unified", fixture.Root, fixture.Confirmed, fixture.ConfirmedBytes, "fancy-tree", []);
