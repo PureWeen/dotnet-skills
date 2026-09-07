@@ -26,6 +26,66 @@ public static class InputManifestService
         "selected-children"
     ];
 
+    internal static IReadOnlyList<string> AcquisitionKinds { get; } =
+    [
+        "published",
+        "release-candidate"
+    ];
+
+    internal static IReadOnlyList<string> SourceAvailabilityKinds { get; } =
+    [
+        "source-available",
+        "closed-source",
+        "unresolved"
+    ];
+
+    internal static IReadOnlyList<string> SourceConfidenceKinds { get; } =
+    [
+        "low",
+        "medium",
+        "high"
+    ];
+
+    internal static IReadOnlyList<string> RetrievalSubjects { get; } =
+    [
+        "package",
+        "documentation",
+        "source"
+    ];
+
+    internal static IReadOnlyList<string> RetrievalResults { get; } =
+    [
+        "succeeded",
+        "not-found",
+        "access-denied",
+        "unavailable",
+        "invalid-content",
+        "network-failure"
+    ];
+
+    internal static IReadOnlyList<string> PackageSourceKinds { get; } =
+    [
+        "package-readme",
+        "package-metadata"
+    ];
+
+    internal static IReadOnlyList<string> OwnerInputProvenances { get; } =
+    [
+        "owner-supplied-internal-evidence",
+        "owner-supplied-public-evidence"
+    ];
+
+    internal static IReadOnlyList<string> DynamicChildLifecycleApplicabilities { get; } =
+    [
+        "required",
+        "not-applicable"
+    ];
+
+    internal static IReadOnlyList<string> PackageOriginMethods { get; } =
+        RetrievalMethods.Where(method => method != "repository-fetch").ToArray();
+
+    internal static IReadOnlyList<string> DynamicChildLifecycleTriggerKinds => DynamicChildLifecycleTriggers;
+
     public static InputManifest Discover(string root, string nupkgPath, ReadOnlyMemory<byte> candidateBytes)
     {
         var packageRelativePath = GetRelativePath(root, nupkgPath, "nupkg");
@@ -57,11 +117,7 @@ public static class InputManifestService
         }
 
         var acquisition = ContractJson.String(candidate, "acquisition");
-        if (acquisition is not ("published" or "release-candidate"))
-        {
-            throw new DeterministicValidationException(
-                "acquisition must be 'published' or 'release-candidate'.");
-        }
+        _ = CanonicalAcquisition(acquisition);
 
         var packageOrigin = ParseCandidatePackageOrigin(ContractJson.Object(candidate, "package_origin"));
         var source = ParseCandidateSource(ContractJson.Object(candidate, "source"));
@@ -151,7 +207,7 @@ public static class InputManifestService
         if (manifest.SchemaVersion != SchemaVersion ||
             manifest.State is not ("draft" or "confirmed") ||
             requireConfirmed && manifest.State != "confirmed" ||
-            manifest.Acquisition is not ("published" or "release-candidate"))
+            !AcquisitionKinds.Contains(manifest.Acquisition, StringComparer.Ordinal))
         {
             throw new DeterministicValidationException("Input manifest schema, state, or acquisition is invalid.");
         }
@@ -169,7 +225,8 @@ public static class InputManifestService
             Canonicalization.RelativePath(manifest.Package.NupkgPath, "nupkg_path"),
             CanonicalLocator(manifest.Package.OriginLocator, manifest.Package.RetrievalMethod),
             CanonicalRetrievalMethod(manifest.Package.RetrievalMethod));
-        if (manifest.Package != expectedPackage || manifest.Package.RetrievalMethod == "repository-fetch")
+        if (manifest.Package != expectedPackage ||
+            !PackageOriginMethods.Contains(manifest.Package.RetrievalMethod, StringComparer.Ordinal))
         {
             throw new DeterministicValidationException(
                 "Input manifest package identity or digest does not match the exact inspected nupkg.");
@@ -198,7 +255,7 @@ public static class InputManifestService
             "package sources");
         foreach (var source in manifest.PackageSources)
         {
-            if (source.Kind is not ("package-readme" or "package-metadata") ||
+            if (!PackageSourceKinds.Contains(source.Kind, StringComparer.Ordinal) ||
                 Canonicalization.RelativePath(source.ContentPath, "package source content_path") != source.ContentPath ||
                 ContractJson.NormalizeText(source.Locator, "package source locator", 512) != source.Locator)
             {
@@ -254,7 +311,7 @@ public static class InputManifestService
         foreach (var owner in manifest.OwnerInputs)
         {
             if (Canonicalization.Basename(owner.Basename, "owner input basename") != owner.Basename ||
-                owner.Provenance is not ("owner-supplied-internal-evidence" or "owner-supplied-public-evidence"))
+                !OwnerInputProvenances.Contains(owner.Provenance, StringComparer.Ordinal))
             {
                 throw new DeterministicValidationException("Owner input basename or provenance is invalid.");
             }
@@ -558,11 +615,7 @@ public static class InputManifestService
             SafePath.ResolveUnderRoot(root, nupkgPath, requireExisting: true, requireFile: true));
         var retrievalMethod = CanonicalRetrievalMethod(
             EditableText(ContractJson.String(packageElement, "retrieval_method")).ToLowerInvariant());
-        if (retrievalMethod == "repository-fetch")
-        {
-            throw new DeterministicValidationException(
-                "Package origin retrieval_method cannot be repository-fetch.");
-        }
+        ValidatePackageOriginMethod(retrievalMethod);
         var package = new InputPackage(
             Canonicalization.PackageId(inspected.Id),
             NuGetVersionNormalizer.Normalize(inspected.Version),
@@ -643,7 +696,8 @@ public static class InputManifestService
             "commit",
             "mapping",
             "confidence");
-        var availability = EditableText(ContractJson.String(element, "availability")).ToLowerInvariant();
+        var availability = CanonicalSourceAvailability(
+            ContractJson.String(element, "availability"));
         var repositoryUri = ContractJson.NullableString(element, "repository_uri");
         var commit = ContractJson.NullableString(element, "commit");
         var mapping = ContractJson.NullableString(element, "mapping");
@@ -653,7 +707,7 @@ public static class InputManifestService
             repositoryUri is null ? null : Canonicalization.HttpsUri(EditableText(repositoryUri), requirePath: true),
             commit is null ? null : Canonicalization.Commit(EditableText(commit)),
             mapping is null ? null : ContractJson.NormalizeText(EditableText(mapping), "source mapping", 1024),
-            confidence is null ? null : EditableText(confidence).ToLowerInvariant());
+            CanonicalSourceConfidence(confidence));
         ValidateSource(source);
         return source;
     }
@@ -663,11 +717,7 @@ public static class InputManifestService
         ContractJson.RequireProperties(element, "locator", "retrieval_method");
         var method = CanonicalRetrievalMethod(
             EditableText(ContractJson.String(element, "retrieval_method")).ToLowerInvariant());
-        if (method == "repository-fetch")
-        {
-            throw new DeterministicValidationException(
-                "Package origin retrieval_method cannot be repository-fetch.");
-        }
+        ValidatePackageOriginMethod(method);
 
         return (CanonicalLocator(ContractJson.String(element, "locator"), method), method);
     }
@@ -682,18 +732,8 @@ public static class InputManifestService
     {
         var method = CanonicalRetrievalMethod(
             EditableText(ContractJson.String(element, "retrieval_method")).ToLowerInvariant());
-        var subject = EditableText(ContractJson.String(element, "subject")).ToLowerInvariant();
-        if (subject is not ("package" or "documentation" or "source"))
-        {
-            throw new DeterministicValidationException($"Unknown retrieval subject '{subject}'.");
-        }
-
-        var result = EditableText(ContractJson.String(element, "result")).ToLowerInvariant();
-        if (result is not ("succeeded" or "not-found" or "access-denied" or "unavailable" or
-            "invalid-content" or "network-failure"))
-        {
-            throw new DeterministicValidationException($"Unknown retrieval result '{result}'.");
-        }
+        var subject = CanonicalRetrievalSubject(ContractJson.String(element, "subject"));
+        var result = CanonicalRetrievalResult(ContractJson.String(element, "result"));
 
         var detail = ContractJson.NullableString(element, "detail");
         return new InputRetrievalAttempt(
@@ -726,9 +766,8 @@ public static class InputManifestService
                     "retrieval attempt detail",
                     1024));
             if (canonical != attempt ||
-                attempt.Subject is not ("package" or "documentation" or "source") ||
-                attempt.Result is not ("succeeded" or "not-found" or "access-denied" or "unavailable" or
-                    "invalid-content" or "network-failure"))
+                !RetrievalSubjects.Contains(attempt.Subject, StringComparer.Ordinal) ||
+                !RetrievalResults.Contains(attempt.Result, StringComparer.Ordinal))
             {
                 throw new DeterministicValidationException("Retrieval attempt is not canonical.");
             }
@@ -758,7 +797,8 @@ public static class InputManifestService
         {
             case "source-available":
                 if (source.RepositoryUri is null || source.Commit is null ||
-                    source.Mapping is null || source.Confidence is not ("low" or "medium" or "high") ||
+                    source.Mapping is null || source.Confidence is null ||
+                    !SourceConfidenceKinds.Contains(source.Confidence, StringComparer.Ordinal) ||
                     Canonicalization.HttpsUri(source.RepositoryUri, requirePath: true) != source.RepositoryUri ||
                     Canonicalization.Commit(source.Commit) != source.Commit)
                 {
@@ -807,11 +847,7 @@ public static class InputManifestService
     private static InputPackageSource CreatePackageSource(string root, JsonElement element)
     {
         ContractJson.RequireProperties(element, "kind", "locator", "content_path");
-        var kind = ContractJson.String(element, "kind");
-        if (kind is not ("package-readme" or "package-metadata"))
-        {
-            throw new DeterministicValidationException($"Unknown package source kind '{kind}'.");
-        }
+        var kind = CanonicalPackageSourceKind(ContractJson.String(element, "kind"));
 
         var path = Canonicalization.RelativePath(
             EditableText(ContractJson.String(element, "content_path")),
@@ -832,11 +868,7 @@ public static class InputManifestService
         var basename = Canonicalization.Basename(
             EditableText(ContractJson.String(element, "path")),
             "owner input path");
-        var provenance = EditableText(ContractJson.String(element, "provenance")).ToLowerInvariant();
-        if (provenance is not ("owner-supplied-internal-evidence" or "owner-supplied-public-evidence"))
-        {
-            throw new DeterministicValidationException($"Unknown owner input provenance '{provenance}'.");
-        }
+        var provenance = CanonicalOwnerInputProvenance(ContractJson.String(element, "provenance"));
 
         var path = SafePath.ResolveUnderRoot(root, basename, requireExisting: true, requireFile: true);
         BoundedIO.EnsureFileLength(path, ResourceLimits.SupplementalInputAggregateBytes, "owner input");
@@ -901,7 +933,7 @@ public static class InputManifestService
             "allowed_source_paths",
             "dynamic_child_lifecycle");
         var modes = ContractJson.StringArray(element, "render_modes")
-            .Select(value => Canonicalization.RenderMode(EditableText(value)))
+            .Select(CanonicalRenderMode)
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -1110,11 +1142,7 @@ public static class InputManifestService
     {
         ContractJson.RequirePropertiesUnordered(element, "kind", "locator", "content_path", "content_sha256");
         _ = ContractJson.Digest(ContractJson.Object(element, "content_sha256"));
-        var kind = EditableText(ContractJson.String(element, "kind")).ToLowerInvariant();
-        if (kind is not ("package-readme" or "package-metadata"))
-        {
-            throw new DeterministicValidationException($"Unknown package source kind '{kind}'.");
-        }
+        var kind = CanonicalPackageSourceKind(EditableText(ContractJson.String(element, "kind")).ToLowerInvariant());
 
         var path = Canonicalization.RelativePath(
             EditableText(ContractJson.String(element, "content_path")),
@@ -1137,11 +1165,7 @@ public static class InputManifestService
         var basename = Canonicalization.Basename(
             EditableText(ContractJson.String(element, "basename")),
             "owner input basename");
-        var provenance = EditableText(ContractJson.String(element, "provenance")).ToLowerInvariant();
-        if (provenance is not ("owner-supplied-internal-evidence" or "owner-supplied-public-evidence"))
-        {
-            throw new DeterministicValidationException($"Unknown owner input provenance '{provenance}'.");
-        }
+        var provenance = CanonicalOwnerInputProvenance(ContractJson.String(element, "provenance"));
 
         var path = SafePath.ResolveUnderRoot(root, basename, requireExisting: true, requireFile: true);
         BoundedIO.EnsureFileLength(path, ResourceLimits.SupplementalInputAggregateBytes, "owner input");
@@ -1226,7 +1250,7 @@ public static class InputManifestService
             "allowed_source_paths",
             "dynamic_child_lifecycle");
         var modes = ContractJson.StringArray(element, "render_modes")
-            .Select(value => Canonicalization.RenderMode(EditableText(value)))
+            .Select(CanonicalRenderMode)
             .Distinct(StringComparer.Ordinal)
             .Order(StringComparer.Ordinal)
             .ToArray();
@@ -1255,9 +1279,9 @@ public static class InputManifestService
             "rationale");
         var rationale = ContractJson.NullableString(element, "rationale");
         var value = new DynamicChildLifecycle(
-            EditableText(ContractJson.String(element, "applicability")).ToLowerInvariant(),
+            CanonicalLifecycleApplicability(ContractJson.String(element, "applicability")),
             ContractJson.StringArray(element, "triggers")
-                .Select(trigger => EditableText(trigger).ToLowerInvariant())
+                .Select(CanonicalLifecycleTrigger)
                 .Distinct(StringComparer.Ordinal)
                 .Order(StringComparer.Ordinal)
                 .ToArray(),
@@ -1304,6 +1328,129 @@ public static class InputManifestService
         }
 
         return value;
+    }
+
+    internal static string CanonicalAcquisition(string value)
+    {
+        if (!AcquisitionKinds.Contains(value, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Unknown acquisition '{value}'. Accepted values: {string.Join(", ", AcquisitionKinds)}.");
+        }
+
+        return value;
+    }
+
+    internal static string CanonicalRenderMode(string value) =>
+        Canonicalization.RenderMode(EditableText(value));
+
+    internal static string CanonicalSourceAvailability(string value)
+    {
+        value = EditableText(value).ToLowerInvariant();
+        if (!SourceAvailabilityKinds.Contains(value, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Unknown source availability '{value}'. Accepted values: {string.Join(", ", SourceAvailabilityKinds)}.");
+        }
+
+        return value;
+    }
+
+    internal static string? CanonicalSourceConfidence(string? value)
+    {
+        if (value is null)
+        {
+            return null;
+        }
+
+        value = EditableText(value).ToLowerInvariant();
+        if (!SourceConfidenceKinds.Contains(value, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Unknown source confidence '{value}'. Accepted values: {string.Join(", ", SourceConfidenceKinds)}.");
+        }
+
+        return value;
+    }
+
+    internal static string CanonicalRetrievalSubject(string value)
+    {
+        value = EditableText(value).ToLowerInvariant();
+        if (!RetrievalSubjects.Contains(value, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Unknown retrieval subject '{value}'. Accepted values: {string.Join(", ", RetrievalSubjects)}.");
+        }
+
+        return value;
+    }
+
+    internal static string CanonicalRetrievalResult(string value)
+    {
+        value = EditableText(value).ToLowerInvariant();
+        if (!RetrievalResults.Contains(value, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Unknown retrieval result '{value}'. Accepted values: {string.Join(", ", RetrievalResults)}.");
+        }
+
+        return value;
+    }
+
+    internal static string CanonicalPackageSourceKind(string value)
+    {
+        if (!PackageSourceKinds.Contains(value, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Unknown package source kind '{value}'. Accepted values: {string.Join(", ", PackageSourceKinds)}.");
+        }
+
+        return value;
+    }
+
+    internal static string CanonicalOwnerInputProvenance(string value)
+    {
+        value = EditableText(value).ToLowerInvariant();
+        if (!OwnerInputProvenances.Contains(value, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Unknown owner input provenance '{value}'. Accepted values: {string.Join(", ", OwnerInputProvenances)}.");
+        }
+
+        return value;
+    }
+
+    internal static string CanonicalLifecycleApplicability(string value)
+    {
+        value = EditableText(value).ToLowerInvariant();
+        if (!DynamicChildLifecycleApplicabilities.Contains(value, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Dynamic child lifecycle applicability must be one of: {string.Join(", ", DynamicChildLifecycleApplicabilities)}.");
+        }
+
+        return value;
+    }
+
+    internal static string CanonicalLifecycleTrigger(string value)
+    {
+        value = EditableText(value).ToLowerInvariant();
+        if (!DynamicChildLifecycleTriggers.Contains(value, StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Unknown dynamic child lifecycle trigger '{value}'. Accepted values: {string.Join(", ", DynamicChildLifecycleTriggerKinds)}.");
+        }
+
+        return value;
+    }
+
+    internal static void ValidatePackageOriginMethod(string value)
+    {
+        if (!PackageOriginMethods.Contains(CanonicalRetrievalMethod(value), StringComparer.Ordinal))
+        {
+            throw new DeterministicValidationException(
+                $"Package origin retrieval_method cannot be repository-fetch. Accepted methods: {string.Join(", ", PackageOriginMethods)}.");
+        }
     }
 
     private static string CanonicalLocator(string value, string retrievalMethod)

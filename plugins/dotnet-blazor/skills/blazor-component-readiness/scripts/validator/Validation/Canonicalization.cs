@@ -7,6 +7,17 @@ namespace BlazorComponentReadiness.Validator.Validation;
 
 public static partial class Canonicalization
 {
+    private static readonly IReadOnlyList<(string Canonical, IReadOnlyList<string> Aliases)> RenderModes =
+    [
+        ("static-ssr", ["static", "ssr", "static-ssr"]),
+        ("interactive-server", ["server", "interactive-server"]),
+        ("interactive-webassembly", ["wasm", "webassembly", "interactive-wasm", "interactive-webassembly"]),
+        ("interactive-auto", ["auto", "interactive-auto"]),
+        ("standalone-webassembly", ["standalone-wasm", "standalone-webassembly"])
+    ];
+
+    internal static IEnumerable<string> RenderModeAliases => RenderModes.SelectMany(mode => mode.Aliases);
+
     [GeneratedRegex("^[a-z0-9](?:[a-z0-9._-]{0,98}[a-z0-9])?$", RegexOptions.CultureInvariant)]
     private static partial Regex PackageIdPattern();
 
@@ -71,16 +82,15 @@ public static partial class Canonicalization
             .ToLowerInvariant()
             .Replace("_", "-", StringComparison.Ordinal)
             .Replace(" ", "-", StringComparison.Ordinal);
-        return value switch
+        foreach (var (canonical, aliases) in RenderModes)
         {
-            "static" or "ssr" or "static-ssr" => "static-ssr",
-            "server" or "interactive-server" => "interactive-server",
-            "wasm" or "webassembly" or "interactive-wasm" or "interactive-webassembly" =>
-                "interactive-webassembly",
-            "auto" or "interactive-auto" => "interactive-auto",
-            "standalone-wasm" or "standalone-webassembly" => "standalone-webassembly",
-            _ => throw new DeterministicValidationException($"Unsupported render mode '{value}'.")
-        };
+            if (aliases.Contains(value, StringComparer.Ordinal))
+            {
+                return canonical;
+            }
+        }
+
+        throw new DeterministicValidationException($"Unsupported render mode '{value}'.");
     }
 
     public static string HttpsUri(string value, bool requirePath)

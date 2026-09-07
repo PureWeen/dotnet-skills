@@ -1,5 +1,6 @@
 using BlazorComponentReadiness.Validator.Inputs;
 using BlazorComponentReadiness.Validator.IO;
+using BlazorComponentReadiness.Validator.Validation;
 
 namespace BlazorComponentReadiness.Validator.Cli;
 
@@ -11,11 +12,11 @@ internal static class InputCandidatesCommand
 
         Usage: readiness-validator inputs candidates <command> [options]
 
-        init --acquisition <published|release-candidate>
+        init --acquisition <{string.Join("|", InputManifestService.AcquisitionKinds)}>
              --package-locator <url|path> --package-method <method>
-             --source-availability <source-available|closed-source|unresolved>
+             --source-availability <{string.Join("|", InputManifestService.SourceAvailabilityKinds)}>
              [--repository-uri <url>] [--source-commit <commit>]
-             [--source-mapping <text>] [--source-confidence <confidence>] --output <new.json>
+             [--source-mapping <text>] [--source-confidence <{string.Join("|", InputManifestService.SourceConfidenceKinds)}>] --output <new.json>
 
         Each add command requires --input <previous.json> --output <new.json>:
           add-document --url <url> --path <local-path>
@@ -30,7 +31,15 @@ internal static class InputCandidatesCommand
                         [--lifecycle-trigger <trigger> ...] [--lifecycle-rationale <text>]
           add-exclusion --subject <subject> --rationale <text>
 
-        --package-method and --method accept: {string.Join(", ", InputManifestService.RetrievalMethods)}.
+        --package-method accepts: {string.Join(", ", InputManifestService.PackageOriginMethods)}.
+        add-retrieval --method accepts: {string.Join(", ", InputManifestService.RetrievalMethods)}.
+        Retrieval subjects: {string.Join(", ", InputManifestService.RetrievalSubjects)}.
+        Retrieval results: {string.Join(", ", InputManifestService.RetrievalResults)}.
+        Package source kinds: {string.Join(", ", InputManifestService.PackageSourceKinds)}.
+        Owner input provenances: {string.Join(", ", InputManifestService.OwnerInputProvenances)}.
+        Render modes accept: {string.Join(", ", Canonicalization.RenderModeAliases)}.
+        Lifecycle applicability: {string.Join(", ", InputManifestService.DynamicChildLifecycleApplicabilities)}.
+        Lifecycle triggers: {string.Join(", ", InputManifestService.DynamicChildLifecycleTriggerKinds)}.
         Record transport-specific routes in locator/detail, not in invented method names.
         All output files must be new. Pass the latest output to the next command.
         Empty collections mean nothing has been recorded yet, not confirmed absence.

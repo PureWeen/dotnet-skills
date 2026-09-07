@@ -27,8 +27,15 @@ resources exist. Replace example values with the actual facts. At initialization
 `--repository-uri`, `--source-commit`, `--source-mapping`, and `--source-confidence`
 when supported by the discovered source mapping. Do not infer closed source from a failed fetch.
 
-`--package-method` and `add-retrieval --method` use the same fixed vocabulary exposed by
-`inputs candidates --help` and enforced by discovery. NuGet v3 and v2 both use `package-feed`;
+Read `inputs candidates --help` before constructing inputs. It exposes the existing finite
+choices enforced by both construction and discovery, including retrieval subjects/results,
+source and owner provenance fields, render modes, and lifecycle tokens. Free-form evidence
+kinds and exclusion subjects remain descriptive text. Construction checks token validity,
+not whole-input completeness, and preserves the original valid values.
+
+`--package-method` uses the existing package-origin subset of `add-retrieval --method`;
+the generated help lists both. Repository fetching is not a package-origin method.
+NuGet v3 and v2 both use `package-feed`;
 retain their distinct URLs, results, and fallback details. HTTP downloads of source archives,
 documentation, or release metadata use `direct-download`, not provider-specific labels.
 Git retrieval uses `repository-fetch`. Do not invent method names or treat public downloads

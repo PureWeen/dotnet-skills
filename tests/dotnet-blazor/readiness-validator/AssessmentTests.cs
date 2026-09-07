@@ -129,6 +129,8 @@ internal static class AssessmentTests
                 "candidate builder leaves content hashes to discovery");
         }
 
+        TestCandidateFiniteDomains(fixture, built);
+
         var discovered = InputManifestService.Discover(fixture.Root, fixture.NupkgPath, built);
         var confirmed = InputManifestService.Confirm(discovered, fixture.Root);
         InputManifestService.Validate(confirmed, fixture.Root, requireConfirmed: true);
@@ -165,6 +167,145 @@ internal static class AssessmentTests
         return packageCandidates;
     }
 
+    private static void TestCandidateFiniteDomains(Fixture fixture, byte[] validBytes)
+    {
+        var cases = new Dictionary<string, Action<JsonObject>>
+        {
+            ["acquisition"] = candidate => candidate["acquisition"] = "future",
+            ["acquisition case"] = candidate => candidate["acquisition"] = "Published",
+            ["acquisition whitespace"] = candidate => candidate["acquisition"] = " published ",
+            ["source availability"] = candidate => candidate["source"]!["availability"] = "maybe",
+            ["source confidence"] = candidate => candidate["source"]!["confidence"] = "certain",
+            ["retrieval subject"] = candidate => candidate["retrieval_attempts"]![0]!["subject"] = "release",
+            ["retrieval result"] = candidate => candidate["retrieval_attempts"]![0]!["result"] = "partial",
+            ["package origin method"] = candidate => candidate["package_origin"]!["retrieval_method"] = "repository-fetch",
+            ["package source kind"] = candidate => ((JsonArray)candidate["package_sources"]!).Add(
+                new JsonObject
+                {
+                    ["kind"] = "package-index",
+                    ["locator"] = "package:entry/index.json",
+                    ["content_path"] = "package-readme.md"
+                }),
+            ["package source kind case"] = candidate => candidate["package_sources"]![0]!["kind"] = "PACKAGE-README",
+            ["package source kind whitespace"] = candidate => candidate["package_sources"]![0]!["kind"] = " package-readme ",
+            ["owner provenance"] = candidate => ((JsonArray)candidate["owner_inputs"]!).Add(
+                new JsonObject
+                {
+                    ["path"] = "owner-audit.txt",
+                    ["provenance"] = "owner-attestation"
+                }),
+            ["render mode"] = candidate => candidate["components"]![0]!["render_modes"]![0] = "desktop",
+            ["lifecycle applicability"] = candidate =>
+                candidate["components"]![0]!["dynamic_child_lifecycle"]!["applicability"] = "sometimes",
+            ["lifecycle trigger"] = candidate =>
+                ((JsonArray)candidate["components"]![0]!["dynamic_child_lifecycle"]!["triggers"]!).Add("hovered-children")
+        };
+
+        var sequence = 0;
+        foreach (var (name, mutate) in cases)
+        {
+            var input = Path.Combine(fixture.Root, $"invalid-domain-{sequence++}.json");
+            var outputDirectory = Path.Combine(fixture.Root, $"invalid-domain-output-{sequence}");
+            var output = Path.Combine(outputDirectory, "candidate.json");
+            var candidate = JsonNode.Parse(validBytes)!.AsObject();
+            mutate(candidate);
+            File.WriteAllText(input, candidate.ToJsonString());
+            var original = File.ReadAllBytes(input);
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    ["inputs", "candidates", "add-document", "--input", input,
+                        "--url", "https://example.test/docs", "--path", "docs.html", "--output", output],
+                    new StringWriter(),
+                    new StringWriter()),
+                $"candidate rejects invalid {name}");
+            Assert(!File.Exists(output), $"invalid {name} creates no output");
+            Assert(!Directory.Exists(outputDirectory), $"invalid {name} creates no output directory");
+            AssertBytes(original, File.ReadAllBytes(input), $"invalid {name} is not repaired in place");
+            ExpectValidation(
+                () => InputManifestService.Discover(fixture.Root, fixture.NupkgPath, original),
+                $"discovery still rejects invalid {name}");
+        }
+
+        (Action<JsonObject, string> Set, string[] Values, bool Normalizes)[] domains =
+        [
+            ((node, value) => node["acquisition"] = value, ["published", "release-candidate"], false),
+            ((node, value) => node["source"]!["availability"] = value,
+                ["source-available", "closed-source", "unresolved"], true),
+            ((node, value) => node["source"]!["confidence"] = value, ["low", "medium", "high"], true),
+            ((node, value) => node["retrieval_attempts"]![0]!["subject"] = value,
+                ["package", "documentation", "source"], true),
+            ((node, value) => node["retrieval_attempts"]![0]!["result"] = value,
+                ["succeeded", "not-found", "access-denied", "unavailable", "invalid-content", "network-failure"], true),
+            ((node, value) => node["package_sources"]![0]!["kind"] = value,
+                ["package-readme", "package-metadata"], false),
+            ((node, value) => node["owner_inputs"]![0]!["provenance"] = value,
+                ["owner-supplied-internal-evidence", "owner-supplied-public-evidence"], true),
+            ((node, value) => node["components"]![0]!["render_modes"]![0] = value,
+                ["static", "ssr", "static-ssr", "server", "interactive-server", "wasm", "webassembly",
+                    "interactive-wasm", "interactive-webassembly", "auto", "interactive-auto",
+                    "standalone-wasm", "standalone-webassembly"], true),
+            ((node, value) => node["components"]![0]!["dynamic_child_lifecycle"]!["applicability"] = value,
+                ["required", "not-applicable"], true),
+            ((node, value) => node["components"]![0]!["dynamic_child_lifecycle"]!["triggers"] = new JsonArray(value),
+                ["composite-children", "grouped-children", "registered-children", "selected-children"], true)
+        ];
+        var help = new StringWriter();
+        AssertEqual(ExitCodes.Success,
+            CliApplication.Run(["inputs", "candidates", "--help"], help, new StringWriter()),
+            "finite-domain help");
+        foreach (var (set, values, normalizes) in domains)
+        {
+            foreach (var value in values)
+            {
+                Assert(help.ToString().Contains(value, StringComparison.Ordinal), $"help exposes {value}");
+                string[] forms = normalizes ? [value, $" {value.ToUpperInvariant()} "] : [value];
+                foreach (var form in forms)
+                {
+                    var candidate = JsonNode.Parse(validBytes)!.AsObject();
+                    set(candidate, form);
+                    var bytes = Encoding.UTF8.GetBytes(candidate.ToJsonString());
+                    var rebuilt = InputCandidateBuilder.Build(InputCandidateBuilder.Read(bytes));
+                    Assert(JsonNode.DeepEquals(candidate, JsonNode.Parse(rebuilt)),
+                        $"accepted domain value {form} is preserved without whole-input completeness validation");
+                }
+            }
+        }
+
+        AssertBytes(validBytes, InputCandidateBuilder.Build(InputCandidateBuilder.Read(validBytes)),
+            "valid candidate serialization remains byte-identical");
+        var partial = JsonNode.Parse(validBytes)!.AsObject();
+        partial["components"]![0]!["render_modes"] = new JsonArray();
+        partial["components"]![0]!["dynamic_child_lifecycle"]!["rationale"] = null;
+        partial["source"]!["confidence"] = null;
+        var partialBytes = Encoding.UTF8.GetBytes(partial.ToJsonString());
+        _ = InputCandidateBuilder.Build(InputCandidateBuilder.Read(partialBytes));
+        ExpectValidation(
+            () => InputManifestService.Discover(fixture.Root, fixture.NupkgPath, partialBytes),
+            "incomplete candidates remain constructible but not discoverable");
+
+        (string Alias, string Canonical)[] renderModes =
+        [
+            ("static", "static-ssr"), ("ssr", "static-ssr"), ("static-ssr", "static-ssr"),
+            ("server", "interactive-server"), ("interactive-server", "interactive-server"),
+            ("wasm", "interactive-webassembly"), ("webassembly", "interactive-webassembly"),
+            ("interactive-wasm", "interactive-webassembly"), ("interactive-webassembly", "interactive-webassembly"),
+            ("auto", "interactive-auto"), ("interactive-auto", "interactive-auto"),
+            ("standalone-wasm", "standalone-webassembly"), ("standalone-webassembly", "standalone-webassembly")
+        ];
+        foreach (var (alias, canonical) in renderModes)
+        {
+            foreach (var form in new[] { alias, alias.ToUpperInvariant(), alias.Replace('-', '_'), alias.Replace('-', ' ') })
+            {
+                AssertEqual(canonical, Canonicalization.RenderMode(form), "existing render alias canonical form");
+            }
+        }
+
+        var packageMethodHelp = help.ToString().Split('\n').Single(line => line.Contains("--package-method accepts:", StringComparison.Ordinal));
+        Assert(!packageMethodHelp.Contains("repository-fetch", StringComparison.Ordinal),
+            "package method help does not advertise an unsupported origin method");
+    }
+
     private static void TestCandidateRetrievalMethods(Fixture fixture, string candidatePath)
     {
         string[] methods = ["package-feed", "direct-download", "repository-fetch", "local-file", "owner-supplied"];
@@ -173,9 +314,11 @@ internal static class AssessmentTests
         var sequence = 0;
         foreach (var method in invalidMethods.Concat(methods).Append(" PACKAGE-FEED "))
         {
-            var valid = methods.Contains(method.Trim().ToLowerInvariant(), StringComparer.Ordinal);
+            var canonicalMethod = method.Trim().ToLowerInvariant();
+            var valid = methods.Contains(canonicalMethod, StringComparer.Ordinal);
             foreach (var initialize in new[] { true, false })
             {
+                var contextValid = valid && (!initialize || canonicalMethod != "repository-fetch");
                 var path = Path.Combine(fixture.Root, $"method-candidate-{sequence++}.json");
                 string[] command = initialize
                     ? ["inputs", "candidates", "init", "--acquisition", "release-candidate",
@@ -187,10 +330,10 @@ internal static class AssessmentTests
                         "--detail", "Retain the actual route in the locator and detail.", "--output", path];
                 var error = new StringWriter();
                 AssertEqual(
-                    valid ? ExitCodes.Success : ExitCodes.ValidationFailure,
+                    contextValid ? ExitCodes.Success : ExitCodes.ValidationFailure,
                     CliApplication.Run(command, new StringWriter(), error),
                     $"candidate method '{method}', initialization={initialize}: {error}");
-                if (valid)
+                if (contextValid)
                 {
                     using var candidate = JsonDocument.Parse(File.ReadAllBytes(path));
                     var value = initialize
@@ -201,10 +344,18 @@ internal static class AssessmentTests
                 else
                 {
                     Assert(!File.Exists(path), "invalid method cannot create a success-shaped candidate");
-                    foreach (var accepted in methods)
+                    if (!valid)
                     {
-                        Assert(error.ToString().Contains(accepted, StringComparison.Ordinal),
-                            "invalid-method diagnostic exposes the existing vocabulary");
+                        foreach (var accepted in methods)
+                        {
+                            Assert(error.ToString().Contains(accepted, StringComparison.Ordinal),
+                                "invalid-method diagnostic exposes the existing vocabulary");
+                        }
+                    }
+                    else
+                    {
+                        Assert(error.ToString().Length > 0,
+                            "package origin keeps its repository-fetch restriction diagnostic");
                     }
                 }
             }

@@ -84,10 +84,40 @@ internal static class InputCandidateBuilder
                 $"Input candidate facts schema_version must be {InputManifestService.SchemaVersion}.");
         }
 
-        _ = InputManifestService.CanonicalRetrievalMethod(facts.PackageRetrievalMethod);
+        _ = InputManifestService.CanonicalAcquisition(facts.Acquisition);
+        _ = InputManifestService.CanonicalSourceAvailability(facts.SourceAvailability);
+        _ = InputManifestService.CanonicalSourceConfidence(facts.SourceConfidence);
+        InputManifestService.ValidatePackageOriginMethod(facts.PackageRetrievalMethod);
         foreach (var attempt in facts.RetrievalAttempts)
         {
             _ = InputManifestService.CanonicalRetrievalMethod(attempt.Method);
+            _ = InputManifestService.CanonicalRetrievalSubject(attempt.Subject);
+            _ = InputManifestService.CanonicalRetrievalResult(attempt.Result);
+        }
+
+        foreach (var source in facts.PackageSources)
+        {
+            _ = InputManifestService.CanonicalPackageSourceKind(source.Kind);
+        }
+
+        foreach (var owner in facts.OwnerInputs)
+        {
+            _ = InputManifestService.CanonicalOwnerInputProvenance(owner.KindOrProvenance);
+        }
+
+        foreach (var component in facts.Components)
+        {
+            foreach (var mode in component.Modes)
+            {
+                _ = InputManifestService.CanonicalRenderMode(mode);
+            }
+
+            _ = InputManifestService.CanonicalLifecycleApplicability(
+                component.LifecycleApplicability);
+            foreach (var trigger in component.LifecycleTriggers)
+            {
+                _ = InputManifestService.CanonicalLifecycleTrigger(trigger);
+            }
         }
 
         return StrictJson.SerializeCanonical(writer =>
