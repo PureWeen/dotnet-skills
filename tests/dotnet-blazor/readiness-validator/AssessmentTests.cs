@@ -130,6 +130,7 @@ internal static class AssessmentTests
         }
 
         TestCandidateFiniteDomains(fixture, built);
+        TestCandidateSyntax(fixture, built);
 
         var discovered = InputManifestService.Discover(fixture.Root, fixture.NupkgPath, built);
         var confirmed = InputManifestService.Confirm(discovered, fixture.Root);
@@ -306,6 +307,140 @@ internal static class AssessmentTests
             "package method help does not advertise an unsupported origin method");
     }
 
+    private static void TestCandidateSyntax(Fixture fixture, byte[] validBytes)
+    {
+        static void AddEvidence(JsonObject node, string path, string kind = "public-release-metadata") =>
+            ((JsonArray)node["evidence_inputs"]!).Add(new JsonObject { ["path"] = path, ["kind"] = kind });
+
+        var invalidCases = new Dictionary<string, Action<JsonObject>>
+        {
+            ["nested evidence path"] = node => AddEvidence(node, "acquisition/public/github-tag-ref.json"),
+            ["nested owner path"] = node => node["owner_inputs"]![0]!["path"] = "owners/audit.txt",
+            ["absolute evidence path"] = node => AddEvidence(node, "/audit.txt"),
+            ["traversing evidence path"] = node => AddEvidence(node, "../audit.txt"),
+            ["backslash owner path"] = node => node["owner_inputs"]![0]!["path"] = "owners\\audit.txt",
+            ["package local locator"] = node => node["package_origin"]!["locator"] = "../package.nupkg",
+            ["remote retrieval locator"] = node => node["retrieval_attempts"]![1]!["locator"] = "http://example.test/source",
+            ["repository URI"] = node => node["source"]!["repository_uri"] = "https://localhost/source",
+            ["source commit"] = node => node["source"]!["commit"] = "master",
+            ["documentation URL"] = node => node["documentation"]![0]!["url"] = "docs/index.html",
+            ["documentation path"] = node => node["documentation"]![0]!["content_path"] = "../docs.html",
+            ["package source path"] = node => node["package_sources"]![0]!["content_path"] = "/readme.md",
+            ["source repository path"] = node => node["source_artifacts"]![0]!["source_path"] = "../source.cs",
+            ["source content path"] = node => node["source_artifacts"]![0]!["content_path"] = "../capture.cs",
+            ["component ID"] = node => node["components"]![0]!["id"] = "?!",
+            ["component source path"] = node => node["components"]![0]!["allowed_source_paths"]![0] = "../source.cs",
+            ["source mapping length"] = node => node["source"]!["mapping"] = new string('a', 1025),
+            ["retrieval detail length"] = node => node["retrieval_attempts"]![0]!["detail"] = new string('a', 1025),
+            ["package source locator length"] = node => node["package_sources"]![0]!["locator"] = new string('a', 513),
+            ["evidence kind byte length"] = node => AddEvidence(node, "audit.txt", string.Concat(Enumerable.Repeat("\u00e9", 65))),
+            ["display name length"] = node => node["components"]![0]!["display_name"] = new string('a', 257),
+            ["lifecycle rationale length"] = node => node["components"]![0]!["dynamic_child_lifecycle"]!["rationale"] = new string('a', 1025),
+            ["exclusion subject length"] = node => node["exclusions"]![0]!["subject"] = new string('a', 257),
+            ["exclusion rationale length"] = node => node["exclusions"]![0]!["rationale"] = new string('a', 2049),
+            ["embedded control"] = node => node["source"]!["mapping"] = "source\nmapping"
+        };
+        var sequence = 0;
+        foreach (var (name, mutate) in invalidCases)
+        {
+            var candidate = JsonNode.Parse(validBytes)!.AsObject();
+            mutate(candidate);
+            var bytes = Encoding.UTF8.GetBytes(candidate.ToJsonString());
+            var input = Path.Combine(fixture.Root, $"syntax-invalid-{sequence}.json");
+            var directory = Path.Combine(fixture.Root, $"syntax-rejected-{sequence++}");
+            File.WriteAllBytes(input, bytes);
+            AssertEqual(ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    ["inputs", "candidates", "add-document", "--input", input,
+                        "--url", "https://example.test/docs", "--path", "docs.html",
+                        "--output", Path.Combine(directory, "next.json")],
+                    new StringWriter(), new StringWriter()),
+                $"candidate rejects {name}");
+            Assert(!Directory.Exists(directory), $"invalid {name} creates neither directory nor output");
+            AssertBytes(bytes, File.ReadAllBytes(input), $"invalid {name} leaves predecessor unchanged");
+            ExpectValidation(() => InputManifestService.Discover(fixture.Root, fixture.NupkgPath, bytes),
+                $"original discovery rejects {name}");
+        }
+
+        Action<JsonObject>[] acceptedCases =
+        [
+            node => node["documentation"]![0]!["content_path"] = " nested/docs.html ",
+            node => node["documentation"]![0]!["url"] = " HTTPS://Docs.Example.COM/Widgets/ ",
+            node => node["package_sources"]![0]!["content_path"] = "nested/README.md",
+            node => node["package_sources"]![0]!["locator"] = " Not a URI: extracted package metadata ",
+            node => node["source_artifacts"]![0]!["source_path"] = "nested/src/Widget.razor",
+            node => node["source_artifacts"]![0]!["content_path"] = "nested/captures/Widget.razor",
+            node => node["components"]![0]!["allowed_source_paths"]![0] = " nested/source.cs ",
+            node => node["source"]!["repository_uri"] = " HTTPS://GitHub.Example.COM/Owner/Repo/ ",
+            node => node["source"]!["commit"] = " AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA ",
+            node => node["source"]!["mapping"] = " Actual mapping ",
+            node => node["retrieval_attempts"]![0]!["detail"] = " Actual transport result ",
+            node => node["components"]![0]!["display_name"] = " Display name ",
+            node => node["components"]![0]!["dynamic_child_lifecycle"]!["rationale"] = " Actual rationale ",
+            node => node["exclusions"]![0]!["subject"] = " Free-form subject ",
+            node => node["exclusions"]![0]!["rationale"] = " Actual exclusion rationale ",
+            node => AddEvidence(node, " release-metadata.json ", " Free Form Kind "),
+            node => node["owner_inputs"]![0]!["path"] = " retained-owner-audit.txt ",
+            node => node["package_origin"]!["locator"] = " acquisition/package.nupkg "
+        ];
+        foreach (var mutate in acceptedCases)
+        {
+            var candidate = JsonNode.Parse(validBytes)!.AsObject();
+            mutate(candidate);
+            var bytes = Encoding.UTF8.GetBytes(candidate.ToJsonString());
+            var rebuilt = InputCandidateBuilder.Build(InputCandidateBuilder.Read(bytes));
+            Assert(JsonNode.DeepEquals(candidate, JsonNode.Parse(rebuilt)),
+                "accepted syntax preserves original values without filesystem access");
+        }
+
+        var missingFile = JsonNode.Parse(validBytes)!.AsObject();
+        missingFile["documentation"]![0]!["content_path"] = "not-retained/yet.html";
+        var incompleteBytes = Encoding.UTF8.GetBytes(missingFile.ToJsonString());
+        _ = InputCandidateBuilder.Build(InputCandidateBuilder.Read(incompleteBytes));
+        try
+        {
+            _ = InputManifestService.Discover(fixture.Root, fixture.NupkgPath, incompleteBytes);
+            throw new InvalidOperationException("Discovery accepted a missing documentation file.");
+        }
+        catch (FileNotFoundException exception)
+        {
+            AssertEqual(Path.Combine(fixture.Root, "not-retained", "yet.html"), exception.FileName,
+                "missing file still fails at discovery, not construction");
+        }
+        AssertBytes(validBytes, InputCandidateBuilder.Build(InputCandidateBuilder.Read(validBytes)),
+            "syntax validation preserves complete valid candidate bytes");
+
+        var helpOutput = new StringWriter();
+        AssertEqual(ExitCodes.Success,
+            CliApplication.Run(["inputs", "candidates", "--help"], helpOutput, new StringWriter()),
+            "candidate path-role help");
+        var help = helpOutput.ToString();
+        Assert(help.Contains("add-evidence --path <root-level-basename>", StringComparison.Ordinal),
+            "evidence help identifies the root-level filename role");
+        Assert(help.Contains("add-owner-input --path <root-level-basename>", StringComparison.Ordinal),
+            "owner help identifies the root-level filename role");
+        Assert(help.Contains("Documentation, package-source and source-artifact content paths may be nested", StringComparison.Ordinal),
+            "help preserves nested content-path roles");
+
+        var validPath = Path.Combine(fixture.Root, "syntax-valid-predecessor.json");
+        File.WriteAllBytes(validPath, validBytes);
+        foreach (var command in new[] { "add-evidence", "add-owner-input" })
+        {
+            string[] provenance = command == "add-evidence"
+                ? ["--kind", "public-release-metadata"]
+                : ["--provenance", "owner-supplied-internal-evidence"];
+            var outputDirectory = Path.Combine(fixture.Root, $"syntax-{command}-rejected");
+            AssertEqual(ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    ["inputs", "candidates", command, "--input", validPath, "--path", "nested/input.json",
+                        .. provenance, "--output", Path.Combine(outputDirectory, "next.json")],
+                    new StringWriter(), new StringWriter()),
+                $"{command} rejects a newly supplied nested path");
+            Assert(!Directory.Exists(outputDirectory), $"{command} rejects before output-directory creation");
+            AssertBytes(validBytes, File.ReadAllBytes(validPath), $"{command} preserves its valid predecessor");
+        }
+    }
+
     private static void TestCandidateRetrievalMethods(Fixture fixture, string candidatePath)
     {
         string[] methods = ["package-feed", "direct-download", "repository-fetch", "local-file", "owner-supplied"];
@@ -316,16 +451,19 @@ internal static class AssessmentTests
         {
             var canonicalMethod = method.Trim().ToLowerInvariant();
             var valid = methods.Contains(canonicalMethod, StringComparer.Ordinal);
+            var locator = canonicalMethod is "local-file" or "owner-supplied"
+                ? "package.nupkg"
+                : "https://example.test/package.nupkg";
             foreach (var initialize in new[] { true, false })
             {
                 var contextValid = valid && (!initialize || canonicalMethod != "repository-fetch");
                 var path = Path.Combine(fixture.Root, $"method-candidate-{sequence++}.json");
                 string[] command = initialize
                     ? ["inputs", "candidates", "init", "--acquisition", "release-candidate",
-                        "--package-locator", "package.nupkg", "--package-method", method,
+                        "--package-locator", locator, "--package-method", method,
                         "--source-availability", "unresolved", "--output", path]
                     : ["inputs", "candidates", "add-retrieval", "--input", candidatePath,
-                        "--subject", "source", "--locator", "https://example.test/source",
+                        "--subject", "source", "--locator", locator,
                         "--method", method, "--result", "succeeded",
                         "--detail", "Retain the actual route in the locator and detail.", "--output", path];
                 var error = new StringWriter();

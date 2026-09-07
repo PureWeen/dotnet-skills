@@ -24,8 +24,8 @@ internal static class InputCandidatesCommand
           add-source-artifact --source-path <repository-path> --path <local-path>
           add-retrieval --subject <subject> --locator <locator> --method <method>
                         --result <result> [--detail <text>]
-          add-evidence --path <local-path> --kind <kind>
-          add-owner-input --path <local-path> --provenance <provenance>
+          add-evidence --path <root-level-basename> --kind <kind>
+          add-owner-input --path <root-level-basename> --provenance <provenance>
           add-component --id <id> --name <name> --mode <mode> [--mode <mode> ...]
                         [--source-path <path> ...] --lifecycle-applicability <value>
                         [--lifecycle-trigger <trigger> ...] [--lifecycle-rationale <text>]
@@ -41,6 +41,15 @@ internal static class InputCandidatesCommand
         Lifecycle applicability: {string.Join(", ", InputManifestService.DynamicChildLifecycleApplicabilities)}.
         Lifecycle triggers: {string.Join(", ", InputManifestService.DynamicChildLifecycleTriggerKinds)}.
         Record transport-specific routes in locator/detail, not in invented method names.
+        Evidence and owner files must be retained directly under the later inputs
+        discover --root. Supply only their filenames, without directory components.
+        Documentation, package-source and source-artifact content paths may be nested
+        relative paths under that root. Source paths are repository-relative.
+        local-file/owner-supplied retrieval locators are relative paths; other methods
+        use public HTTPS locators. Repository URIs require a path and source commits
+        require an exact 40-hex commit. Package-source locators remain bounded text.
+        Syntax is checked before writing, without rewriting valid original values.
+        No files are copied, relocated or checked for existence during construction.
         All output files must be new. Pass the latest output to the next command.
         Empty collections mean nothing has been recorded yet, not confirmed absence.
         Do not edit generated JSON or supply hashes. inputs discover computes hashes

@@ -706,7 +706,7 @@ public static class InputManifestService
             availability,
             repositoryUri is null ? null : Canonicalization.HttpsUri(EditableText(repositoryUri), requirePath: true),
             commit is null ? null : Canonicalization.Commit(EditableText(commit)),
-            mapping is null ? null : ContractJson.NormalizeText(EditableText(mapping), "source mapping", 1024),
+            mapping is null ? null : CanonicalSourceMapping(mapping),
             CanonicalSourceConfidence(confidence));
         ValidateSource(source);
         return source;
@@ -741,7 +741,7 @@ public static class InputManifestService
             CanonicalLocator(ContractJson.String(element, "locator"), method),
             method,
             result,
-            detail is null ? null : EditableText(detail));
+            detail is null ? null : CanonicalRetrievalDetail(detail));
     }
 
     private static void ValidateRetrievalAttempts(InputManifest manifest)
@@ -854,10 +854,7 @@ public static class InputManifestService
             "package source content_path");
         return new InputPackageSource(
             kind,
-            ContractJson.NormalizeText(
-                EditableText(ContractJson.String(element, "locator")),
-                "package source locator",
-                512),
+            CanonicalPackageSourceLocator(ContractJson.String(element, "locator")),
             path,
             LocalDigest(root, path, "package source content"));
     }
@@ -888,10 +885,7 @@ public static class InputManifestService
         var basename = Canonicalization.Basename(
             EditableText(ContractJson.String(element, "path")),
             "evidence input path");
-        var kind = ContractJson.NormalizeText(
-            EditableText(ContractJson.String(element, "kind")).ToLowerInvariant(),
-            "evidence input kind",
-            128);
+        var kind = CanonicalEvidenceKind(ContractJson.String(element, "kind"));
         var path = SafePath.ResolveUnderRoot(root, basename, requireExisting: true, requireFile: true);
         BoundedIO.EnsureFileLength(
             path,
@@ -944,10 +938,7 @@ public static class InputManifestService
 
         return new InputComponent(
             Canonicalization.ComponentId(ContractJson.String(element, "id")),
-            ContractJson.NormalizeText(
-                EditableText(ContractJson.String(element, "display_name")),
-                "component display name",
-                256),
+            CanonicalComponentName(ContractJson.String(element, "display_name")),
             modes,
             ParseAllowedSourcePaths(element),
             ParseDynamicChildLifecycle(ContractJson.Object(element, "dynamic_child_lifecycle")));
@@ -957,14 +948,8 @@ public static class InputManifestService
     {
         ContractJson.RequireProperties(element, "subject", "rationale");
         return new InputExclusion(
-            ContractJson.NormalizeText(
-                EditableText(ContractJson.String(element, "subject")),
-                "exclusion subject",
-                256),
-            ContractJson.NormalizeText(
-                EditableText(ContractJson.String(element, "rationale")),
-                "exclusion rationale",
-                2048));
+            CanonicalExclusionSubject(ContractJson.String(element, "subject")),
+            CanonicalExclusionRationale(ContractJson.String(element, "rationale")));
     }
 
     private static InputPackage ParsePackage(JsonElement element)
@@ -1261,10 +1246,7 @@ public static class InputManifestService
 
         return new InputComponent(
             Canonicalization.ComponentId(ContractJson.String(element, "id")),
-            ContractJson.NormalizeText(
-                EditableText(ContractJson.String(element, "display_name")),
-                "component display name",
-                256),
+            CanonicalComponentName(ContractJson.String(element, "display_name")),
             modes,
             ParseAllowedSourcePaths(element),
             ParseDynamicChildLifecycle(ContractJson.Object(element, "dynamic_child_lifecycle")));
@@ -1287,10 +1269,7 @@ public static class InputManifestService
                 .ToArray(),
             rationale is null
                 ? null
-                : ContractJson.NormalizeText(
-                    EditableText(rationale),
-                    "dynamic child lifecycle rationale",
-                    1024));
+                : CanonicalLifecycleRationale(rationale));
         ValidateDynamicChildLifecycle(value);
         return value;
     }
@@ -1308,15 +1287,111 @@ public static class InputManifestService
     {
         ContractJson.RequirePropertiesUnordered(element, "subject", "rationale");
         return new InputExclusion(
-            ContractJson.NormalizeText(
-                EditableText(ContractJson.String(element, "subject")),
-                "exclusion subject",
-                256),
-            ContractJson.NormalizeText(
-                EditableText(ContractJson.String(element, "rationale")),
-                "exclusion rationale",
-                2048));
+            CanonicalExclusionSubject(ContractJson.String(element, "subject")),
+            CanonicalExclusionRationale(ContractJson.String(element, "rationale")));
     }
+
+    internal static void ValidateCandidateSyntax(InputCandidateFacts facts)
+    {
+        _ = CanonicalLocator(facts.PackageLocator, facts.PackageRetrievalMethod);
+        if (facts.SourceRepositoryUri is not null)
+        {
+            _ = Canonicalization.HttpsUri(EditableText(facts.SourceRepositoryUri), requirePath: true);
+        }
+
+        if (facts.SourceCommit is not null)
+        {
+            _ = Canonicalization.Commit(EditableText(facts.SourceCommit));
+        }
+
+        if (facts.SourceMapping is not null)
+        {
+            _ = CanonicalSourceMapping(facts.SourceMapping);
+        }
+
+        foreach (var attempt in facts.RetrievalAttempts)
+        {
+            _ = CanonicalLocator(attempt.Locator, attempt.Method);
+            if (attempt.Detail is not null)
+            {
+                _ = CanonicalRetrievalDetail(attempt.Detail);
+            }
+        }
+
+        foreach (var document in facts.Documentation)
+        {
+            _ = Canonicalization.HttpsUri(EditableText(document.Url), requirePath: false);
+            _ = Canonicalization.RelativePath(EditableText(document.Path), "documentation content_path");
+        }
+
+        foreach (var source in facts.PackageSources)
+        {
+            _ = CanonicalPackageSourceLocator(source.Locator);
+            _ = Canonicalization.RelativePath(EditableText(source.Path), "package source content_path");
+        }
+
+        foreach (var source in facts.SourceArtifacts)
+        {
+            _ = Canonicalization.RelativePath(EditableText(source.SourcePath), "source artifact source_path");
+            _ = Canonicalization.RelativePath(EditableText(source.Path), "source artifact content_path");
+        }
+
+        foreach (var evidence in facts.EvidenceInputs)
+        {
+            _ = Canonicalization.Basename(EditableText(evidence.Path), "evidence input path");
+            _ = CanonicalEvidenceKind(evidence.KindOrProvenance);
+        }
+
+        foreach (var owner in facts.OwnerInputs)
+        {
+            _ = Canonicalization.Basename(EditableText(owner.Path), "owner input path");
+        }
+
+        foreach (var component in facts.Components)
+        {
+            _ = Canonicalization.ComponentId(component.Id);
+            _ = CanonicalComponentName(component.Name);
+            foreach (var path in component.SourcePaths)
+            {
+                _ = Canonicalization.RelativePath(EditableText(path), "component allowed source path");
+            }
+
+            if (component.LifecycleRationale is not null)
+            {
+                _ = CanonicalLifecycleRationale(component.LifecycleRationale);
+            }
+        }
+
+        foreach (var exclusion in facts.Exclusions)
+        {
+            _ = CanonicalExclusionSubject(exclusion.Subject);
+            _ = CanonicalExclusionRationale(exclusion.Rationale);
+        }
+    }
+
+    private static string CanonicalSourceMapping(string value) =>
+        ContractJson.NormalizeText(EditableText(value), "source mapping", 1024);
+
+    private static string CanonicalRetrievalDetail(string value) =>
+        ContractJson.NormalizeText(EditableText(value), "retrieval attempt detail", 1024);
+
+    private static string CanonicalPackageSourceLocator(string value) =>
+        ContractJson.NormalizeText(EditableText(value), "package source locator", 512);
+
+    private static string CanonicalEvidenceKind(string value) =>
+        ContractJson.NormalizeText(EditableText(value).ToLowerInvariant(), "evidence input kind", 128);
+
+    private static string CanonicalComponentName(string value) =>
+        ContractJson.NormalizeText(EditableText(value), "component display name", 256);
+
+    private static string CanonicalLifecycleRationale(string value) =>
+        ContractJson.NormalizeText(EditableText(value), "dynamic child lifecycle rationale", 1024);
+
+    private static string CanonicalExclusionSubject(string value) =>
+        ContractJson.NormalizeText(EditableText(value), "exclusion subject", 256);
+
+    private static string CanonicalExclusionRationale(string value) =>
+        ContractJson.NormalizeText(EditableText(value), "exclusion rationale", 2048);
 
     internal static string CanonicalRetrievalMethod(string value)
     {

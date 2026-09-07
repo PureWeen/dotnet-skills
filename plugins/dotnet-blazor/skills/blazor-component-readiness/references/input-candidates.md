@@ -55,8 +55,8 @@ Use the relevant typed commands for the rest of the discovered input closure:
 | `add-package-source` | Source kind, locator and retained path, such as extracted metadata or README. |
 | `add-source-artifact` | Repository-relative source path and retained local path. |
 | `add-retrieval` | Actual subject, locator, method, result and optional detail, including failed attempts. |
-| `add-evidence` | Supplemental evidence path and its existing contract kind. |
-| `add-owner-input` | Actual owner-input path and provenance; public downloads are not owner attestations. |
+| `add-evidence` | Supplemental evidence filename directly under the later `--root`, and its descriptive kind. |
+| `add-owner-input` | Actual owner-input filename directly under the later `--root`, and provenance; public downloads are not owner attestations. |
 | `add-component` | Confirmed component identity, modes, source paths and explicit lifecycle applicability. |
 | `add-exclusion` | Explicit subject and rationale. |
 
@@ -67,6 +67,14 @@ have been added yet, not an owner-confirmed absence or an applicability decision
 For package-only scope, omit `add-component`; discovery and confirmation accept an empty selected
 component list. It does not claim the package contains no controls. Package/source/evidence
 requirements still apply, and full-library inventories still require confirmed components.
+
+Retain supplemental evidence and owner files at the root-level filenames you register:
+`add-evidence --path release-metadata.json`, not `--path acquisition/release-metadata.json`.
+Do not strip directories from a recorded path unless those exact bytes are actually retained
+at the registered root-level filename. The builder does not copy, relocate or overwrite files.
+Documentation, package-source and source-artifact content paths may remain nested relative
+paths. Construction validates the existing string grammar without changing valid original
+values; file existence, hashes and whole-input completeness remain discovery checks.
 
 After the complete candidate record and owner confirmation required by the skill:
 

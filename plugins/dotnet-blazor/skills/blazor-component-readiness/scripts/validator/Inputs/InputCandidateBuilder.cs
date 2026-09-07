@@ -120,6 +120,8 @@ internal static class InputCandidateBuilder
             }
         }
 
+        InputManifestService.ValidateCandidateSyntax(facts);
+
         return StrictJson.SerializeCanonical(writer =>
         {
             writer.WriteStartObject();
