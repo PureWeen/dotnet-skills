@@ -609,6 +609,183 @@ internal static class AssessmentTests
                 output,
                 error),
             $"package-only assessment validate: {error}");
+        Assert(
+            evidence.Selection.Count >= 2,
+            "canonicalization fixture has multiple selected evidence references");
+        var evidenceIds = evidence.Selection.Select(selection => selection.EvidenceId).ToArray();
+        var assessmentWithReferences = assessment with
+        {
+            Findings =
+            [
+                new AssessmentFinding(
+                    "Synthetic finding",
+                    "The retained fixture records a bounded synthetic finding.",
+                    [assessment.Rows[0].Id],
+                    evidenceIds)
+            ]
+        };
+        var canonicalReferencePath = Path.Combine(fixture.Root, "package-only.references.canonical.json");
+        var canonicalReferenceBytes = CurrentAssessmentService.Serialize(assessmentWithReferences);
+        File.WriteAllBytes(canonicalReferencePath, canonicalReferenceBytes);
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["assessment", "validate", "--root", fixture.Root, "--input", confirmedPath,
+                    "--assessment", canonicalReferencePath, "--evidence", evidencePath],
+                output,
+                error),
+            $"reference ordering canonical baseline validates: {error}");
+
+        var reversedReferences = evidenceIds.Reverse().ToArray();
+        var unsortedReferenceAssessment = assessmentWithReferences with
+        {
+            Rows = assessmentWithReferences.Rows
+                .Select(row => row.EvidenceIds.Count >= 2
+                    ? row with { EvidenceIds = row.EvidenceIds.Reverse().ToArray() }
+                    : row)
+                .ToArray(),
+            Findings = assessmentWithReferences.Findings
+                .Select(finding => finding with { EvidenceIds = reversedReferences })
+                .ToArray(),
+            SummaryGroups = assessmentWithReferences.SummaryGroups
+                .Select(group => group with
+                {
+                    EvidenceIds = group.EvidenceIds.Count >= 2
+                        ? group.EvidenceIds.Reverse().ToArray()
+                        : group.EvidenceIds
+                })
+                .ToArray()
+        };
+        var unsortedReferencePath = Path.Combine(fixture.Root, "package-only.references.unsorted.json");
+        var unsortedReferenceBytes = CurrentAssessmentService.Serialize(unsortedReferenceAssessment);
+        File.WriteAllBytes(unsortedReferencePath, unsortedReferenceBytes);
+        var strictUnsortedError = new StringWriter();
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                ["assessment", "validate", "--root", fixture.Root, "--input", confirmedPath,
+                    "--assessment", unsortedReferencePath, "--evidence", evidencePath],
+                output,
+                strictUnsortedError),
+            $"strict validation rejects unsorted references: {strictUnsortedError}");
+
+        var canonicalizedReferencePath = Path.Combine(fixture.Root, "package-only.references.canonicalized.json");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["assessment", "canonicalize", "--assessment", unsortedReferencePath,
+                    "--output", canonicalizedReferencePath],
+                output,
+                error),
+            $"reference ordering canonicalize CLI: {error}");
+        AssertBytes(
+            canonicalReferenceBytes,
+            File.ReadAllBytes(canonicalizedReferencePath),
+            "reference ordering canonical bytes");
+        AssertBytes(
+            unsortedReferenceBytes,
+            File.ReadAllBytes(unsortedReferencePath),
+            "canonicalize preserves unsorted input bytes");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["assessment", "validate", "--root", fixture.Root, "--input", confirmedPath,
+                    "--assessment", canonicalizedReferencePath, "--evidence", evidencePath],
+                output,
+                error),
+            $"canonicalized references validate: {error}");
+        var idempotentReferencePath = Path.Combine(fixture.Root, "package-only.references.idempotent.json");
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(
+                ["assessment", "canonicalize", "--assessment", canonicalizedReferencePath,
+                    "--output", idempotentReferencePath],
+                output,
+                error),
+            $"canonical reference ordering is idempotent: {error}");
+        AssertBytes(
+            canonicalReferenceBytes,
+            File.ReadAllBytes(idempotentReferencePath),
+            "already canonical references retain exact bytes");
+        var canonicalCollisionError = new StringWriter();
+        AssertEqual(
+            ExitCodes.EnvironmentFailure,
+            CliApplication.Run(
+                ["assessment", "canonicalize", "--assessment", unsortedReferencePath,
+                    "--output", canonicalizedReferencePath],
+                output,
+                canonicalCollisionError),
+            "canonicalized assessment output is immutable");
+        AssertBytes(
+            canonicalReferenceBytes,
+            File.ReadAllBytes(canonicalizedReferencePath),
+            "output collision preserves canonical bytes");
+
+        var unselectedEvidenceId = "EV1-" + new string('f', 64);
+        Assert(!evidenceIds.Contains(unselectedEvidenceId), "negative reference is outside the selected evidence");
+        foreach (var (name, invalidReferences) in new[]
+        {
+            ("duplicate-row", assessmentWithReferences with
+            {
+                Rows =
+                [
+                    assessmentWithReferences.Rows[0] with
+                    {
+                        EvidenceIds = [.. evidenceIds, evidenceIds[^1]]
+                    },
+                    .. assessmentWithReferences.Rows.Skip(1)
+                ]
+            }),
+            ("unselected-finding", assessmentWithReferences with
+            {
+                Findings =
+                [
+                    assessmentWithReferences.Findings[0] with
+                    {
+                        EvidenceIds = evidenceIds.Append(unselectedEvidenceId).Order(StringComparer.Ordinal).ToArray()
+                    }
+                ]
+            }),
+            ("wrong-finding-union", assessmentWithReferences with
+            {
+                Findings =
+                [
+                    assessmentWithReferences.Findings[0] with { EvidenceIds = evidenceIds.Skip(1).ToArray() }
+                ]
+            }),
+            ("wrong-summary-union", assessmentWithReferences with
+            {
+                SummaryGroups =
+                [
+                    assessmentWithReferences.SummaryGroups[0] with { EvidenceIds = evidenceIds.Skip(1).ToArray() }
+                ]
+            })
+        })
+        {
+            var invalidPath = Path.Combine(fixture.Root, $"package-only.references.{name}.json");
+            var normalizedInvalidPath = Path.Combine(fixture.Root, $"package-only.references.{name}.normalized.json");
+            var invalidBytes = CurrentAssessmentService.Serialize(invalidReferences);
+            File.WriteAllBytes(invalidPath, invalidBytes);
+            var invalidError = new StringWriter();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(
+                    ["assessment", "canonicalize", "--assessment", invalidPath, "--output", normalizedInvalidPath],
+                    output,
+                    invalidError),
+                $"{name} canonicalizes without semantic repair: {invalidError}");
+            AssertBytes(invalidBytes, File.ReadAllBytes(invalidPath), $"{name} input remains unchanged");
+            AssertBytes(invalidBytes, File.ReadAllBytes(normalizedInvalidPath), $"{name} invalid references remain unchanged");
+            AssertEqual(
+                ExitCodes.ValidationFailure,
+                CliApplication.Run(
+                    ["assessment", "validate", "--root", fixture.Root, "--input", confirmedPath,
+                        "--assessment", normalizedInvalidPath, "--evidence", evidencePath],
+                    output,
+                    invalidError),
+                $"{name} remains a validation failure: {invalidError}");
+        }
+
         var subject = new RepositoryLedgerSubject(
             evidence.Assessment.AssessmentKind,
             evidence.Assessment.Package,
@@ -674,7 +851,7 @@ internal static class AssessmentTests
             ExitCodes.Success,
             CliApplication.Run(
                 ["report", "render", "--root", fixture.Root, "--input", confirmedPath,
-                    "--assessment", completedAssessmentPath, "--evidence", evidencePath, "--output", revisions],
+                    "--assessment", canonicalizedReferencePath, "--evidence", evidencePath, "--output", revisions],
                 output,
                 error),
             $"package-only report render: {error}");
@@ -720,7 +897,7 @@ internal static class AssessmentTests
             ExitCodes.Success,
             CliApplication.Run(
                 ["report", "render", "--root", fixture.Root, "--input", confirmedPath,
-                    "--assessment", completedAssessmentPath, "--evidence", evidencePath,
+                    "--assessment", canonicalizedReferencePath, "--evidence", evidencePath,
                     "--output", revisions, "--predecessor", predecessor.Value],
                 output,
                 error),

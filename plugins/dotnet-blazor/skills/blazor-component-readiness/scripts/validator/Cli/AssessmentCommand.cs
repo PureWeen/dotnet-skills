@@ -22,7 +22,9 @@ public static class AssessmentCommand
         for evidence ledger-build --subject and evidence bundle --assessment.
         This projects identity only; it does not validate evidence, bindings or readiness.
         Do not hand-author or reformat exported identity files. canonicalize writes a full
-        assessment, not a standalone evidence identity.
+        assessment, not a standalone evidence identity. It also orders evidence IDs in rows,
+        findings, and summary groups without adding, removing, or deduplicating references.
+        Validation remains the authority for evidence bindings and assessment correctness.
         """;
 
     public static int Run(IReadOnlyList<string> args, TextWriter output)
@@ -58,7 +60,19 @@ public static class AssessmentCommand
             ResourceLimits.SerializedArtifactBytes,
             "assessment");
         var assessment = AssessmentService.Parse(assessmentBytes, requireCanonical: false);
-        WriteNew(options.Single("--output"), AssessmentService.Serialize(assessment));
+        var normalized = assessment with
+        {
+            Rows = assessment.Rows
+                .Select(row => row with { EvidenceIds = row.EvidenceIds.Order(StringComparer.Ordinal).ToArray() })
+                .ToArray(),
+            Findings = assessment.Findings
+                .Select(finding => finding with { EvidenceIds = finding.EvidenceIds.Order(StringComparer.Ordinal).ToArray() })
+                .ToArray(),
+            SummaryGroups = assessment.SummaryGroups
+                .Select(group => group with { EvidenceIds = group.EvidenceIds.Order(StringComparer.Ordinal).ToArray() })
+                .ToArray()
+        };
+        WriteNew(options.Single("--output"), AssessmentService.Serialize(normalized));
         return ExitCodes.Success;
     }
 
