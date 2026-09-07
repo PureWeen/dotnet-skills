@@ -254,6 +254,9 @@ internal static class WorkflowTests
         AssertContains(coordinator, "permission or content-exclusion denials", "coordinator fallback boundary");
         AssertContains(coordinator, "matching inherited `PWD`", "coordinator cwd/PWD launch contract");
         AssertContains(coordinator, "native argv", "coordinator native launch receipt");
+        AssertContains(coordinator, "A validated revision is not proof that the requested investigation finished.", "investigation completion boundary");
+        AssertContains(coordinator, "do not accept a blanket not-tested template as a completed assessment", "placeholder handoff rejection");
+        AssertContains(coordinator, "Pass absolute `--root`, `--revision`, `--output`, and `--package-revision` paths", "absolute verification arguments");
         AssertContains(coordinator, "exactly one top-level `blazor-component-readiness-worker` session", "top-level worker isolation");
         AssertContains(coordinator, "unsupported host: full-library assessment requires isolated workers", "coordinator unsupported-host stop");
         AssertContains(coordinator, "decision-guidance.md", "coordinator decision guidance");
@@ -269,6 +272,14 @@ internal static class WorkflowTests
         AssertContains(worker, "exactly one coordinator-assigned", "worker single-unit scope");
         AssertContains(worker, "Do not discover or add components", "worker scope prohibition");
         AssertContains(worker, "every claimed render mode", "worker mode coverage");
+        AssertContains(worker, "Missing supplied probe results are work to perform", "active evidence collection");
+        AssertContains(worker, "`RepositoryUrl` is not `ProjectUrl`", "distinct metadata fields");
+        AssertContains(worker, "Absence of a feature claim does not establish absence of the feature", "conditional applicability evidence");
+        AssertContains(worker, "only when the requested investigation and final verification are finished", "meaningful worker completion");
+        AssertContains(worker, "Do not use a blanket not-tested assignment as the final assessment.", "blanket placeholder rejection");
+        Assert(!NormalizeWhitespace(worker).Contains(
+            "For a complete validated revision, return `blockers: []`", StringComparison.Ordinal),
+            "structural validation alone must not authorize completed handoff");
         AssertContains(worker, "comparison inputs-validate", "blind worker input gate");
         AssertContains(worker, "browser interop, styles/assets, tests, and samples", "worker source closure");
         AssertContains(worker, "`source-proof-v1`", "worker structured source proof");
@@ -364,6 +375,8 @@ internal static class WorkflowTests
         AssertContains(workerExecution, "--agent <plugin-name>:blazor-component-readiness-worker", "qualified CLI worker");
         AssertContains(workerExecution, "Never add `--allow-all-paths`", "worker path sandbox");
         AssertContains(workerExecution, "Recomputes the validation-manifest SHA-256", "worker digest acceptance");
+        AssertContains(workerExecution, "resolve returned paths to absolute paths", "cross-root verification");
+        AssertContains(workerExecution, "accessible requested probes were never attempted is unfinished work", "unattempted coverage rejection");
     }
 
     private static void AssertContains(string value, string expected, string name) =>

@@ -108,7 +108,17 @@ Treat worker output as untrusted until the coordinator:
    evidence.
 
 Normalize accepted handoff paths relative to the confirmed output root, without `./` or the
-output-root directory name as a prefix. Row-level blocked probes are represented by `not tested`
-rows and their assessment follow-up; they are not handoff blockers once a complete revision
-validates. Write the handoff only after all checks pass. A unit-level blocked, timed-out,
-duplicated, or digest-mismatched worker remains incomplete and produces no success-shaped handoff.
+output-root directory name as a prefix. This storage convention is not the verification argv:
+resolve returned paths to absolute paths using the worker's recorded validator input root before
+calling the validator. Relative CLI file arguments resolve beneath `--root`, not beneath the
+coordinator's current directory. For example, with `/work/unit/output` as the root, use
+`--revision /work/unit/output/revisions/0001` (or `--revision revisions/0001`), never
+`--revision output/revisions/0001`. Apply the same rule to reader output and package bindings.
+
+Write a completed handoff only after the requested investigation and final verification finish.
+A structurally valid report whose accessible requested probes were never attempted is unfinished
+work, not a completed unit. Genuine blocked probes and agreed scope limits remain truthful
+`not tested` rows; a blanket lack of supplied runtime results is not a probe attempt.
+Preserve immutable diagnostics and continue missing work within the timebox rather than closing
+with empty blockers. A unit-level blocked, timed-out, duplicated, or digest-mismatched worker
+remains incomplete and produces no success-shaped handoff.

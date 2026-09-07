@@ -75,14 +75,21 @@ repository path.
    rationale contract, including legitimate `not applicable` and owner-evidence-required paths.
    Treat shallow placeholder closure as incomplete; preserve it and require a new immutable
    revision after the missing checks. A low record count alone is not failure when compact shared
-   evidence substantively supports every cited claim. A complete validated revision has
-   `blockers: []`; row-level `not tested` probe reasons remain in the assessment and report.
+   evidence substantively supports every cited claim. A validated revision is not proof that the
+   requested investigation finished. Missing supplied probe results do not excuse skipping an
+   accessible requested probe. Return unfinished work to the unit for evidence collection within
+   the remaining timebox; do not accept a blanket not-tested template as a completed assessment.
+   `blockers: []` requires both completed investigation and final verification. Genuine row-level
+   limitations remain in the assessment and report; they do not require every row to be verified.
 8. For grouped, registered, selected, or composite child controls, require the canonical
    post-initialization lifecycle protocol. Reject a prose-only matrix or initial-state-only probe.
 9. Recompute and validate every returned manifest/digest and reject a changed assigned unit ID,
    skipped modes, duplicate unit ownership, sibling leakage, repository-wide rows in component
    records, or a wrong package binding. Store accepted handoff paths relative to the confirmed
    output root, without `./` or the output-root directory name as a prefix.
+   For verification commands, resolve those paths to absolute paths first, using the worker's
+   recorded validator input root. Pass absolute `--root`, `--revision`, `--output`, and
+   `--package-revision` paths; do not prepend the artifact root to a path that already includes it.
 10. Reconcile the run manifest from immutable revisions, validate completion, and generate the
    factual library JSON/Markdown index.
 
