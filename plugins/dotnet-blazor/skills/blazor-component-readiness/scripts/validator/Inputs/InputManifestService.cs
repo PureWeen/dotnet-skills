@@ -9,6 +9,15 @@ namespace BlazorComponentReadiness.Validator.Inputs;
 public static class InputManifestService
 {
     public const int SchemaVersion = 2;
+    internal static IReadOnlyList<string> RetrievalMethods { get; } =
+    [
+        "package-feed",
+        "direct-download",
+        "repository-fetch",
+        "local-file",
+        "owner-supplied"
+    ];
+
     private static readonly string[] DynamicChildLifecycleTriggers =
     [
         "composite-children",
@@ -1285,13 +1294,13 @@ public static class InputManifestService
                 2048));
     }
 
-    private static string CanonicalRetrievalMethod(string value)
+    internal static string CanonicalRetrievalMethod(string value)
     {
         value = EditableText(value).ToLowerInvariant();
-        if (value is not ("package-feed" or "direct-download" or "repository-fetch" or
-            "local-file" or "owner-supplied"))
+        if (!RetrievalMethods.Contains(value, StringComparer.Ordinal))
         {
-            throw new DeterministicValidationException($"Unknown retrieval method '{value}'.");
+            throw new DeterministicValidationException(
+                $"Unknown retrieval method '{value}'. Accepted methods: {string.Join(", ", RetrievalMethods)}.");
         }
 
         return value;

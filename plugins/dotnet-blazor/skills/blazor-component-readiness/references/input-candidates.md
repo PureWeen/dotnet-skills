@@ -27,6 +27,13 @@ resources exist. Replace example values with the actual facts. At initialization
 `--repository-uri`, `--source-commit`, `--source-mapping`, and `--source-confidence`
 when supported by the discovered source mapping. Do not infer closed source from a failed fetch.
 
+`--package-method` and `add-retrieval --method` use the same fixed vocabulary exposed by
+`inputs candidates --help` and enforced by discovery. NuGet v3 and v2 both use `package-feed`;
+retain their distinct URLs, results, and fallback details. HTTP downloads of source archives,
+documentation, or release metadata use `direct-download`, not provider-specific labels.
+Git retrieval uses `repository-fetch`. Do not invent method names or treat public downloads
+as `owner-supplied`. Invalid method values fail before any candidate is written.
+
 Each add command reads the previous candidate file and writes a **new** file. Continue
 from the latest output; preserve the earlier file. Paths embedded in candidates are relative
 to the later `inputs discover --root`, not relative to the candidate file itself.

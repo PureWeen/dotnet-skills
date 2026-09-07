@@ -35,6 +35,7 @@ internal static class AssessmentTests
         {
             var fixture = CreateInputFixture(root);
             var packageCandidates = TestCandidateBuilder(fixture);
+            TestCandidateRetrievalMethods(fixture, packageCandidates);
             TestPackageOnlyCliPath(fixture, packageCandidates);
             var packageRevision = CreatePackageRevision(fixture);
             TestRevisionPathSafety(fixture, packageRevision);
@@ -162,6 +163,80 @@ internal static class AssessmentTests
             "original discovery remains strict");
 
         return packageCandidates;
+    }
+
+    private static void TestCandidateRetrievalMethods(Fixture fixture, string candidatePath)
+    {
+        string[] methods = ["package-feed", "direct-download", "repository-fetch", "local-file", "owner-supplied"];
+        string[] invalidMethods = ["nuget-v2-fallback", "nuget-v3-flat-container", "github-codeload-archive", "github-raw", "github-release-api"];
+        var original = File.ReadAllBytes(candidatePath);
+        var sequence = 0;
+        foreach (var method in invalidMethods.Concat(methods).Append(" PACKAGE-FEED "))
+        {
+            var valid = methods.Contains(method.Trim().ToLowerInvariant(), StringComparer.Ordinal);
+            foreach (var initialize in new[] { true, false })
+            {
+                var path = Path.Combine(fixture.Root, $"method-candidate-{sequence++}.json");
+                string[] command = initialize
+                    ? ["inputs", "candidates", "init", "--acquisition", "release-candidate",
+                        "--package-locator", "package.nupkg", "--package-method", method,
+                        "--source-availability", "unresolved", "--output", path]
+                    : ["inputs", "candidates", "add-retrieval", "--input", candidatePath,
+                        "--subject", "source", "--locator", "https://example.test/source",
+                        "--method", method, "--result", "succeeded",
+                        "--detail", "Retain the actual route in the locator and detail.", "--output", path];
+                var error = new StringWriter();
+                AssertEqual(
+                    valid ? ExitCodes.Success : ExitCodes.ValidationFailure,
+                    CliApplication.Run(command, new StringWriter(), error),
+                    $"candidate method '{method}', initialization={initialize}: {error}");
+                if (valid)
+                {
+                    using var candidate = JsonDocument.Parse(File.ReadAllBytes(path));
+                    var value = initialize
+                        ? candidate.RootElement.GetProperty("package_origin").GetProperty("retrieval_method")
+                        : candidate.RootElement.GetProperty("retrieval_attempts").EnumerateArray().Last().GetProperty("retrieval_method");
+                    AssertEqual(method, value.GetString(), "validation preserves original valid method bytes");
+                }
+                else
+                {
+                    Assert(!File.Exists(path), "invalid method cannot create a success-shaped candidate");
+                    foreach (var accepted in methods)
+                    {
+                        Assert(error.ToString().Contains(accepted, StringComparison.Ordinal),
+                            "invalid-method diagnostic exposes the existing vocabulary");
+                    }
+                }
+            }
+        }
+
+        AssertBytes(original, File.ReadAllBytes(candidatePath), "method validation preserves prior candidates");
+        var invalid = JsonNode.Parse(original)!.AsObject();
+        invalid["package_origin"]!["retrieval_method"] = "nuget-v2-fallback";
+        var invalidPath = Path.Combine(fixture.Root, "invalid-method-existing.json");
+        File.WriteAllText(invalidPath, invalid.ToJsonString());
+        var invalidBytes = File.ReadAllBytes(invalidPath);
+        var rejectedPath = Path.Combine(fixture.Root, "invalid-method-next.json");
+        AssertEqual(
+            ExitCodes.ValidationFailure,
+            CliApplication.Run(
+                ["inputs", "candidates", "add-document", "--input", invalidPath,
+                    "--url", "https://example.test/docs", "--path", "docs.html", "--output", rejectedPath],
+                new StringWriter(), new StringWriter()),
+            "invalid existing method cannot be propagated by an unrelated add command");
+        Assert(!File.Exists(rejectedPath), "invalid existing state writes no next candidate");
+        AssertBytes(invalidBytes, File.ReadAllBytes(invalidPath), "invalid prior candidate is not repaired in place");
+        ExpectValidation(
+            () => InputManifestService.Discover(fixture.Root, fixture.NupkgPath, invalidBytes),
+            "raw discovery still rejects invented retrieval methods");
+        var help = new StringWriter();
+        AssertEqual(ExitCodes.Success,
+            CliApplication.Run(["inputs", "candidates", "--help"], help, new StringWriter()),
+            "candidate method help");
+        foreach (var method in methods)
+        {
+            Assert(help.ToString().Contains(method, StringComparison.Ordinal), "help exposes the existing method vocabulary");
+        }
     }
 
     private static void TestPackageOnlyCliPath(Fixture fixture, string candidatesPath)

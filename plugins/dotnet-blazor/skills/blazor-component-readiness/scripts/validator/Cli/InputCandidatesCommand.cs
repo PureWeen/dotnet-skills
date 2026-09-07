@@ -5,8 +5,8 @@ namespace BlazorComponentReadiness.Validator.Cli;
 
 internal static class InputCandidatesCommand
 {
-    private const string Help =
-        """
+    private static string Help =>
+        $"""
         Construct discovery candidates with typed options, without authoring JSON.
 
         Usage: readiness-validator inputs candidates <command> [options]
@@ -30,6 +30,8 @@ internal static class InputCandidatesCommand
                         [--lifecycle-trigger <trigger> ...] [--lifecycle-rationale <text>]
           add-exclusion --subject <subject> --rationale <text>
 
+        --package-method and --method accept: {string.Join(", ", InputManifestService.RetrievalMethods)}.
+        Record transport-specific routes in locator/detail, not in invented method names.
         All output files must be new. Pass the latest output to the next command.
         Empty collections mean nothing has been recorded yet, not confirmed absence.
         Do not edit generated JSON or supply hashes. inputs discover computes hashes

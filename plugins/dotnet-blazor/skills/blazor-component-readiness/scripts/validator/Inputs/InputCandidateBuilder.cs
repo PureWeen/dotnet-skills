@@ -84,6 +84,12 @@ internal static class InputCandidateBuilder
                 $"Input candidate facts schema_version must be {InputManifestService.SchemaVersion}.");
         }
 
+        _ = InputManifestService.CanonicalRetrievalMethod(facts.PackageRetrievalMethod);
+        foreach (var attempt in facts.RetrievalAttempts)
+        {
+            _ = InputManifestService.CanonicalRetrievalMethod(attempt.Method);
+        }
+
         return StrictJson.SerializeCanonical(writer =>
         {
             writer.WriteStartObject();
