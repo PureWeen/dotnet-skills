@@ -58,6 +58,8 @@ sibling identities there as non-evidence and never cite or reproduce them in com
    raw inputs if it fails. Reconcile every `available` or `blocked` coverage surface. For
    source-available component work, materialize the wrapper/API, inherited runtime, browser
    interop, styles/assets, tests, and samples rather than treating a source archive as closure.
+   If source arrives as an extracted archive, use `source capture-archive` to verify selected
+   files against the retained archive; do not run Git commands or invent checkout metadata there.
 3. Collect only evidence allowed for this unit. A package worker owns the 60 repository-wide/conditional rows;
    a component worker owns the 61 component-specific rows and must bind the supplied package
    revision.

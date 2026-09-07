@@ -25,6 +25,34 @@ Continue with only claims the retained evidence can support; affected applicable
 Use the owner-supplied local `.nupkg`, record acquisition as `release-candidate`, bind its SHA-256,
 and start a distinct package root when bytes change even if the semantic version does not.
 
+## Source archive capture
+
+When the selected source is an already retained GitHub archive, extraction is an acquisition step,
+not a checkout. For a GitHub codeload archive, record the repository URI, exact commit, archive
+locator, top-level entry prefix, mapping rationale, and confidence, then verify selected files with:
+
+```text
+<launcher> source capture-archive --root <root> --archive <root-relative.tar.gz> \
+  --source-root <root-relative-extracted-source> --archive-prefix <github-top-level-directory> \
+  --archive-format tar.gz --repository-uri <repository-uri> --source-commit <40-hex-commit> \
+  --source-mapping "<mapping-rationale>" --source-confidence <low|medium|high> \
+  --acquisition-locator <codeload-archive-url> --source-path <repository-relative-path> \
+  --output <new-receipt.json>
+```
+
+Read the retained receipt, not launcher stdout. `declared_source` records supplied provenance;
+`archive` and `source_artifacts` record observed hashes and selected-file correspondence. The
+helper never invokes Git, extracts bytes, executes archive contents, or establishes remote commit
+truth. It does not establish complete project/import closure. Keep the receipt outside the extracted
+source tree. ZIP archives use `--archive-format zip`; `--expected-sha256` can bind an independently
+retained archive digest. Repeat `--source-path` for each selected file.
+
+Use the same declared repository/commit/mapping/confidence in `inputs candidates init`. For each
+captured file, pass its `source_path` and `content_path` to
+`inputs candidates add-source-artifact --input <previous-candidate> --source-path <source_path> --path <content_path> --output <new-candidate>`.
+Do not copy receipt JSON or hashes into candidates; discovery computes the final digests. Retain
+actual retrieval attempts separately; the helper does not perform or attest a download.
+
 ## Minimum package inspection
 
 Persist the canonical six-field package identity before inspecting its contents:

@@ -14,6 +14,8 @@ public static class CliApplication
 
         Commands:
           package inspect    Inspect the exact identity and digest of a local .nupkg.
+          source capture-archive
+                             Capture selected files from an already extracted source archive.
           inputs candidates  Construct discovery candidates with typed init/add options.
           inputs discover    Canonicalize discovery candidates into a draft input manifest.
           inputs confirm     Freeze a validated draft as an immutable confirmed manifest.
@@ -114,6 +116,11 @@ public static class CliApplication
                 return ComparisonCommand.Run(args.Skip(1).ToArray(), output);
             }
 
+            if (string.Equals(args[0], "source", StringComparison.Ordinal))
+            {
+                return RunSource(args.Skip(1).ToArray(), output);
+            }
+
             if (!string.Equals(args[0], "package", StringComparison.Ordinal))
             {
                 throw new UsageException($"Unknown command '{args[0]}'.");
@@ -193,6 +200,74 @@ public static class CliApplication
 
         output.Write(Encoding.UTF8.GetString(json));
         output.WriteLine();
+        return ExitCodes.Success;
+    }
+
+    private const string SourceCaptureHelp =
+        """
+        Capture selected files from an already extracted source archive.
+
+        Usage:
+          readiness-validator source capture-archive --root <root>
+            --archive <retained.tar.gz|zip> --source-root <extracted-directory>
+            [--archive-prefix <directory>] --archive-format <tar.gz|zip>
+            --repository-uri <url> --source-commit <40-hex-commit>
+            --source-mapping <text> --source-confidence <low|medium|high>
+            --acquisition-locator <url> --source-path <repository-path> [--source-path <path> ...]
+            [--expected-sha256 <64-hex>] --output <new-receipt.json>
+
+        The operation never invokes Git or extracts an archive. It verifies selected files against
+        the retained archive and writes one deterministic, immutable receipt.
+        """;
+
+    private static int RunSource(IReadOnlyList<string> args, TextWriter output)
+    {
+        if (args.Count == 0 || IsHelp(args[0]))
+        {
+            output.WriteLine(SourceCaptureHelp);
+            return ExitCodes.Success;
+        }
+
+        if (!string.Equals(args[0], "capture-archive", StringComparison.Ordinal))
+        {
+            throw new UsageException($"Unknown source command '{args[0]}'.");
+        }
+
+        if (args.Count == 2 && IsHelp(args[1]))
+        {
+            output.WriteLine(SourceCaptureHelp);
+            return ExitCodes.Success;
+        }
+
+        var options = CommandOptions.Parse(
+            args.Skip(1).ToArray(),
+            "--root",
+            "--archive",
+            "--source-root",
+            "--archive-prefix",
+            "--archive-format",
+            "--repository-uri",
+            "--source-commit",
+            "--source-mapping",
+            "--source-confidence",
+            "--acquisition-locator",
+            "--source-path",
+            "--expected-sha256",
+            "--output");
+        _ = SourceArchiveCaptureService.Capture(
+            options.Single("--root"),
+            options.Single("--archive"),
+            options.Single("--source-root"),
+            options.Optional("--archive-prefix"),
+            options.Single("--archive-format"),
+            options.Single("--repository-uri"),
+            options.Single("--source-commit"),
+            options.Single("--source-mapping"),
+            options.Single("--source-confidence"),
+            options.Single("--acquisition-locator"),
+            options.Many("--source-path"),
+            options.Optional("--expected-sha256"),
+            options.Single("--output"));
         return ExitCodes.Success;
     }
 

@@ -9,4 +9,8 @@ public static class ResourceLimits
     public const int SupplementalInputCount = 32;
     public const long SupplementalInputAggregateBytes = 64L * 1024 * 1024;
     public const int RetrievalAttemptCount = 64;
+    public const long SourceArchiveBytes = 256L * 1024 * 1024;
+    public const long SourceArchiveExpandedBytes = 256L * 1024 * 1024;
+    public const int SourceArchiveEntryCount = 100_000;
+    public const int SourceArchiveSelectionCount = 1_024;
 }

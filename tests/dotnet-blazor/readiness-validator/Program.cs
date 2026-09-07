@@ -217,6 +217,7 @@ var testGroups = new Dictionary<string, Action>(StringComparer.Ordinal)
     ["reader"] = () => ReaderTests.Run(root, plugin),
     ["library"] = () => LibraryTests.Run(root, plugin),
     ["workflow"] = () => WorkflowTests.Run(plugin),
+    ["archive"] = () => ArchiveCaptureTests.Run(root, plugin),
     ["enforcement"] = () => EnforcementTests.Run(root, plugin)
 };
 var selectedGroups = args.Length == 0

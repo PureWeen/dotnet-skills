@@ -38,6 +38,9 @@ override an explicit-root launch.
 2. Discover the exact package/version or release-candidate nupkg, official owner-controlled docs,
    source availability/mapping, owner evidence, exclusions, and, for component work, inventory and
    claimed render modes. Inspect every supplied local artifact before asking for missing information.
+   For an already extracted GitHub archive, route selected source files through
+   `source capture-archive` and its artifact-acquisition recipe; never improvise Git metadata checks
+   in an archive and never treat the receipt as remote commit proof.
    Default a published package to the latest stable version only as a draft.
    For source-available components, include wrapper/API, inherited runtime, browser interop,
    styles/assets, tests, and samples in the allowed source/artifact closure.

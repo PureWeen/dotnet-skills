@@ -97,6 +97,8 @@ internal static class WorkflowTests
         AssertContains(skill, "`source-proof-v1`", "structured source proof");
         AssertContains(skill, "`public-absence-v1`", "typed public absence proof");
         AssertContains(skill, "`direct-failure-v1`", "typed direct failure proof");
+        AssertContains(skill, "source capture-archive", "archive source capture command");
+        AssertContains(skill, "Never run Git metadata commands inside an archive", "archive Git boundary");
         AssertContains(skill, "same-job source build plus privileged signing/publishing is a gap", "release job trust boundary");
         AssertContains(skill, "one mutable path is not a digest-bound immutable handoff", "immutable artifact boundary");
         AssertContains(skill, "component assignment through a public `[Parameter]` setter is mutation", "parameter mutation boundary");
@@ -131,6 +133,7 @@ internal static class WorkflowTests
         foreach (var command in new[]
         {
             "package inspect",
+            "source capture-archive",
             "inputs discover",
             "inputs confirm",
             "inputs validate",

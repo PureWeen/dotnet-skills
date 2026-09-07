@@ -136,6 +136,10 @@ Use the same launcher prefix below. Exit `0` means completion, not that all rows
    package/version remains authoritative; a failed retrieval is an attempt, not proof of a gap.
 3. Discover official sources using [documentation discovery](references/documentation-discovery.md).
    Classify source as `source-available`, `closed-source`, or `unresolved`.
+   For a retained GitHub `.tar.gz`, use the archive-only
+   [capture recipe](references/artifact-acquisition.md#source-archive-capture) to bind selected
+   extracted files to the archive: `<launcher> source capture-archive ...`. Never run Git metadata
+   commands inside an archive.
 4. Package-only needs no component selection; otherwise discover components and every claimed
    mode (`static-ssr`, `interactive-server`, `interactive-webassembly`, `interactive-auto`, or
    `standalone-webassembly`).
