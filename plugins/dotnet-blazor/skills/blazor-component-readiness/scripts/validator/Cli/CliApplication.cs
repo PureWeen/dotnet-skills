@@ -10,7 +10,7 @@ public static class CliApplication
         Blazor component readiness validator
 
         Usage:
-          readiness-validator <command> [options]
+          readiness-validator <command> [<subcommand> ...] [options]
 
         Commands:
           package inspect    Inspect the exact identity and digest of a local .nupkg.
@@ -47,7 +47,10 @@ public static class CliApplication
                              Revalidate the exact allowed-input set before a blind worker starts.
           help               Show this help.
 
-        Run 'readiness-validator <command> --help' for command details.
+        Pass each command word as a separate argument. Append --help after the
+        command words for details, for example:
+          readiness-validator inputs candidates --help
+          readiness-validator evidence draft-add --help
         """;
 
     private const string PackageInspectHelp =

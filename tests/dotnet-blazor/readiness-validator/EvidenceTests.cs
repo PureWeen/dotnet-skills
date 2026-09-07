@@ -144,6 +144,34 @@ internal static class EvidenceTests
 
     private static void TestCliCommandSurface()
     {
+        var rootOutput = new StringWriter();
+        AssertEqual(
+            ExitCodes.Success,
+            CliApplication.Run(["help"], rootOutput, new StringWriter()),
+            "root command help exit");
+        var helpExamples = rootOutput.ToString()
+            .Split('\n')
+            .Select(line => line.Trim())
+            .Where(line => line.StartsWith("readiness-validator ", StringComparison.Ordinal) &&
+                line.EndsWith(" --help", StringComparison.Ordinal))
+            .ToArray();
+        AssertEqual(2, helpExamples.Length, "root help publishes executable hierarchical examples");
+        foreach (var example in helpExamples)
+        {
+            var words = example.Split(' ', StringSplitOptions.RemoveEmptyEntries).Skip(1).ToArray();
+            AssertEqual(
+                ExitCodes.Success,
+                CliApplication.Run(words, new StringWriter(), new StringWriter()),
+                $"published help example runs: {example}");
+            AssertEqual(
+                ExitCodes.InvalidUsage,
+                CliApplication.Run(
+                    [string.Join(' ', words[..^1]), "--help"],
+                    new StringWriter(),
+                    new StringWriter()),
+                "multiword command remains invalid as one argument");
+        }
+
         var output = new StringWriter();
         var error = new StringWriter();
         AssertEqual(
