@@ -34,6 +34,24 @@ public static class ReaderService
     {
         var input = revision.Input;
         var assessment = revision.Assessment;
+        var authorizedScope = AuthorizedPackageScope.Load(root, input);
+        authorizedScope?.Validate(assessment, input, revision.Evidence);
+        if (authorizedScope is not null)
+        {
+            var expectedReport = ReportService.RenderMarkdown(assessment, input, revision.Evidence, feedback, root);
+            if (!revision.ReportBytes.AsSpan().SequenceEqual(expectedReport) ||
+                revision.Manifest.FeedbackDigest != feedback?.Digest)
+            {
+                throw new DeterministicValidationException("Authorized reader requires the exact scope-bound report and feedback.");
+            }
+
+            ReportService.ValidateManifest(revision.Manifest, ReportService.CreateManifest(
+                assessment, revision.AssessmentBytes, input, revision.InputBytes,
+                revision.Evidence, revision.EvidenceBytes, revision.ReportBytes,
+                revision.Manifest.PredecessorManifestDigest, feedback?.Digest,
+                revision.Manifest.DeclaredChangedIds, root));
+        }
+
         if (input.OwnerInputs.Any(item => item.Provenance == "owner-supplied-internal-evidence") ||
             revision.Evidence.SourceLedgers.SelectMany(item => item.Ledger.Records)
                 .Any(item => item.Provenance.Kind == "owner-supplied-internal-evidence"))
@@ -47,6 +65,10 @@ public static class ReaderService
             item => $"Evidence {item.DisplayOrder}", StringComparer.Ordinal);
         var files = new SortedDictionary<string, byte[]>(StringComparer.Ordinal);
         AddTechnical(files, revision);
+        if (authorizedScope is not null)
+        {
+            files[$"technical/{AuthorizedPackageScope.Filename}"] = authorizedScope.CopyBytes();
+        }
         if (feedbackBytes is not null) files["technical/feedback.txt"] = feedbackBytes;
         if (package is not null)
         {
@@ -72,6 +94,11 @@ public static class ReaderService
             "[Evidence records](evidence.md) | [Exact technical assessment](technical/" + revision.Kind + ".assessment.json) | " +
                 "[Original raw report](technical/" + revision.Kind + ".report.md)", ""
         };
+        if (authorizedScope is not null)
+        {
+            lines.AddRange([authorizedScope.Declaration, ""]);
+        }
+
         if (package is not null)
             lines.Add("Package-wide findings remain in the separately delivered Library and release reader. " +
                 "This control does not re-assess or clone them; its exact validated package relationship is in " +
@@ -143,8 +170,10 @@ public static class ReaderService
                 "**Method:** " + Text(record.Provenance.Method),
                 "**Captured:** " + Text(record.Provenance.CapturedAtUtc),
                 "**Retention:** " + Text(record.Provenance.Retention), ""]);
-            var retained = Resolve(root, input, record.Provenance);
-            if (retained is null)
+            var retained = authorizedScope is null ? Resolve(root, input, record.Provenance) : null;
+            if (authorizedScope is not null)
+                evidenceLines.Add("Underlying source bytes are retained in the local validation inputs, not copied into this scoped partner reader. Their omission does not change the recorded claim or evidence identity.");
+            else if (retained is null)
                 evidenceLines.Add("Underlying bytes not provided here: declaration or legacy observation commitment only.");
             else
             {
@@ -200,6 +229,14 @@ public static class ReaderService
             writer.WriteEndObject();
             writer.WriteEndObject();
         });
+        if (authorizedScope is not null)
+        {
+            foreach (var file in files.Values)
+            {
+                authorizedScope.RejectDisclosure(Encoding.UTF8.GetString(file));
+            }
+        }
+
         return files;
     }
 

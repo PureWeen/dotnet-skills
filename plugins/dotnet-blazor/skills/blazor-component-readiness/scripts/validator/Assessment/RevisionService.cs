@@ -41,7 +41,8 @@ public static class RevisionService
             allowMissingFeedback: true);
         if (revision.Kind != "package" ||
             revision.Assessment.CompletionState != "complete" ||
-            revision.Manifest.CompletionState != "complete")
+            revision.Manifest.CompletionState != "complete" ||
+            AuthorizedPackageScope.IsRequested(revision.Input))
         {
             throw new DeterministicValidationException(
                 "Package binding requires a complete validated package assessment revision.");
@@ -153,7 +154,7 @@ public static class RevisionService
         }
         else if (feedbackBytes is null)
         {
-            if (!allowMissingFeedback)
+            if (!allowMissingFeedback || AuthorizedPackageScope.IsRequested(input))
             {
                 throw new DeterministicValidationException(
                     "Revision verification requires the exact bound assessment feedback file.");
@@ -180,7 +181,7 @@ public static class RevisionService
 
         if (manifest.FeedbackDigest is null || feedback is not null)
         {
-            var expectedReport = ReportService.RenderMarkdown(assessment, input, evidence, feedback);
+            var expectedReport = ReportService.RenderMarkdown(assessment, input, evidence, feedback, root);
             if (!reportBytes.AsSpan().SequenceEqual(expectedReport))
             {
                 throw new DeterministicValidationException(
@@ -198,7 +199,8 @@ public static class RevisionService
             reportBytes,
             manifest.PredecessorManifestDigest,
             manifest.FeedbackDigest,
-            manifest.DeclaredChangedIds);
+            manifest.DeclaredChangedIds,
+            root);
         ReportService.ValidateManifest(manifest, expectedManifest);
 
         if (sequence == 1)
@@ -332,11 +334,12 @@ public static class RevisionService
         {
             var before = beforeRows[id];
             var after = afterRows[id];
-            if (before.Status != after.Status &&
+            if ((before.Status != after.Status || AuthorizedPackageScope.IsRequested(predecessor.Input)) &&
                 !after.EvidenceIds.Except(predecessorSelectedEvidence, StringComparer.Ordinal).Any())
             {
+                var changeKind = AuthorizedPackageScope.IsRequested(predecessor.Input) ? "Authorized-scope finding" : "Status";
                 throw new DeterministicValidationException(
-                    $"Status change for '{id}' requires evidence absent from the predecessor's entire selected-evidence set.");
+                    $"{changeKind} change for '{id}' requires evidence absent from the predecessor's entire selected-evidence set.");
             }
         }
 

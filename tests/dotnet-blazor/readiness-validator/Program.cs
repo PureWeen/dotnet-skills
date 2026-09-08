@@ -214,6 +214,7 @@ var testGroups = new Dictionary<string, Action>(StringComparer.Ordinal)
     ["evidence"] = () => EvidenceTests.Run(root, plugin),
     ["assessment"] = () => AssessmentTests.Run(root, plugin),
     ["normative"] = () => NormativeContractTests.Run(root, plugin),
+    ["authorized-scope"] = () => AuthorizedScopeTests.Run(root, plugin),
     ["reader"] = () => ReaderTests.Run(root, plugin),
     ["library"] = () => LibraryTests.Run(root, plugin),
     ["workflow"] = () => WorkflowTests.Run(plugin),

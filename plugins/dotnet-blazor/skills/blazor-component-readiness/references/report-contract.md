@@ -81,6 +81,46 @@ Reject an extra byte, stale feedback, wrong package binding, missing selected ev
 identity, evidence not bound to confirmed input bytes, linked revision/artifact paths, mutable
 earlier revision, or unverified handoff.
 
+### Explicitly authorized package-scope recovery
+
+The validator supports one independently pinned recovery manifest, not an arbitrary requirement-ID
+filter. Normal package and component behavior is unchanged when no authorized manifest is present.
+Register the supplied canonical `authorized-package-report-scope.json` as an existing
+`evidence_inputs` entry of kind `authorized-package-report-scope`, and register its exact frozen
+requirements DOCX as another retained evidence input. For candidate intake, the entries use the
+existing `path` and `kind` fields; discovery/confirmation binds their basename, size and SHA-256.
+Keep both files beneath the input root. Do not reconstruct or edit the approved manifest.
+
+Initialization, validation, report verification and the reader recognize that retained entry
+automatically. There is no ID-list switch to omit later or use as a fallback. Empty, malformed,
+unsupported, duplicated or altered scope inputs fail closed, as do wrong document/package
+identities and any mismatch in the exact approved canonical selection, count or selected-set digest.
+The manifest's authorization claims alone do not establish authority: its exact digest must match
+the approval pinned in the validator.
+
+Existing schemas carry the scope transitively through the confirmed input digest, assessment
+selection, evidence identity, report/receipt hashes and reader file hashes. Every consumer resolves
+the manifest and checks those bindings. The report declares the frozen DOCX and scope identities;
+the reader also retains the canonical scope manifest. The frozen rubric scope-map digest keeps its
+original meaning and is not replaced by the selected-set digest. Completion refers only to the
+authorized selection; it does not establish ordinary full-package coverage or satisfy a component
+assessment's full-package prerequisite.
+
+The authorized evidence companion must contain only selected records. Preserve full historical
+ledgers separately; do not crop and relabel an original ledger. A new confirmed input changes
+evidence identity and therefore requires a new, accurately attributed evidence-backed revision,
+not an unchanged-reuse claim. Within a scoped revision lineage, a changed finding requires new
+evidence even when its status token did not change.
+
+The scoped partner reader does not export underlying raw evidence attachments, which may contain
+internal historical findings. It preserves selected claims, methods, locators, identities and
+qualifications, and states that source bytes remain in the local validation inputs. It must not
+fall back to copying historical reports, unselected ledger records or archives. Excluded identifiers,
+known extension text and broader-coverage claims are rejected in the selected outputs; the final
+human/agent usefulness review must additionally detect paraphrased or semantically unrelated
+content. Missing bound feedback cannot bypass scoped report verification. A failed scoped reader
+is a blocked deliverable, not authorization to publish an unscoped fallback.
+
 ## Decision guidance
 
 The default report remains factual. Only after an explicit verdict/prioritization/remediation/next

@@ -145,7 +145,7 @@ public static class ReportCommand
             }
         }
 
-        var reportBytes = ReportService.RenderMarkdown(assessment, input, evidence, feedback);
+        var reportBytes = ReportService.RenderMarkdown(assessment, input, evidence, feedback, root);
         var manifest = ReportService.CreateManifest(
             assessment,
             assessmentBytes,
@@ -156,7 +156,8 @@ public static class ReportCommand
             reportBytes,
             predecessorDigest,
             feedback?.Digest,
-            changedIds);
+            changedIds,
+            root);
         var manifestBytes = ReportService.SerializeManifest(manifest);
         var revisionName = nextSequence.ToString("D4");
         var replacement = new RevisionArtifacts(

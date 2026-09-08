@@ -17,12 +17,18 @@ public static class ReportService
         "Deterministic validation proves local artifact correspondence and schema rules, not factual truth, organizational approval, or release suitability."
     ];
 
+    /// <summary>
+    /// Renders canonical assessment facts. An authorized scope requires its retained input root.
+    /// </summary>
     public static byte[] RenderMarkdown(
         ReadinessAssessment assessment,
         InputManifest input,
         EvidenceBundle evidence,
-        AssessmentFeedback? feedback = null)
+        AssessmentFeedback? feedback = null,
+        string? root = null)
     {
+        var authorizedScope = AuthorizedPackageScope.Load(root, input);
+        authorizedScope?.Validate(assessment, input, evidence);
         var provenance = evidence.SourceLedgers
             .SelectMany(ledger => ledger.Ledger.Records)
             .ToDictionary(record => record.StableId, record => record.Provenance.Kind, StringComparer.Ordinal);
@@ -45,6 +51,11 @@ public static class ReportService
             $" - Exact nupkg SHA-256: `{input.Package.NupkgDigest.Value}`",
             $" - Source availability: `{input.Source.Availability}`"
         };
+        if (authorizedScope is not null)
+        {
+            lines.InsertRange(7, [authorizedScope.Declaration, ""]);
+        }
+
         if (input.Source.RepositoryUri is not null)
         {
             lines.Add($" - Repository: {input.Source.RepositoryUri}");
@@ -169,9 +180,13 @@ public static class ReportService
         lines.Add("");
         var bytes = Encoding.UTF8.GetBytes(string.Join('\n', lines));
         BoundedIO.EnsureLength(bytes.Length, ResourceLimits.SerializedArtifactBytes, "rendered report");
+        authorizedScope?.RejectDisclosure(Encoding.UTF8.GetString(bytes));
         return bytes;
     }
 
+    /// <summary>
+    /// Binds the exact artifacts, including any authorized scope through the confirmed input digest.
+    /// </summary>
     public static ValidationManifest CreateManifest(
         ReadinessAssessment assessment,
         ReadOnlySpan<byte> assessmentBytes,
@@ -182,8 +197,30 @@ public static class ReportService
         ReadOnlySpan<byte> reportBytes,
         Sha256Digest? predecessorManifestDigest = null,
         Sha256Digest? feedbackDigest = null,
-        IReadOnlyList<string>? declaredChangedIds = null)
+        IReadOnlyList<string>? declaredChangedIds = null,
+        string? root = null)
     {
+        var authorizedScope = AuthorizedPackageScope.Load(root, input);
+        if (authorizedScope is not null)
+        {
+            authorizedScope.Validate(assessment, input, evidence);
+            ContractJson.RequireCanonical(inputBytes, InputManifestService.Serialize(input), "scope-bound input");
+            ContractJson.RequireCanonical(assessmentBytes, AssessmentService.Serialize(assessment), "scope-bound assessment");
+            ContractJson.RequireCanonical(evidenceBytes, CanonicalEvidenceJson.SerializeBundle(evidence), "scope-bound evidence");
+            var report = Encoding.UTF8.GetString(reportBytes);
+            authorizedScope.RejectDisclosure(report);
+            if (!report.Contains(authorizedScope.Declaration, StringComparison.Ordinal))
+            {
+                throw new DeterministicValidationException("Report does not declare its exact authorized scope.");
+            }
+
+            if (feedbackDigest is null &&
+                !reportBytes.SequenceEqual(RenderMarkdown(assessment, input, evidence, root: root)))
+            {
+                throw new DeterministicValidationException("Scope-bound receipt requires the exact rendered report.");
+            }
+        }
+
         return new ValidationManifest(
             1,
             ContractVersions.PluginVersion,

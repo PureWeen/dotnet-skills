@@ -64,7 +64,8 @@ public static class AssessmentService
         }
 
         var rubric = RubricLoader.Load(rubricVersion);
-        var requirements = RubricLoader.Select(rubric, kind, overlayIds);
+        var authorizedScope = AuthorizedPackageScope.Load(root, input);
+        var requirements = authorizedScope?.Select(rubric, kind) ?? RubricLoader.Select(rubric, kind, overlayIds);
         var overlays = rubric.Overlays
             .Where(overlay => overlayIds.Contains(overlay.Id, StringComparer.Ordinal))
             .Select(overlay => new AssessmentOverlay(overlay.Id, overlay.Version, overlay.Digest))
@@ -178,7 +179,9 @@ public static class AssessmentService
                 "Split package/component assessments cannot contain overlay rows.");
         }
 
-        var expectedRequirements = RubricLoader.Select(rubric, assessment.AssessmentKind, selectedOverlayIds);
+        var authorizedScope = AuthorizedPackageScope.Load(root, input);
+        var expectedRequirements = authorizedScope?.Select(rubric, assessment.AssessmentKind) ??
+            RubricLoader.Select(rubric, assessment.AssessmentKind, selectedOverlayIds);
         var expectedOverlays = rubric.Overlays
             .Where(overlay => selectedOverlayIds.Contains(overlay.Id, StringComparer.Ordinal))
             .Select(overlay => new AssessmentOverlay(overlay.Id, overlay.Version, overlay.Digest))
@@ -248,6 +251,7 @@ public static class AssessmentService
                 "Every selected evidence ID must be used and no unselected evidence may be referenced.");
         }
 
+        authorizedScope?.Validate(assessment, input, evidence);
         EvidenceInputBindingValidator.Validate(root, assessment, input, evidence);
         EvidenceProtocolValidator.Validate(
             root,
