@@ -24,7 +24,9 @@ public static class AssessmentCommand
         Do not hand-author or reformat exported identity files. canonicalize writes a full
         assessment, not a standalone evidence identity. It also orders evidence IDs in rows,
         findings, and summary groups without adding, removing, or deduplicating references.
-        Validation remains the authority for evidence bindings and assessment correctness.
+        Completed evidence handoffs require evidence bundle --root/--manifest to
+        accept input linkage. This does not score null rows or validate readiness;
+        assessment validate remains required for assessment correctness.
         DOCX-component V1 uses --package-context-revision <dir> instead of --package-revision.
         Optional bound context feedback uses --package-context-feedback <markdown>, never
         --package-feedback. Both context options require the confirmed V1 descriptor pair.

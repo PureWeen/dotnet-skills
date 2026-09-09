@@ -227,25 +227,31 @@ internal static class ReleaseFactsTests
                diagnosticCount.Success && long.Parse(diagnosticCount.Groups[1].Value) ==
                Encoding.UTF8.GetByteCount(environmentError.ToString()), "staged result and fatal diagnostics both charged");
 
+        var preInputPath = fixture.Manifest;
+        var preInputBytes = File.ReadAllBytes(preInputPath);
         fixture.Candidate("add-evidence", "--path", "first.json", "--kind", "offline-release-facts");
         var postInput = fixture.Confirm();
         Assert(first.InputManifest.Sha256 != Hash(File.ReadAllBytes(postInput)), "pre/post output manifest separation");
+        Assert(preInputBytes.SequenceEqual(File.ReadAllBytes(preInputPath)) &&
+               originalOutput.SequenceEqual(File.ReadAllBytes(fixture.Path("first.json"))),
+            "registration and explicit confirmation preserve original manifest and result");
         Cli("assessment", "init", "--kind", "package", "--root", fixture.Root, "--input", postInput,
             "--output", fixture.Path("skeleton.json"));
         Cli("assessment", "export-identity", "--assessment", fixture.Path("skeleton.json"),
             "--output", fixture.Path("identity.json"));
         Cli("evidence", "draft-add", "--output", fixture.Path("evidence-draft.json"),
             "--claim", "Mechanical facts target.sha256 and release-package.sha256 differ in comparisons target-release.",
-            "--scope", "repository-wide", "--kind", "reviewer-generated-analysis", "--locator", "first.json",
+            "--scope", "repository-wide", "--kind", "reviewer-generated-analysis",
             "--method", "Offline release facts CLI; specific fact IDs target.sha256 and release-package.sha256. No authentication.",
-            "--captured-at", DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"), "--content", fixture.Path("first.json"));
+            "--captured-at", DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"),
+            "--root", fixture.Root, "--manifest", postInput, "--evidence-input", "first.json");
         Cli("evidence", "ledger-build", "--kind", "repository", "--subject", fixture.Path("identity.json"),
             "--draft", fixture.Path("evidence-draft.json"), "--nupkg", fixture.Target, "--output", fixture.Path("ledger.json"));
         Cli("evidence", "ledger-validate", "--ledger", fixture.Path("ledger.json"));
         using var ledgerJson = JsonDocument.Parse(File.ReadAllBytes(fixture.Path("ledger.json")));
         var id = ledgerJson.RootElement.GetProperty("records")[0].GetProperty("stable_id").GetString()!;
         Cli("evidence", "bundle", "--assessment", fixture.Path("identity.json"), "--source-ledger", fixture.Path("ledger.json"),
-            "--ids", id, "--output", fixture.Path("bundle.json"));
+            "--ids", id, "--root", fixture.Root, "--manifest", postInput, "--output", fixture.Path("bundle.json"));
         var assessment = AssessmentService.Parse(File.ReadAllBytes(fixture.Path("skeleton.json")));
         var input = InputManifestService.Parse(File.ReadAllBytes(postInput));
         var bundle = CanonicalEvidenceJson.ParseBundle(File.ReadAllBytes(fixture.Path("bundle.json")));

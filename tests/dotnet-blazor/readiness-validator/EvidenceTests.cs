@@ -20,6 +20,7 @@ internal static class EvidenceTests
 
     public static void Run(string repositoryRoot, string pluginRoot)
     {
+        EvidenceHandoffTests.Run(repositoryRoot, pluginRoot);
         TestKnownAnswersAndCanonicalBytes();
         TestCliCommandSurface();
         TestEvidenceDraftProducer(repositoryRoot);

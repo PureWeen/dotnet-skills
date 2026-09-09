@@ -10,6 +10,13 @@ public static class EvidenceInputBindingValidator
         string root,
         ReadinessAssessment assessment,
         InputManifest input,
+        EvidenceBundle evidence) =>
+        Validate(root, assessment.Identity, input, evidence);
+
+    public static void Validate(
+        string root,
+        ExactAssessmentIdentity identity,
+        InputManifest input,
         EvidenceBundle evidence)
     {
         var selected = evidence.Selection
@@ -24,9 +31,9 @@ public static class EvidenceInputBindingValidator
             input.Package.NupkgPath,
             requireExisting: true,
             requireFile: true);
-        var component = assessment.Identity.ComponentId is null
+        var component = identity.ComponentId is null
             ? null
-            : input.Components.Single(item => item.Id == assessment.Identity.ComponentId);
+            : input.Components.Single(item => item.Id == identity.ComponentId);
 
         foreach (var selection in evidence.Selection)
         {
@@ -61,8 +68,18 @@ public static class EvidenceInputBindingValidator
             };
             if (!valid)
             {
+                var detail = provenance.Kind == EvidenceIdentity.ReviewerGeneratedAnalysis ||
+                             provenance.Kind == EvidenceIdentity.ReproducedRuntimeObservation &&
+                             IsStructuredProtocol(provenance.Method)
+                    ? input.EvidenceInputs.Any(item => item.Basename == provenance.Locator)
+                        ? "The registered evidence basename has a different content digest."
+                        : "The locator must be an exact registered evidence_inputs basename, not a producer label or command."
+                    : "The provenance locator, digest or declared source does not match its confirmed input binding rule.";
                 throw new DeterministicValidationException(
-                    $"Selected evidence '{record.StableId}' is not bound to the confirmed input manifest.");
+                    $"Selected evidence '{record.StableId}' (kind '{provenance.Kind}', locator '{provenance.Locator}') " +
+                    $"is not bound to the confirmed input manifest sha256:{identity.InputManifestDigest.Value}. {detail} " +
+                    "Register the retained artifact through candidates, discover and explicitly confirm a new manifest, " +
+                    "then rebuild the final identity, evidence ledger and input-bound bundle. Do not mutate earlier manifests.");
             }
         }
     }

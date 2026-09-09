@@ -1,6 +1,9 @@
+using BlazorComponentReadiness.Validator.Assessment;
 using BlazorComponentReadiness.Validator.Contracts;
 using BlazorComponentReadiness.Validator.Evidence;
+using BlazorComponentReadiness.Validator.Inputs;
 using BlazorComponentReadiness.Validator.IO;
+using BlazorComponentReadiness.Validator.Validation;
 
 namespace BlazorComponentReadiness.Validator.Cli;
 
@@ -12,15 +15,29 @@ public static class EvidenceCommand
 
         Usage:
           readiness-validator evidence draft-add --output <new-path> --claim <text> --scope <repository-wide|component-specific> [--component <id>] --kind <existing-kind> --locator <logical-locator> --method <text> --captured-at <actual-utc> [--supersedes <EV1-id>]... (--nupkg <path>|--content <retained-file>) [--input <previous-draft>]
+          readiness-validator evidence draft-add --output <new-path> --claim <text> --scope <repository-wide|component-specific> [--component <id>] --kind reviewer-generated-analysis --root <dir> --manifest <confirmed> --evidence-input <registered-basename> --method <text> --captured-at <actual-utc> [--supersedes <EV1-id>]... [--input <previous-draft>]
           readiness-validator evidence ledger-build --kind <repository|component> --subject <path> --draft <path> --nupkg <path> --output <path>
           readiness-validator evidence ledger-validate --ledger <path>
-          readiness-validator evidence bundle --assessment <path> --source-ledger <path>... --ids <EV1-id,...> --output <path>
+          readiness-validator evidence bundle --assessment <path> --source-ledger <path>... --ids <EV1-id,...> --output <path> [--root <dir> --manifest <confirmed>]
 
         Initialize the assessment, then run assessment export-identity to create the
         canonical file used by ledger-build --subject and bundle --assessment.
         A full assessment document or hand-authored identity JSON is not a substitute.
 
         Evidence draft producer:
+          For registered reviewer analysis, supply all of --root, --manifest and
+          --evidence-input. This mode validates the confirmed manifest/current files
+          and derives BOTH locator and digest from one evidence_inputs registration.
+          Do not supply --locator, --content or --nupkg in registered mode.
+          The manifest must stay beneath the declared root; it may be
+          root-relative or absolute beneath it. The selector is an exact basename.
+          Register the retained derived result using inputs candidates add-evidence,
+          discover a NEW draft and explicitly run inputs confirm. Preserve the
+          pre-output manifest; initialize/export the final identity only afterward.
+          No command here discovers or confirms inputs, infers authorization or
+          changes prior artifacts. The producer name/version is not a filename.
+
+          The existing manual modes remain available:
           draft-add computes content_sha256 from exactly one retained source. Use
           --nupkg only with package-artifact-metadata; use --content with every
           other existing provenance kind. --content is a regular file bounded by
@@ -72,6 +89,15 @@ public static class EvidenceCommand
         Source ledgers are immutable canonical JSON. Bundle selection order is the
         comma-separated --ids order. At most 32 source-ledger inputs totaling at
         most 64 MiB may be supplied.
+
+        Completed skill handoffs require bundle --root/--manifest input-bound mode:
+          it revalidates current input bytes, exact final manifest/package/component
+          identity, and ALL selected records' existing provenance binding rules.
+          Either option requires both. Failure publishes no bundle and never falls
+          back to structural success. Unscored identity skeletons are supported;
+          input-bound acceptance is not readiness scoring or factual verification.
+        With neither option, bundle is structural-only: input linkage is NOT
+        accepted. ledger-validate is also structural validation, not input linkage.
         """;
 
     public static int Run(IReadOnlyList<string> args, TextWriter output)
@@ -110,52 +136,76 @@ public static class EvidenceCommand
             "--captured-at",
             "--supersedes",
             "--nupkg",
-            "--content");
+            "--content",
+            "--root",
+            "--manifest",
+            "--evidence-input");
         RequireExactly(
             options,
             "--output",
             "--claim",
             "--scope",
             "--kind",
-            "--locator",
             "--method",
             "--captured-at");
 
         var kind = options.Single("--kind");
-        var locator = options.Single("--locator");
         var scope = options.Single("--scope");
         var component = options.All("--component").Count == 0
             ? null
             : options.Single("--component");
-        var nupkg = options.All("--nupkg").Count == 0 ? null : options.Single("--nupkg");
-        var content = options.All("--content").Count == 0 ? null : options.Single("--content");
-        if ((nupkg is null) == (content is null))
+        string locator;
+        string digest;
+        if (options.All("--root").Count != 0 || options.All("--manifest").Count != 0 ||
+            options.All("--evidence-input").Count != 0)
         {
-            throw new UsageException(
-                "Evidence draft-add requires exactly one of --nupkg or --content.");
-        }
-
-        if (string.Equals(kind, EvidenceIdentity.PackageArtifactMetadata, StringComparison.Ordinal))
-        {
-            if (nupkg is null)
+            RequireExactly(options, "--root", "--manifest", "--evidence-input");
+            foreach (var conflict in new[] { "--locator", "--content", "--nupkg" })
+            {
+                if (options.All(conflict).Count != 0)
+                {
+                    throw new UsageException($"{conflict} cannot be supplied with registered evidence-input mode.");
+                }
+            }
+            if (kind != EvidenceIdentity.ReviewerGeneratedAnalysis)
             {
                 throw new UsageException(
-                    "--nupkg is required for package-artifact-metadata.");
+                    "Registered evidence-input mode requires explicitly selected reviewer-generated-analysis.");
             }
+            (locator, digest) = ReadRegisteredEvidence(options);
         }
-        else if (content is null)
+        else
         {
-            throw new UsageException(
-                "--content is required for non-package provenance kinds.");
-        }
+            RequireExactly(options, "--locator");
+            locator = options.Single("--locator");
+            var nupkg = options.All("--nupkg").Count == 0 ? null : options.Single("--nupkg");
+            var content = options.All("--content").Count == 0 ? null : options.Single("--content");
+            if ((nupkg is null) == (content is null))
+            {
+                throw new UsageException(
+                    "Evidence draft-add requires exactly one of --nupkg or --content.");
+            }
 
-        var digest = (nupkg, content) switch
-        {
-            ({ } packagePath, null) => ComputePackageDigest(packagePath, locator),
-            (null, { } contentPath) => ComputeContentDigest(contentPath),
-            _ => throw new UsageException(
-                "Evidence draft-add requires exactly one of --nupkg or --content.")
-        };
+            if (string.Equals(kind, EvidenceIdentity.PackageArtifactMetadata, StringComparison.Ordinal))
+            {
+                if (nupkg is null)
+                {
+                    throw new UsageException("--nupkg is required for package-artifact-metadata.");
+                }
+            }
+            else if (content is null)
+            {
+                throw new UsageException("--content is required for non-package provenance kinds.");
+            }
+
+            digest = (nupkg, content) switch
+            {
+                ({ } packagePath, null) => ComputePackageDigest(packagePath, locator),
+                (null, { } contentPath) => ComputeContentDigest(contentPath),
+                _ => throw new UsageException(
+                    "Evidence draft-add requires exactly one of --nupkg or --content.")
+            };
+        }
         var record = EvidenceIdentity.NormalizeRecordDraft(
             new EvidenceRecordDraft(
                 options.Single("--claim"),
@@ -189,6 +239,56 @@ public static class EvidenceCommand
         WriteNew(options.Single("--output"), bytes);
         output.WriteLine($"Evidence draft written: {records.Count} records.");
         return ExitCodes.Success;
+    }
+
+    private static (string Locator, string Digest) ReadRegisteredEvidence(ParsedOptions options)
+    {
+        var (root, input, _) = LoadConfirmedInput(options);
+        var basename = options.Single("--evidence-input");
+        if (Canonicalization.Basename(basename, "evidence input basename") != basename)
+        {
+            throw new DeterministicValidationException("--evidence-input must be an exact registered basename.");
+        }
+        var matches = input.EvidenceInputs.Where(item => item.Basename == basename).ToArray();
+        if (matches.Length != 1)
+        {
+            throw new DeterministicValidationException(
+                $"Evidence input '{basename}' must select exactly one evidence_inputs registration in " +
+                $"confirmed manifest '{options.Single("--manifest")}'. Register the retained result through " +
+                "candidates, discover and explicitly confirm a new manifest before constructing evidence.");
+        }
+        var registered = matches[0];
+        var path = SafePath.ResolveUnderRoot(root, registered.Basename, requireExisting: true, requireFile: true);
+        SafePath.EnsureRegularFile(path);
+        var bytes = BoundedIO.ReadAllBytes(path, ResourceLimits.SupplementalInputAggregateBytes, "registered evidence content");
+        var digest = ContractJson.RawDigest(bytes);
+        if (bytes.LongLength != registered.Size || digest != registered.ContentDigest)
+        {
+            throw new DeterministicValidationException(
+                $"Registered evidence '{basename}' changed after validation of manifest '{options.Single("--manifest")}'.");
+        }
+        return (registered.Basename, digest.Value);
+    }
+
+    private static (string Root, InputManifest Input, byte[] Bytes) LoadConfirmedInput(ParsedOptions options)
+    {
+        var root = Path.GetFullPath(options.Single("--root"));
+        var manifestPath = options.Single("--manifest");
+        try
+        {
+            var relative = Path.IsPathRooted(manifestPath) ? Path.GetRelativePath(root, manifestPath) : manifestPath;
+            var path = SafePath.ResolveUnderRoot(root, relative, requireExisting: true, requireFile: true);
+            SafePath.EnsureRegularFile(path);
+            var bytes = BoundedIO.ReadAllBytes(path, ResourceLimits.SerializedArtifactBytes, "confirmed input manifest");
+            var input = InputManifestService.Parse(bytes);
+            InputManifestService.Validate(input, root, requireConfirmed: true);
+            return (root, input, bytes);
+        }
+        catch (DeterministicValidationException error)
+        {
+            throw new DeterministicValidationException(
+                $"Confirmed manifest '{manifestPath}' failed input validation: {error.Message}", error);
+        }
     }
 
     private static string ComputePackageDigest(string path, string locator)
@@ -335,8 +435,15 @@ public static class EvidenceCommand
             "--assessment",
             "--source-ledger",
             "--ids",
-            "--output");
+            "--output",
+            "--root",
+            "--manifest");
         RequireExactly(options, "--assessment", "--ids", "--output");
+        var inputBound = options.All("--root").Count != 0 || options.All("--manifest").Count != 0;
+        if (inputBound)
+        {
+            RequireExactly(options, "--root", "--manifest");
+        }
         var sourcePaths = options.All("--source-ledger");
         if (sourcePaths.Count == 0)
         {
@@ -377,11 +484,26 @@ public static class EvidenceCommand
         }
 
         var bundle = EvidenceLedgerBuilder.BuildBundle(assessment, ledgers, selected);
+        if (inputBound)
+        {
+            var (root, input, inputBytes) = LoadConfirmedInput(options);
+            try
+            {
+                AssessmentService.ValidateInputIdentity(assessment, input, inputBytes);
+                EvidenceInputBindingValidator.Validate(root, assessment, input, bundle);
+            }
+            catch (DeterministicValidationException error)
+            {
+                throw new DeterministicValidationException(
+                    $"Input-bound acceptance against manifest '{options.Single("--manifest")}' failed: {error.Message}", error);
+            }
+        }
         var bytes = CanonicalEvidenceJson.SerializeBundle(bundle);
         EnsureSerializedOutput(bytes.Length);
         WriteNew(options.Single("--output"), bytes);
         output.WriteLine(
-            $"Evidence bundle built: {bundle.SourceLedgers.Count} source ledgers, " +
+            $"Evidence bundle built ({(inputBound ? "input-bound" : "structural-only; input linkage NOT accepted")}): " +
+            $"{bundle.SourceLedgers.Count} source ledgers, " +
             $"{bundle.Selection.Count} selected records, " +
             $"sha256:{CanonicalEvidenceJson.ComputeSha256(bytes)}.");
         return ExitCodes.Success;

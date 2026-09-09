@@ -27,6 +27,11 @@ internal static class ReleaseCommand
         ambiguous, changed, unsafe or over-limit inputs fail without publishing.
         Output must be new. All required operations are accounted for; failures
         report succeeded/failed/not-attempted operations on stderr.
+        For evidence handoff, preserve this pre-output manifest. Register the
+        derived result via inputs candidates add-evidence, discover a new draft,
+        explicitly confirm it, then initialize/export the final identity. Use
+        evidence draft-add registered mode and evidence bundle --root/--manifest
+        input-bound mode; see references/artifact-acquisition.md.
         """;
 
     public static int Run(IReadOnlyList<string> args, TextWriter output)

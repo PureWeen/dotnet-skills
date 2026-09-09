@@ -181,6 +181,8 @@ declared kinds/algorithms. In particular, file-associated `PackageVerificationCo
 a package-file checksum. Its separately labeled literal-value equality makes no identity or
 authentication claim. Embedded-SBOM comparison uses structural JSON equality (object order
 ignored, array order and absent/null retained), not byte equality or RDF equivalence.
+Different document hashes establish different serialized bytes, not RDF equivalence or
+non-equivalence. Structural JSON comparison outcomes likewise establish no RDF-level relationship.
 
 Result schema 1 (`producer_version: release-facts/1.0.0`, `normalization_version: 1`) contains
 the confirmed manifest's raw digest/path, six role references to existing manifest pointers,
@@ -215,11 +217,22 @@ lengths can change exact serialized-byte accounting; that accounting is intentio
 Avoid output self-reference: collect against a pre-output confirmed manifest, then use
 `inputs candidates add-evidence --path <result-basename> --kind offline-release-facts` on the
 latest candidates and discover/confirm a **new** manifest. Initialize/export the final assessment
-identity afterward. Consume the retained result with existing `evidence draft-add --kind
-reviewer-generated-analysis --locator <result-basename> --content <result-path>`, an accurate
+identity afterward. Keep the previously approved inputs and add only the authorized derived
+result. Confirmation remains a separate explicit `inputs confirm` command, never hidden in an
+evidence producer and never permission to add unrelated inputs.
+Consume the retained result with `evidence draft-add --kind reviewer-generated-analysis
+--root <approved-root> --manifest <post-output-confirmed> --evidence-input <result-basename>`, an accurate
 mechanical method/capture instant, and specific fact/comparison IDs in the claim or method.
-Continue with existing `ledger-build`, `ledger-validate` and `bundle`; never copy old EV1 IDs
-across changed input identities. An integration-only unscored identity skeleton is not a vendor
+The registered mode derives the locator and digest together from validated bytes. Do not supply
+manual `--locator`, `--content` or `--nupkg`; the producer label `release-facts/1.0.0` is not the
+result filename. Missing/stale registrations require a new discovered and explicitly confirmed
+input, not a repaired locator or altered old manifest.
+Continue with `ledger-build`, `ledger-validate` and `bundle --root <approved-root> --manifest
+<post-output-confirmed>`. Input-bound acceptance checks the final manifest identity and every
+selected record's binding before publication. Structural-only bundle/ledger validation does not
+complete this handoff. Rebuild downstream identities and evidence with existing producers after
+input changes; do not force EV1 changes or copy old IDs instead of regeneration.
+An integration-only unscored identity skeleton is not a vendor
 assessment. Do not add excluded internal provenance facts to accepted partner-report rows.
 
 Honor validator ceilings: 256 MiB nupkg, 1 MiB nuspec, 4 MiB authored ledger, 64 MiB serialized

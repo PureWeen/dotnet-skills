@@ -101,8 +101,8 @@ For ordinary authoring, use the typed producer rather than transcribing computed
 ```
 
 `draft-add` computes the digest itself and accepts no hash override. Package artifact
-records require `--nupkg`; every other existing provenance kind requires `--content
-<retained regular file>`. These modes are mutually exclusive. Retained content is
+records require `--nupkg`; other existing provenance kinds support the manual `--content
+<retained regular file>` mode with an explicit logical locator. These modes are mutually exclusive. Retained content is
 bounded by the existing 64 MiB supplemental-input limit, while the draft JSON remains
 bounded by the existing 4 MiB authored-ledger limit. The existing nine kinds and
 locator grammars are shown by command help. `--input` accepts any valid existing draft
@@ -113,9 +113,28 @@ output is an untrusted draft, not evidence validation or readiness. Existing val
 manual drafts remain supported by `ledger-build`; the producer does not replace
 their existing integrity or binding checks.
 
+For reviewer-generated analysis of a registered artifact, use the registered mode instead:
+
+```text
+<launcher> evidence draft-add --output <new-evidence-draft.json> --claim "<specific observed fact>" --scope repository-wide --kind reviewer-generated-analysis --root <output> --manifest <final.confirmed.json> --evidence-input <result-basename> --method "<actual mechanical capture method>" --captured-at <actual-utc>
+```
+
+All three registration options are required together. The producer validates the confirmed
+manifest and current files, then derives locator and digest from that exact `evidence_inputs`
+registration. Do not supply `--locator`, `--content` or `--nupkg`; a producer name/version is
+not the retained result's basename. This mode does not infer provenance from the registration
+kind, accept owner-input substitutions, or discover/confirm inputs. Claims, method and capture
+instant remain explicit. `--input` still means the previous evidence draft for immutable append.
+
+If an authorized collection produced a result after confirmation, preserve its original manifest
+and bytes. Use `inputs candidates add-evidence` on the retained latest candidates, write a new
+candidate, `inputs discover` a new draft and explicitly `inputs confirm` a new final manifest.
+Keep all existing approved registrations; add only the authorized derived result. Do not reuse
+an old identity or mutate a manifest to resolve stale bindings.
+
 ## Canonical identity and ledger sequence
 
-Initialize the assessment from confirmed inputs before building evidence ledgers. Export
+Initialize the assessment from the final, post-output confirmed inputs before building evidence ledgers. Export
 its identity through the validator; do not hand-author hashes/IDs, extract JSON with a
 generic serializer, or reformat the exported file. `assessment canonicalize` emits the
 full assessment document, not the standalone identity required by evidence commands.
@@ -127,8 +146,17 @@ For a package-only assessment:
 <launcher> assessment export-identity --assessment <assessment.json> --output <assessment-identity.json>
 <launcher> evidence ledger-build --kind repository --subject <assessment-identity.json> --draft <evidence-draft.json> --nupkg <exact.nupkg> --output <repository-ledger.json>
 <launcher> evidence ledger-validate --ledger <repository-ledger.json>
-<launcher> evidence bundle --assessment <assessment-identity.json> --source-ledger <repository-ledger.json> --ids <EV1-id,...> --output <evidence.json>
+<launcher> evidence bundle --assessment <assessment-identity.json> --source-ledger <repository-ledger.json> --ids <EV1-id,...> --root <output> --manifest <input.confirmed.json> --output <evidence.json>
 ```
+
+Completed handoffs require this input-bound bundle mode. It checks current file bytes, exact
+manifest/package/component identity and the existing binding rule for every selected record.
+It neither scores rows nor changes the input set. An authorized unscored identity-only handoff
+does not need invented row findings or report rendering. Existing structural-only bundling
+(no root/manifest) and `ledger-validate` remain supported but do not accept input linkage.
+Partial bound options or failed binding never fall back to structural success. Rebuild identities,
+ledgers and selected bundles using the producers when inputs change; retain the existing EV1
+algorithm rather than forcing every identifier to change or copying old identifiers blindly.
 
 ### Passing selected evidence IDs without retyping
 
@@ -170,6 +198,7 @@ jq --arg ids "$IDS_CSV" --arg row "$ROW_ID" '
   else .rows |= map(if .id == $row then .evidence_ids = ($ids | split(",")) else . end)
   end' \
   "<assessment-draft.json>" > "<assessment-with-selected-ids.json>"
+# Structural-only ID transport demonstration, not accepted input linkage.
 readiness evidence bundle --assessment "<assessment-identity.json>" \
   --source-ledger "$LEDGER" --ids "$IDS_CSV" --output "<new-evidence.json>"
 ```
@@ -183,7 +212,9 @@ rows, explicitly select the relevant records and read their IDs from the same le
 typing hash strings. Include every intentionally used ID in the explicit bundle selection.
 Preserve its order; use ordinary `assessment canonicalize` for ordinal row/finding/summary
 reference ordering, then validate the final assessment and bundle. The draft above changes no
-statuses or conclusions and is not a completed assessment.
+statuses or conclusions and is not a completed assessment. The demonstration's structural-only
+bundle is not a completed handoff either: rebuild the chosen selection with
+`--root <output> --manifest <final-confirmed-input>` as in the normal bound sequence above.
 
 If `jq` is unavailable, record that this optional example could not run; do not install it or
 claim the handoff succeeded. Preserve any partial output on failure and follow the run's recovery
