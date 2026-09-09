@@ -25,8 +25,21 @@ public static class ReportService
         InputManifest input,
         EvidenceBundle evidence,
         AssessmentFeedback? feedback = null,
-        string? root = null)
+        string? root = null,
+        ScopedPackageContextBinding? scopedPackageContext = null)
     {
+        var profile = DocxComponentProfile.Load(root, input);
+        if (profile is not null)
+        {
+            InputManifestService.Validate(input, root!, requireConfirmed: true);
+            AssessmentService.Validate(root!, assessment, AssessmentService.Serialize(assessment),
+                input, InputManifestService.Serialize(input), evidence, scopedPackageContext: scopedPackageContext);
+            profile.RejectDisclosure(AssessmentService.Serialize(assessment), json: true);
+        }
+        else if (scopedPackageContext is not null)
+            throw new DeterministicValidationException("Ordinary reports cannot use scoped package context.");
+        else
+            DocxComponentProfile.RejectUnboundComponent(assessment);
         var authorizedScope = AuthorizedPackageScope.Load(root, input);
         authorizedScope?.Validate(assessment, input, evidence);
         var provenance = evidence.SourceLedgers
@@ -55,6 +68,8 @@ public static class ReportService
         {
             lines.InsertRange(7, [authorizedScope.Declaration, ""]);
         }
+        if (profile is not null)
+            lines.InsertRange(7, [profile.Declaration, "", DocxComponentProfile.ExportNotice, ""]);
 
         if (input.Source.RepositoryUri is not null)
         {
@@ -181,6 +196,7 @@ public static class ReportService
         var bytes = Encoding.UTF8.GetBytes(string.Join('\n', lines));
         BoundedIO.EnsureLength(bytes.Length, ResourceLimits.SerializedArtifactBytes, "rendered report");
         authorizedScope?.RejectDisclosure(Encoding.UTF8.GetString(bytes));
+        profile?.RejectDisclosure(bytes);
         return bytes;
     }
 
@@ -198,8 +214,29 @@ public static class ReportService
         Sha256Digest? predecessorManifestDigest = null,
         Sha256Digest? feedbackDigest = null,
         IReadOnlyList<string>? declaredChangedIds = null,
-        string? root = null)
+        string? root = null,
+        ScopedPackageContextBinding? scopedPackageContext = null)
     {
+        var profile = DocxComponentProfile.Load(root, input);
+        if (profile is not null)
+        {
+            InputManifestService.Validate(input, root!, requireConfirmed: true);
+            AssessmentService.Validate(root!, assessment, assessmentBytes, input, inputBytes, evidence,
+                scopedPackageContext: scopedPackageContext);
+            ContractJson.RequireCanonical(inputBytes, InputManifestService.Serialize(input), "profile-bound input");
+            ContractJson.RequireCanonical(assessmentBytes, AssessmentService.Serialize(assessment), "profile-bound assessment");
+            ContractJson.RequireCanonical(evidenceBytes, CanonicalEvidenceJson.SerializeBundle(evidence), "profile-bound evidence");
+            profile.RejectDisclosure(assessmentBytes.ToArray(), json: true);
+            profile.RejectDisclosure(reportBytes.ToArray());
+            if (!Encoding.UTF8.GetString(reportBytes).Contains(profile.Declaration, StringComparison.Ordinal) ||
+                feedbackDigest is null && !reportBytes.SequenceEqual(
+                    RenderMarkdown(assessment, input, evidence, root: root, scopedPackageContext: scopedPackageContext)))
+                throw new DeterministicValidationException("Profile-bound receipt requires the exact scoped component report.");
+        }
+        else if (scopedPackageContext is not null)
+            throw new DeterministicValidationException("Ordinary validation manifests cannot use scoped package context.");
+        else
+            DocxComponentProfile.RejectUnboundComponent(assessment);
         var authorizedScope = AuthorizedPackageScope.Load(root, input);
         if (authorizedScope is not null)
         {

@@ -209,7 +209,9 @@ internal static class EvidenceTests
 
     private static void TestEvidenceDraftProducer(string repositoryRoot)
     {
-        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-evidence-draft-tests");
+        var root = Path.Combine(
+            Environment.GetEnvironmentVariable("READINESS_TEST_ARTIFACTS") ?? Path.Combine(repositoryRoot, "artifacts"),
+            "readiness-evidence-draft-tests");
         if (Directory.Exists(root))
         {
             Directory.Delete(root, recursive: true);
@@ -654,7 +656,9 @@ internal static class EvidenceTests
 
     private static void TestNuGetVersionNormalization(string repositoryRoot)
     {
-        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-version-tests");
+        var root = Path.Combine(
+            Environment.GetEnvironmentVariable("READINESS_TEST_ARTIFACTS") ?? Path.Combine(repositoryRoot, "artifacts"),
+            "readiness-version-tests");
         if (Directory.Exists(root))
         {
             Directory.Delete(root, recursive: true);
@@ -724,7 +728,9 @@ internal static class EvidenceTests
 
     private static void TestPackageInspectionPersistence(string repositoryRoot)
     {
-        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-package-inspection-tests");
+        var root = Path.Combine(
+            Environment.GetEnvironmentVariable("READINESS_TEST_ARTIFACTS") ?? Path.Combine(repositoryRoot, "artifacts"),
+            "readiness-package-inspection-tests");
         if (Directory.Exists(root))
         {
             Directory.Delete(root, recursive: true);
@@ -1219,7 +1225,9 @@ internal static class EvidenceTests
 
     private static void TestPackageArtifactVerification(string repositoryRoot)
     {
-        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-package-evidence-tests");
+        var root = Path.Combine(
+            Environment.GetEnvironmentVariable("READINESS_TEST_ARTIFACTS") ?? Path.Combine(repositoryRoot, "artifacts"),
+            "readiness-package-evidence-tests");
         if (Directory.Exists(root))
         {
             Directory.Delete(root, recursive: true);
@@ -1458,7 +1466,9 @@ internal static class EvidenceTests
 
     private static void TestCliSubprocesses(string repositoryRoot, string pluginRoot)
     {
-        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-evidence-cli-tests");
+        var root = Path.Combine(
+            Environment.GetEnvironmentVariable("READINESS_TEST_ARTIFACTS") ?? Path.Combine(repositoryRoot, "artifacts"),
+            "readiness-evidence-cli-tests");
         if (Directory.Exists(root))
         {
             Directory.Delete(root, recursive: true);
@@ -2274,6 +2284,14 @@ internal static class EvidenceTests
         IReadOnlyDictionary<string, string> environment,
         int? expectedExitCode)
     {
+        if (executable == "bash" &&
+            Environment.GetEnvironmentVariable("READINESS_TEST_BASH") is { } bashExecutable)
+        {
+            Assert(Path.IsPathFullyQualified(bashExecutable) && File.Exists(bashExecutable),
+                "READINESS_TEST_BASH must name an existing absolute Bash executable.");
+            executable = bashExecutable;
+        }
+
         var startInfo = new ProcessStartInfo(executable)
         {
             WorkingDirectory = workingDirectory,

@@ -23,24 +23,32 @@ public static class ReaderCommand
                 The output must be outside all source revision lineages. Verification recomputes
                 every byte from the verified source, rubric, feedback and retained evidence.
                 This local preview is not publication or permission to share private inputs.
+                DOCX-component V1 requires --package-context-revision <directory> instead of
+                --package-revision; context feedback uses --package-context-feedback <file>.
+                This scoped export omits raw inputs and is not a self-contained validation bundle.
                 """);
             return ExitCodes.Success;
         }
         if (args[0] is not ("render" or "verify")) throw new UsageException("Unknown reader operation.");
         var options = CommandOptions.Parse(args.Skip(1).ToArray(), "--root", "--revision", "--output",
-            "--feedback", "--package-revision", "--package-feedback");
+            "--feedback", "--package-revision", "--package-feedback",
+            "--package-context-revision", "--package-context-feedback");
         var root = Path.GetFullPath(options.Single("--root"));
         var revisionPath = Resolve(root, options.Single("--revision"), true);
         var outputPath = Resolve(root, options.Single("--output"), args[0] == "verify");
         var packagePath = options.Optional("--package-revision") is { } packageValue ? Resolve(root, packageValue, true) : null;
+        var contextPath = options.Optional("--package-context-revision") is { } contextValue ? Resolve(root, contextValue, true) : null;
         var feedback = Snapshot(root, options.Optional("--feedback"));
         var packageFeedback = Snapshot(root, options.Optional("--package-feedback"));
+        var contextFeedback = Snapshot(root, options.Optional("--package-context-feedback"));
         RejectOverlap(outputPath, Path.GetDirectoryName(revisionPath)!);
         if (packagePath is not null) RejectOverlap(outputPath, Path.GetDirectoryName(packagePath)!);
-        foreach (var snapshot in new[] { feedback, packageFeedback }.OfType<ImmutableInputSnapshot>())
+        if (contextPath is not null) RejectOverlap(outputPath, Path.GetDirectoryName(contextPath)!);
+        foreach (var snapshot in new[] { feedback, packageFeedback, contextFeedback }.OfType<ImmutableInputSnapshot>())
         {
             if (Within(snapshot.Path, Path.GetDirectoryName(revisionPath)!) ||
                 packagePath is not null && Within(snapshot.Path, Path.GetDirectoryName(packagePath)!) ||
+                contextPath is not null && Within(snapshot.Path, Path.GetDirectoryName(contextPath)!) ||
                 Within(snapshot.Path, outputPath))
                 throw new DeterministicValidationException("Reader feedback must remain outside source revisions and derived output.");
         }
@@ -49,15 +57,17 @@ public static class ReaderCommand
         {
             feedback?.EnsureUnchanged();
             packageFeedback?.EnsureUnchanged();
+            contextFeedback?.EnsureUnchanged();
+            var input = AssessmentBindingOptions.ReadRevisionInput(root, revisionPath);
+            var bindings = AssessmentBindingOptions.Load(root, RevisionService.DetectKind(root, revisionPath), input,
+                packagePath, packageFeedback?.Bytes, contextPath, contextFeedback?.Bytes);
             var package = packagePath is null ? null : RevisionService.VerifyRevision(root, packagePath,
                 packageFeedback?.Bytes, null, validateChain: true);
-            var binding = packagePath is null ? null : RevisionService.LoadPackageBinding(root, packagePath, packageFeedback?.Bytes);
-            var source = RevisionService.VerifyRevision(root, revisionPath, feedback?.Bytes, binding, validateChain: true);
-            if ((source.Kind == "component") != (packagePath is not null) || packageFeedback is not null && packagePath is null)
-                throw new DeterministicValidationException("Only a component reader requires a verified package revision and optional package feedback.");
+            var source = RevisionService.VerifyRevision(root, revisionPath, feedback?.Bytes, bindings.Package,
+                validateChain: true, scopedPackageContext: bindings.Context);
             var parsedFeedback = feedback is null ? null :
                 FeedbackService.Parse(feedback.Bytes, source.Assessment, package?.Assessment.SelectedIds);
-            return ReaderService.Build(root, source, parsedFeedback, feedback?.Bytes, package);
+            return ReaderService.Build(root, source, parsedFeedback, feedback?.Bytes, package, bindings.Context);
         }
 
         var files = Generate();

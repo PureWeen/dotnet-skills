@@ -21,9 +21,11 @@ public static class AssessmentService
         string? componentId,
         IReadOnlyList<string> overlayIds,
         PackageRevisionBinding? packageBinding = null,
-        string? rubricVersion = null)
+        string? rubricVersion = null,
+        ScopedPackageContextBinding? scopedPackageContext = null)
     {
         InputManifestService.Validate(input, root, requireConfirmed: true);
+        var profile = DocxComponentProfile.Load(root, input);
         kind = kind.ToLowerInvariant();
         string? canonicalComponent = null;
         if (kind is "unified" or "component")
@@ -45,7 +47,10 @@ public static class AssessmentService
             throw new DeterministicValidationException("Assessment kind must be unified, package, or component.");
         }
 
-        if (kind == "component" && packageBinding is null)
+        if (profile is null && scopedPackageContext is not null)
+            throw new DeterministicValidationException("Scoped package context requires the explicit DOCX-component profile.");
+
+        if (kind == "component" && packageBinding is null && profile is null)
         {
             throw new DeterministicValidationException(
                 "Component assessment requires an exact validated package revision.");
@@ -65,7 +70,8 @@ public static class AssessmentService
 
         var rubric = RubricLoader.Load(rubricVersion);
         var authorizedScope = AuthorizedPackageScope.Load(root, input);
-        var requirements = authorizedScope?.Select(rubric, kind) ?? RubricLoader.Select(rubric, kind, overlayIds);
+        var requirements = profile?.Select(rubric, kind) ??
+            authorizedScope?.Select(rubric, kind) ?? RubricLoader.Select(rubric, kind, overlayIds);
         var overlays = rubric.Overlays
             .Where(overlay => overlayIds.Contains(overlay.Id, StringComparer.Ordinal))
             .Select(overlay => new AssessmentOverlay(overlay.Id, overlay.Version, overlay.Digest))
@@ -108,6 +114,7 @@ public static class AssessmentService
         {
             ValidatePackageBinding(assessment, input, packageBinding);
         }
+        profile?.ValidateBinding(assessment, input, scopedPackageContext, packageBinding);
 
         return assessment;
     }
@@ -119,7 +126,8 @@ public static class AssessmentService
         InputManifest input,
         ReadOnlySpan<byte> inputBytes,
         EvidenceBundle evidence,
-        PackageRevisionBinding? packageBinding = null)
+        PackageRevisionBinding? packageBinding = null,
+        ScopedPackageContextBinding? scopedPackageContext = null)
     {
         if (assessment.SchemaVersion is not (LegacySchemaVersion or SchemaVersion) ||
             assessment.AssessmentKind is not ("unified" or "package" or "component") ||
@@ -162,7 +170,15 @@ public static class AssessmentService
             throw new DeterministicValidationException("Package assessments cannot identify a component.");
         }
 
-        ValidatePackageReference(assessment, expectedPackage, input, packageBinding);
+        var profile = DocxComponentProfile.Load(root, input);
+        if (profile is not null)
+            profile.ValidateBinding(assessment, input, scopedPackageContext, packageBinding);
+        else
+        {
+            if (scopedPackageContext is not null)
+                throw new DeterministicValidationException("Ordinary assessments cannot use scoped package context.");
+            ValidatePackageReference(assessment, expectedPackage, input, packageBinding);
+        }
         var rubric = RubricLoader.Load(assessment.RubricVersion);
         if (rubric.RubricVersion == RubricLoader.CurrentVersion &&
             assessment.SchemaVersion != SchemaVersion)
@@ -180,7 +196,8 @@ public static class AssessmentService
         }
 
         var authorizedScope = AuthorizedPackageScope.Load(root, input);
-        var expectedRequirements = authorizedScope?.Select(rubric, assessment.AssessmentKind) ??
+        var expectedRequirements = profile?.Select(rubric, assessment.AssessmentKind) ??
+            authorizedScope?.Select(rubric, assessment.AssessmentKind) ??
             RubricLoader.Select(rubric, assessment.AssessmentKind, selectedOverlayIds);
         var expectedOverlays = rubric.Overlays
             .Where(overlay => selectedOverlayIds.Contains(overlay.Id, StringComparer.Ordinal))
@@ -252,6 +269,7 @@ public static class AssessmentService
         }
 
         authorizedScope?.Validate(assessment, input, evidence);
+        profile?.ValidateEvidence(input, evidence);
         EvidenceInputBindingValidator.Validate(root, assessment, input, evidence);
         EvidenceProtocolValidator.Validate(
             root,

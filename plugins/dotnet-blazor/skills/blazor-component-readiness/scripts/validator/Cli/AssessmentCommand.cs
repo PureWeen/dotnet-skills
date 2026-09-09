@@ -25,6 +25,9 @@ public static class AssessmentCommand
         assessment, not a standalone evidence identity. It also orders evidence IDs in rows,
         findings, and summary groups without adding, removing, or deduplicating references.
         Validation remains the authority for evidence bindings and assessment correctness.
+        DOCX-component V1 uses --package-context-revision <dir> instead of --package-revision.
+        Optional bound context feedback uses --package-context-feedback <markdown>, never
+        --package-feedback. Both context options require the confirmed V1 descriptor pair.
         """;
 
     public static int Run(IReadOnlyList<string> args, TextWriter output)
@@ -112,7 +115,9 @@ public static class AssessmentCommand
             "--overlays",
             "--rubric-version",
             "--package-revision",
-            "--package-feedback");
+            "--package-feedback",
+            "--package-context-revision",
+            "--package-context-feedback");
         var root = Path.GetFullPath(options.Single("--root"));
         var inputBytes = BoundedIO.ReadAllBytes(
             options.Single("--input"),
@@ -121,11 +126,14 @@ public static class AssessmentCommand
         var input = InputManifestService.Parse(inputBytes);
         var overlays = ParseOverlays(options.Optional("--overlays"));
         var kind = options.Single("--kind");
-        var packageBinding = LoadPackageBinding(
+        var bindings = AssessmentBindingOptions.Load(
             root,
             kind,
+            input,
             options.Optional("--package-revision"),
-            options.Optional("--package-feedback"));
+            ReadFeedback(options.Optional("--package-feedback")),
+            options.Optional("--package-context-revision"),
+            ReadFeedback(options.Optional("--package-context-feedback")));
         var assessment = AssessmentService.Initialize(
             kind,
             root,
@@ -133,8 +141,9 @@ public static class AssessmentCommand
             inputBytes,
             options.Optional("--component"),
             overlays,
-            packageBinding,
-            options.Optional("--rubric-version"));
+            bindings.Package,
+            options.Optional("--rubric-version"),
+            bindings.Context);
         WriteNew(options.Single("--output"), AssessmentService.Serialize(assessment));
         return ExitCodes.Success;
     }
@@ -154,7 +163,9 @@ public static class AssessmentCommand
             "--assessment",
             "--evidence",
             "--package-revision",
-            "--package-feedback");
+            "--package-feedback",
+            "--package-context-revision",
+            "--package-context-feedback");
         var root = Path.GetFullPath(options.Single("--root"));
         var inputBytes = BoundedIO.ReadAllBytes(
             options.Single("--input"),
@@ -171,11 +182,14 @@ public static class AssessmentCommand
             options.Single("--evidence"),
             ResourceLimits.SerializedArtifactBytes,
             "evidence bundle"));
-        var packageBinding = LoadPackageBinding(
+        var bindings = AssessmentBindingOptions.Load(
             root,
             assessment.AssessmentKind,
+            input,
             options.Optional("--package-revision"),
-            options.Optional("--package-feedback"));
+            ReadFeedback(options.Optional("--package-feedback")),
+            options.Optional("--package-context-revision"),
+            ReadFeedback(options.Optional("--package-context-feedback")));
         AssessmentService.Validate(
             root,
             assessment,
@@ -183,7 +197,8 @@ public static class AssessmentCommand
             input,
             inputBytes,
             evidence,
-            packageBinding);
+            bindings.Package,
+            bindings.Context);
         return ExitCodes.Success;
     }
 
@@ -205,40 +220,8 @@ public static class AssessmentCommand
         return ReportCommand.Render(args, output);
     }
 
-    private static PackageRevisionBinding? LoadPackageBinding(
-        string root,
-        string kind,
-        string? packageRevision,
-        string? packageFeedback)
-    {
-        if (string.Equals(kind, "component", StringComparison.OrdinalIgnoreCase))
-        {
-            if (packageRevision is null)
-            {
-                throw new DeterministicValidationException(
-                    "Component assessment requires --package-revision.");
-            }
-
-            var feedbackBytes = packageFeedback is null
-                ? null
-                : BoundedIO.ReadAllBytes(
-                    packageFeedback,
-                    ResourceLimits.SerializedArtifactBytes,
-                    "package assessment feedback");
-            return RevisionService.LoadPackageBinding(
-                root,
-                Path.GetFullPath(packageRevision),
-                feedbackBytes);
-        }
-
-        if (packageRevision is not null || packageFeedback is not null)
-        {
-            throw new DeterministicValidationException(
-                "Only component assessments may specify package revision artifacts.");
-        }
-
-        return null;
-    }
+    private static byte[]? ReadFeedback(string? path) => path is null ? null :
+        BoundedIO.ReadAllBytes(path, ResourceLimits.SerializedArtifactBytes, "package/context assessment feedback");
 
     private static IReadOnlyList<string> ParseOverlays(string? value)
     {

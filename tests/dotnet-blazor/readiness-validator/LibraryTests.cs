@@ -17,7 +17,9 @@ internal static class LibraryTests
 {
     public static void Run(string repositoryRoot, string pluginRoot)
     {
-        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-commit6-tests");
+        var root = Path.Combine(
+            Environment.GetEnvironmentVariable("READINESS_TEST_ARTIFACTS") ?? Path.Combine(repositoryRoot, "artifacts"),
+            "readiness-commit6-tests");
         if (Directory.Exists(root))
         {
             Directory.Delete(root, recursive: true);

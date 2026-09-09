@@ -18,6 +18,10 @@ public static class ReportCommand
         Usage:
           readiness-validator report render --root <input-root> --input <confirmed> --assessment <json> --evidence <bundle> --output <revisions-root> [--feedback <markdown>] [--predecessor <digest>] [--changed-ids <id,id>] [--package-revision <dir>] [--package-feedback <markdown>]
           readiness-validator report verify --root <input-root> --revision <revision-directory> [--feedback <markdown>] [--package-revision <dir>] [--package-feedback <markdown>]
+
+        DOCX-component V1 requires --package-context-revision <dir> instead of the ordinary
+        --package-revision. Context feedback uses --package-context-feedback <markdown>.
+        Context locators do not authorize a profile or replace its confirmed input bindings.
         """;
 
     public static int Run(IReadOnlyList<string> args, TextWriter output)
@@ -55,7 +59,9 @@ public static class ReportCommand
             "--predecessor",
             "--changed-ids",
             "--package-revision",
-            "--package-feedback");
+            "--package-feedback",
+            "--package-context-revision",
+            "--package-context-feedback");
         var root = Path.GetFullPath(options.Single("--root"));
         var inputSnapshot = ImmutableInputSnapshot.Capture(
             Path.GetFullPath(options.Single("--input")),
@@ -70,6 +76,8 @@ public static class ReportCommand
         var packageFeedbackSnapshot = CaptureOptional(
             options.Optional("--package-feedback"),
             "package assessment feedback");
+        var contextFeedbackSnapshot = CaptureOptional(
+            options.Optional("--package-context-feedback"), "scoped package context feedback");
         var inputBytes = inputSnapshot.Bytes;
         var assessmentBytes = assessmentSnapshot.Bytes;
         var evidenceBytes = evidenceSnapshot.Bytes;
@@ -79,11 +87,16 @@ public static class ReportCommand
         InputManifestService.Validate(input, root, requireConfirmed: true);
         var assessment = AssessmentService.Parse(assessmentBytes);
         var evidence = CanonicalEvidenceJson.ParseBundle(evidenceBytes);
-        var packageBinding = LoadPackageBinding(
+        var bindings = AssessmentBindingOptions.Load(
             root,
             assessment.AssessmentKind,
+            input,
             options.Optional("--package-revision"),
-            packageFeedbackSnapshot?.Bytes);
+            packageFeedbackSnapshot?.Bytes,
+            options.Optional("--package-context-revision"),
+            contextFeedbackSnapshot?.Bytes);
+        var packageBinding = bindings.Package;
+        var scopedPackageContext = bindings.Context;
         AssessmentService.Validate(
             root,
             assessment,
@@ -91,7 +104,8 @@ public static class ReportCommand
             input,
             inputBytes,
             evidence,
-            packageBinding);
+            packageBinding,
+            scopedPackageContext);
         var feedback = feedbackSnapshot is null
             ? null
             : FeedbackService.Parse(
@@ -106,6 +120,10 @@ public static class ReportCommand
                 packageFeedbackSnapshot,
                 Path.GetDirectoryName(Path.GetFullPath(packageRevision))!);
         }
+        if (options.Optional("--package-context-revision") is { } contextRevision)
+            EnsureFeedbackOutsideRevisions(contextFeedbackSnapshot,
+                Path.GetDirectoryName(SafePath.ResolveExistingDirectoryUnderRoot(root,
+                    Path.IsPathRooted(contextRevision) ? contextRevision : Path.Combine(root, contextRevision)))!);
 
         using var revisionRootLock = RevisionRootLock.Acquire(outputRoot);
         var nextSequence = NextSequence(outputRoot);
@@ -137,7 +155,8 @@ public static class ReportCommand
                 feedbackBytes: null,
                 packageBinding,
                 validateChain: true,
-                allowMissingFeedback: true);
+                allowMissingFeedback: true,
+                scopedPackageContext);
             if (ContractJson.RawDigest(predecessor.ManifestBytes) != predecessorDigest)
             {
                 throw new DeterministicValidationException(
@@ -145,7 +164,7 @@ public static class ReportCommand
             }
         }
 
-        var reportBytes = ReportService.RenderMarkdown(assessment, input, evidence, feedback, root);
+        var reportBytes = ReportService.RenderMarkdown(assessment, input, evidence, feedback, root, scopedPackageContext);
         var manifest = ReportService.CreateManifest(
             assessment,
             assessmentBytes,
@@ -157,7 +176,8 @@ public static class ReportCommand
             predecessorDigest,
             feedback?.Digest,
             changedIds,
-            root);
+            root,
+            scopedPackageContext);
         var manifestBytes = ReportService.SerializeManifest(manifest);
         var revisionName = nextSequence.ToString("D4");
         var replacement = new RevisionArtifacts(
@@ -212,6 +232,7 @@ public static class ReportCommand
             evidenceSnapshot.EnsureUnchanged();
             feedbackSnapshot?.EnsureUnchanged();
             packageFeedbackSnapshot?.EnsureUnchanged();
+            contextFeedbackSnapshot?.EnsureUnchanged();
             foreach (var snapshot in referencedSnapshots)
             {
                 snapshot.EnsureUnchanged();
@@ -229,6 +250,19 @@ public static class ReportCommand
                         "Validated package revision changed while the component report was rendered.");
                 }
             }
+            if (scopedPackageContext is not null)
+            {
+                var rebound = AssessmentBindingOptions.Load(root, assessment.AssessmentKind, input,
+                    options.Optional("--package-revision"), packageFeedbackSnapshot?.Bytes,
+                    options.Optional("--package-context-revision"), contextFeedbackSnapshot?.Bytes);
+                if (rebound.Context is null ||
+                    rebound.Context.ValidationDigest != scopedPackageContext.ValidationDigest ||
+                    rebound.Context.ValidationSize != scopedPackageContext.ValidationSize)
+                    throw new DeterministicValidationException(
+                        "Scoped package context changed while the component report was rendered.");
+                AssessmentService.Validate(root, assessment, assessmentBytes, input, inputBytes, evidence,
+                    scopedPackageContext: rebound.Context);
+            }
 
             EnsureRevisionRootUnchanged(outputRoot, nextSequence, staging);
             if (predecessor is not null)
@@ -239,7 +273,8 @@ public static class ReportCommand
                     feedbackBytes: null,
                     packageBinding,
                     validateChain: true,
-                    allowMissingFeedback: true);
+                    allowMissingFeedback: true,
+                    scopedPackageContext);
                 if (ContractJson.RawDigest(currentPredecessor.ManifestBytes) != predecessorDigest)
                 {
                     throw new DeterministicValidationException(
@@ -264,13 +299,17 @@ public static class ReportCommand
             "--revision",
             "--feedback",
             "--package-revision",
-            "--package-feedback");
+            "--package-feedback",
+            "--package-context-revision",
+            "--package-context-feedback");
         var root = Path.GetFullPath(options.Single("--root"));
         var revision = Path.GetFullPath(options.Single("--revision"));
         var feedbackBytes = ReadOptional(options.Optional("--feedback"), "assessment feedback");
         var packageFeedbackBytes = ReadOptional(
             options.Optional("--package-feedback"),
             "package assessment feedback");
+        var contextFeedbackBytes = ReadOptional(
+            options.Optional("--package-context-feedback"), "scoped package context feedback");
         EnsureFeedbackOutsideRevisions(
             options.Optional("--feedback"),
             Path.GetDirectoryName(revision)!);
@@ -280,49 +319,28 @@ public static class ReportCommand
                 options.Optional("--package-feedback"),
                 Path.GetDirectoryName(Path.GetFullPath(packageRevision))!);
         }
+        if (options.Optional("--package-context-revision") is { } contextRevision)
+            EnsureFeedbackOutsideRevisions(options.Optional("--package-context-feedback"),
+                Path.GetDirectoryName(SafePath.ResolveExistingDirectoryUnderRoot(root,
+                    Path.IsPathRooted(contextRevision) ? contextRevision : Path.Combine(root, contextRevision)))!);
 
         var kind = RevisionService.DetectKind(root, revision);
-        var packageBinding = LoadPackageBinding(
+        var bindings = AssessmentBindingOptions.Load(
             root,
             kind,
+            AssessmentBindingOptions.ReadRevisionInput(root, revision),
             options.Optional("--package-revision"),
-            packageFeedbackBytes);
+            packageFeedbackBytes,
+            options.Optional("--package-context-revision"),
+            contextFeedbackBytes);
         _ = RevisionService.VerifyRevision(
             root,
             revision,
             feedbackBytes,
-            packageBinding,
-            validateChain: true);
+            bindings.Package,
+            validateChain: true,
+            scopedPackageContext: bindings.Context);
         return ExitCodes.Success;
-    }
-
-    private static PackageRevisionBinding? LoadPackageBinding(
-        string root,
-        string assessmentKind,
-        string? packageRevision,
-        byte[]? packageFeedbackBytes)
-    {
-        if (assessmentKind == "component")
-        {
-            if (packageRevision is null)
-            {
-                throw new DeterministicValidationException(
-                    "Component assessment requires --package-revision.");
-            }
-
-            return RevisionService.LoadPackageBinding(
-                root,
-                Path.GetFullPath(packageRevision),
-                packageFeedbackBytes);
-        }
-
-        if (packageRevision is not null || packageFeedbackBytes is not null)
-        {
-            throw new DeterministicValidationException(
-                "Only component assessments may specify package revision artifacts.");
-        }
-
-        return null;
     }
 
     private static int NextSequence(string outputRoot)

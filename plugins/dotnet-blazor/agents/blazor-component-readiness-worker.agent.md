@@ -41,6 +41,11 @@ components, alter inventory, inspect sibling source, or broaden the package/vers
 package revision can contain package-wide inventory entries needed for its exact binding; treat
 sibling identities there as non-evidence and never cite or reproduce them in component artifacts.
 
+For an explicitly assigned DOCX-only component unit, the binding is instead the separately
+verified scoped package context defined by the skill's V1 profile contract. Require its exact
+profile/context input descriptors and `--package-context-revision`; do not treat it as an
+ordinary full-package prerequisite. This does not authorize an additional worker or assessment.
+
 ## Execution
 
 1. The explicit trusted plugin root is authoritative for this worker. Load the complete
@@ -63,6 +68,12 @@ sibling identities there as non-evidence and never cite or reproduce them in com
 3. Collect only evidence allowed for this unit. A package worker owns the 60 repository-wide/conditional rows;
    a component worker owns the 61 component-specific rows and must bind the supplied package
    revision.
+   An explicitly assigned `docx-component-profile-v1` unit instead owns exactly the 51 current
+   DOCX-backed, non-extension component checks and its distinct scoped-context relationship.
+   Preserve their IDs, wording, mappings, order, and individual results; clause grouping is not
+   a replacement assessment. The package's 48 scoped checks are neither a component count limit
+   nor component findings. Retain complete internal validation dependencies and obey the V1
+   export restrictions without cropping or relabeling historical ledgers.
    New worker assessments must omit `--rubric-version` and use current rubric `2.0.0`; accept
    `1.3.0` only when the coordinator records an explicit owner request for legacy reproduction.
    The assigned kind is strict: a package worker must return a `package` assessment and a component

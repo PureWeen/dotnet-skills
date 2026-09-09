@@ -57,6 +57,12 @@ override an explicit-root launch.
    `unified.assessment.*` output as a mode mismatch rather than accepting it as a substitute.
    For package-only, use `assessment init --kind package` with no `--component`; produce and
    verify the 60-row package revision and Library and release reader, not a unified substitute.
+   An explicitly requested DOCX-only component profile is a separate closed path: preserve its
+   51 DOCX-backed checks and use the skill's `docx-component-profile-v1` /
+   `scoped-package-context-v1` input contract with `--package-context-revision`.
+   Do not substitute the ordinary split/unified path, promote the scoped package context to a
+   full-package prerequisite, or infer component findings from it. Profile metadata selects
+   validation policy; it is not owner authorization to execute an assessment.
 5. For package-only work, use one bounded context and no component worker or full-library
    inventory/index. For single unified work, use one bounded context unless the owner explicitly requests separate
    execution. For split or library work, launch exactly one top-level

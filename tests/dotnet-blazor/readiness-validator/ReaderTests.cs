@@ -15,7 +15,9 @@ internal static class ReaderTests
 {
     public static void Run(string repositoryRoot, string pluginRoot)
     {
-        var root = Path.Combine(repositoryRoot, "artifacts", "readiness-reader-" + Guid.NewGuid().ToString("N"));
+        var root = Path.Combine(
+            Environment.GetEnvironmentVariable("READINESS_TEST_ARTIFACTS") ?? Path.Combine(repositoryRoot, "artifacts"),
+            "readiness-reader-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         var skillRoot = Path.Combine(pluginRoot, "skills", "blazor-component-readiness");
         var previousSkill = Environment.GetEnvironmentVariable("READINESS_SKILL_ROOT");

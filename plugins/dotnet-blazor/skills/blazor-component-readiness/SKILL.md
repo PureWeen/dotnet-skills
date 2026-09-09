@@ -58,6 +58,8 @@ stop with an environment limitation; do not weaken the launcher isolation.
    `--rubric-version 1.3.0` unless the owner explicitly requests a legacy assessment or
    reproduction; a legacy selection for a current request is an invalid scope decision, not a
    harmless compatibility choice.
+   The explicitly requested DOCX-only component profile below is a closed selection from this
+   same frozen rubric, not a rubric edit, legacy fallback, or arbitrary subset.
 2. `references/checklist.md` is only the generated human-readable view. Never edit or derive IDs
    from it independently.
 3. Use exactly: `verified`, `gap`, `owner evidence required`, `not tested`,
@@ -124,6 +126,16 @@ Exit `0` means completion, not that all rows are positive;
 5. **Targeted follow-up**: only for named rows or a bounded correction. It is not a complete
    readiness result; record selection and exclusions using
    [targeted profiles](references/targeted-profiles.md).
+6. **DOCX-only component**: only for an explicit owner request for the complete 51 current
+   DOCX-backed, non-extension component checks. Register the frozen crosswalk with evidence-input
+   kind `docx-component-profile-v1`, its frozen DOCX, and the exact scoped package validation
+   receipt with kind `scoped-package-context-v1`. Use `--package-context-revision`, not
+   `--package-revision`, through initialization, validation, report and reader operations.
+   Follow the [profile contract](references/report-contract.md#docx-only-component-profile-v1).
+   The separate 48-check package assessment is immutable context, not a full-package prerequisite
+   or component evidence. Preserve all 51 individual checks, even when the reader groups them.
+   This mode does not authorize a new assessment, extra component, or changed execution limits
+   merely because its inputs select a supported validation policy.
 
 ## Workflow
 

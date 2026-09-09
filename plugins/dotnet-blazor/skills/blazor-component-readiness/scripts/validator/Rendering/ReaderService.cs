@@ -3,6 +3,8 @@ using System.Text;
 using System.Text.Json;
 using BlazorComponentReadiness.Validator.Assessment;
 using BlazorComponentReadiness.Validator.Contracts;
+using BlazorComponentReadiness.Validator.Evidence;
+using BlazorComponentReadiness.Validator.Inputs;
 using BlazorComponentReadiness.Validator.IO;
 using BlazorComponentReadiness.Validator.Validation;
 
@@ -30,15 +32,36 @@ public static class ReaderService
 
     public static SortedDictionary<string, byte[]> Build(
         string root, RevisionArtifacts revision, AssessmentFeedback? feedback, byte[]? feedbackBytes,
-        RevisionArtifacts? package = null)
+        RevisionArtifacts? package = null,
+        ScopedPackageContextBinding? scopedPackageContext = null)
     {
         var input = revision.Input;
         var assessment = revision.Assessment;
+        var profile = DocxComponentProfile.Load(root, input);
+        if (profile is not null)
+        {
+            if (package is not null || revision.Kind != assessment.AssessmentKind)
+                throw new DeterministicValidationException("Scoped component readers cannot carry an ordinary package binding.");
+            ContractJson.RequireCanonical(revision.ManifestBytes,
+                ReportService.SerializeManifest(revision.Manifest), "scoped source validation manifest");
+            InputManifestService.Validate(input, root, requireConfirmed: true);
+            AssessmentService.Validate(root, assessment, revision.AssessmentBytes, input, revision.InputBytes,
+                revision.Evidence, scopedPackageContext: scopedPackageContext);
+            var parsedFeedback = feedbackBytes is null ? null : FeedbackService.Parse(feedbackBytes, assessment);
+            if (parsedFeedback?.Digest != feedback?.Digest)
+                throw new DeterministicValidationException("Scoped reader feedback must match its exact retained bytes.");
+            feedback = parsedFeedback;
+        }
+        else if (scopedPackageContext is not null)
+            throw new DeterministicValidationException("Ordinary readers cannot use scoped package context.");
+        else
+            DocxComponentProfile.RejectUnboundComponent(assessment);
         var authorizedScope = AuthorizedPackageScope.Load(root, input);
         authorizedScope?.Validate(assessment, input, revision.Evidence);
-        if (authorizedScope is not null)
+        if (authorizedScope is not null || profile is not null)
         {
-            var expectedReport = ReportService.RenderMarkdown(assessment, input, revision.Evidence, feedback, root);
+            var expectedReport = ReportService.RenderMarkdown(
+                assessment, input, revision.Evidence, feedback, root, scopedPackageContext);
             if (!revision.ReportBytes.AsSpan().SequenceEqual(expectedReport) ||
                 revision.Manifest.FeedbackDigest != feedback?.Digest)
             {
@@ -49,7 +72,7 @@ public static class ReaderService
                 assessment, revision.AssessmentBytes, input, revision.InputBytes,
                 revision.Evidence, revision.EvidenceBytes, revision.ReportBytes,
                 revision.Manifest.PredecessorManifestDigest, feedback?.Digest,
-                revision.Manifest.DeclaredChangedIds, root));
+                revision.Manifest.DeclaredChangedIds, root, scopedPackageContext));
         }
 
         if (input.OwnerInputs.Any(item => item.Provenance == "owner-supplied-internal-evidence") ||
@@ -63,8 +86,19 @@ public static class ReaderService
             .ToDictionary(item => item.StableId, StringComparer.Ordinal);
         var evidenceNames = revision.Evidence.Selection.ToDictionary(item => item.EvidenceId,
             item => $"Evidence {item.DisplayOrder}", StringComparer.Ordinal);
+        var companion = profile?.BuildSelectedCompanion(revision.Evidence);
+        var companionNotice = companion is null
+            ? "**Structured selected-only evidence companion: omitted.** Selected records depend on historical supersession " +
+                "ancestors that are not exported. The complete canonical bundle and dependency closure remain unchanged " +
+                "in the internal validation workspace. Selected record identities, provenance and supersession references " +
+                "are preserved in the evidence view; they do not deliver the omitted history."
+            : "**Structured selected-only evidence companion: included.** It was constructed and verified with the existing " +
+                "evidence builders, retains selected record identities and provenance, and has its own ledger digests. " +
+                "It is not a relabeled historical ledger or an exact copy of the full internal source bundle.";
         var files = new SortedDictionary<string, byte[]>(StringComparer.Ordinal);
-        AddTechnical(files, revision);
+        AddTechnical(files, revision, profile is not null);
+        if (companion is not null)
+            files["technical/selected.evidence.json"] = CanonicalEvidenceJson.SerializeBundle(companion);
         if (authorizedScope is not null)
         {
             files[$"technical/{AuthorizedPackageScope.Filename}"] = authorizedScope.CopyBytes();
@@ -98,6 +132,8 @@ public static class ReaderService
         {
             lines.AddRange([authorizedScope.Declaration, ""]);
         }
+        if (profile is not null)
+            lines.AddRange([profile.Declaration, "", DocxComponentProfile.ExportNotice, "", companionNotice, ""]);
 
         if (package is not null)
             lines.Add("Package-wide findings remain in the separately delivered Library and release reader. " +
@@ -144,7 +180,14 @@ public static class ReaderService
             }
         }
         lines.AddRange(["", "## Assessment boundary", "",
-            "The [input manifest](technical/input-manifest.json) retains the complete acquisition, documentation, " +
+            profile is not null
+                ? "The complete input manifest and its acquisition, documentation, source-artifact and protocol dependencies remain internal. " +
+                    "The [mapping](mapping.json) preserves every individual check and evidence reference. " +
+                    "The [evidence view](evidence.md) preserves selected record identities, applicability, digests, provenance and supersession references. " +
+                    (companion is null
+                        ? "No structured companion is delivered because it would require omitted historical dependencies."
+                        : "The [selected-only companion](technical/selected.evidence.json) is constructed with the existing evidence builders, not substituted for the full source bundle.")
+                : "The [input manifest](technical/input-manifest.json) retains the complete acquisition, documentation, " +
                 "source-artifact, component, render-mode and exclusion inventory. The [mapping](mapping.json) records exact " +
                 "internal requirement/evidence identities and all per-check fields; no model-authored second assessment is used.",
             "",
@@ -158,6 +201,17 @@ public static class ReaderService
         var evidenceLines = new List<string> { "# Retained evidence", "",
             "Claims, methods and original provenance below are preserved, not independently re-adjudicated. " +
             "A retained summary is not proof that all underlying outputs were retained or rerun.", "" };
+        if (profile is not null)
+        {
+            evidenceLines.AddRange([profile.Declaration, "", DocxComponentProfile.ExportNotice, "", companionNotice, "",
+                "**Internal source bundle SHA-256:** `" + ContractJson.RawDigest(revision.EvidenceBytes).Value + "`."]);
+            if (companion is not null)
+                evidenceLines.Add("**Constructed selected-only companion SHA-256:** `" +
+                    ContractJson.RawDigest(files["technical/selected.evidence.json"]).Value + "`.");
+            evidenceLines.AddRange([
+                "The original full ledgers remain internal with their unchanged digests:",
+                string.Join("\n", revision.Evidence.SourceLedgers.Select(item => "- `" + item.SourceLedgerSha256 + "`.")), ""]);
+        }
         foreach (var selection in revision.Evidence.Selection)
         {
             var record = evidence[selection.EvidenceId];
@@ -170,8 +224,27 @@ public static class ReaderService
                 "**Method:** " + Text(record.Provenance.Method),
                 "**Captured:** " + Text(record.Provenance.CapturedAtUtc),
                 "**Retention:** " + Text(record.Provenance.Retention), ""]);
-            var retained = authorizedScope is null ? Resolve(root, input, record.Provenance) : null;
-            if (authorizedScope is not null)
+            if (profile is not null)
+            {
+                evidenceLines.AddRange([
+                    "**Stable evidence ID:** `" + record.StableId + "`.",
+                    "**Applicability scope:** " + Text(record.Applicability.Scope),
+                    "**Applicability component:** " + (record.Applicability.ComponentId is null
+                        ? "`null` (no component-specific applicability)." : Text(record.Applicability.ComponentId)),
+                    "**Source ledger SHA-256:** `" + selection.SourceLedgerSha256 + "`.",
+                    "**Content digest:** `" + record.Provenance.ContentDigest.Algorithm + ":" + record.Provenance.ContentDigest.Value + "`.",
+                    "**Supersedes:** " + (record.Supersedes.Count == 0 ? "None (`[]`)." :
+                        string.Join("; ", record.Supersedes.Select(id => "`" + id + "`"))), ""]);
+                if (record.Supersedes.Count != 0)
+                    evidenceLines.Add("Supersession references identify predecessor records in the fully validated internal ledger. " +
+                        "Their payloads and transitive history are not delivered; inspecting or re-verifying that history requires the internal workspace.");
+            }
+            var retained = authorizedScope is null && profile is null ? Resolve(root, input, record.Provenance) : null;
+            if (profile is not null)
+                evidenceLines.Add(HasRetainedInput(input, record.Provenance)
+                    ? "Confirmed source bytes are retained in the internal validation workspace and deliberately omitted from this reader. No raw attachment is delivered."
+                    : "No confirmed source attachment is available for this record: declaration or observation commitment only. The reference does not imply retained or delivered raw bytes.");
+            else if (authorizedScope is not null)
                 evidenceLines.Add("Underlying source bytes are retained in the local validation inputs, not copied into this scoped partner reader. Their omission does not change the recorded claim or evidence identity.");
             else if (retained is null)
                 evidenceLines.Add("Underlying bytes not provided here: declaration or legacy observation commitment only.");
@@ -236,6 +309,9 @@ public static class ReaderService
                 authorizedScope.RejectDisclosure(Encoding.UTF8.GetString(file));
             }
         }
+        if (profile is not null)
+            foreach (var file in files)
+                profile.RejectDisclosure(file.Value, json: file.Key.EndsWith(".json", StringComparison.Ordinal));
 
         return files;
     }
@@ -273,14 +349,22 @@ public static class ReaderService
         return bytes;
     }
 
-    private static void AddTechnical(IDictionary<string, byte[]> files, RevisionArtifacts revision)
+    private static void AddTechnical(IDictionary<string, byte[]> files, RevisionArtifacts revision, bool scopedComponent)
     {
-        files["technical/input-manifest.json"] = revision.InputBytes;
+        if (!scopedComponent) files["technical/input-manifest.json"] = revision.InputBytes;
         files[$"technical/{revision.Kind}.assessment.json"] = revision.AssessmentBytes;
-        files[$"technical/{revision.Kind}.evidence.json"] = revision.EvidenceBytes;
+        if (!scopedComponent) files[$"technical/{revision.Kind}.evidence.json"] = revision.EvidenceBytes;
         files[$"technical/{revision.Kind}.report.md"] = revision.ReportBytes;
         files[$"technical/{revision.Kind}.validation.json"] = revision.ManifestBytes;
     }
+
+    private static bool HasRetainedInput(InputManifest input, EvidenceProvenance provenance) =>
+        provenance.Kind is not ("owner-declared-closed-source" or "owner-declared-unavailable") &&
+        (provenance.Kind == "package-artifact-metadata" ||
+         input.Documentation.Any(item => item.Url == provenance.Locator && item.ContentDigest == provenance.ContentDigest) ||
+         input.SourceArtifacts.Any(item => "source:" + item.SourcePath == provenance.Locator && item.ContentDigest == provenance.ContentDigest) ||
+         input.EvidenceInputs.Any(item => item.Basename == provenance.Locator && item.ContentDigest == provenance.ContentDigest) ||
+         input.OwnerInputs.Any(item => item.Basename == provenance.Locator && item.ContentDigest == provenance.ContentDigest));
 
     private static byte[]? Resolve(string root, InputManifest input, EvidenceProvenance provenance)
     {

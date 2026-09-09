@@ -3,6 +3,7 @@ using BlazorComponentReadiness.Validator.Evidence;
 using BlazorComponentReadiness.Validator.Inputs;
 using BlazorComponentReadiness.Validator.IO;
 using BlazorComponentReadiness.Validator.Rendering;
+using BlazorComponentReadiness.Validator.Validation;
 
 namespace BlazorComponentReadiness.Validator.Assessment;
 
@@ -25,8 +26,49 @@ public sealed record PackageRevisionBinding(
     ValidationManifest Manifest,
     PackageAssessmentReference Reference);
 
+public sealed class ScopedPackageContextBinding
+{
+    internal ScopedPackageContextBinding(RevisionArtifacts revision)
+    {
+        Input = revision.Input;
+        Assessment = revision.Assessment;
+        Manifest = revision.Manifest;
+        ValidationDigest = ContractJson.RawDigest(revision.ManifestBytes);
+        ValidationSize = revision.ManifestBytes.LongLength;
+    }
+
+    public InputManifest Input { get; }
+    public ReadinessAssessment Assessment { get; }
+    public ValidationManifest Manifest { get; }
+    public Sha256Digest ValidationDigest { get; }
+    public long ValidationSize { get; }
+}
+
 public static class RevisionService
 {
+    public static ScopedPackageContextBinding LoadScopedPackageContextBinding(
+        string root, string revisionDirectory, byte[]? feedbackBytes)
+    {
+        var revision = VerifyRevision(root, revisionDirectory, feedbackBytes, packageBinding: null,
+            validateChain: true);
+        var scope = AuthorizedPackageScope.Load(root, revision.Input);
+        var rubric = RubricLoader.Load();
+        var expected = rubric.CoreRequirements
+            .Where(row => row.Scope == "repository-wide" && row.Basis is { RequiresPolicyApproval: false })
+            .Select(row => row.Id).ToArray();
+        if (scope is null || revision.Kind != "package" ||
+            revision.Assessment.CompletionState != "complete" || revision.Manifest.CompletionState != "complete" ||
+            revision.Assessment.RubricVersion != rubric.RubricVersion ||
+            revision.Assessment.RubricDigest != rubric.RubricDigest ||
+            revision.Assessment.ScopeSchemaVersion != rubric.ScopeSchemaVersion ||
+            revision.Assessment.ScopeMapDigest != rubric.ScopeMapDigest ||
+            revision.Assessment.Overlays.Count != 0 ||
+            !revision.Assessment.SelectedIds.SequenceEqual(expected, StringComparer.Ordinal))
+            throw new DeterministicValidationException(
+                "Scoped package context requires a complete, verified DOCX-backed package scope and its full declared validation closure, not an ordinary package prerequisite.");
+        return new ScopedPackageContextBinding(revision);
+    }
+
     public static PackageRevisionBinding LoadPackageBinding(
         string root,
         string revisionDirectory,
@@ -67,7 +109,20 @@ public static class RevisionService
         byte[]? feedbackBytes,
         PackageRevisionBinding? packageBinding,
         bool validateChain,
-        bool allowMissingFeedback = false)
+        bool allowMissingFeedback = false,
+        ScopedPackageContextBinding? scopedPackageContext = null) =>
+        VerifyRevisionCore(root, revisionDirectory, feedbackBytes, packageBinding, validateChain,
+            allowMissingFeedback, scopedPackageContext, feedbackBytes);
+
+    private static RevisionArtifacts VerifyRevisionCore(
+        string root,
+        string revisionDirectory,
+        byte[]? feedbackBytes,
+        PackageRevisionBinding? packageBinding,
+        bool validateChain,
+        bool allowMissingFeedback,
+        ScopedPackageContextBinding? scopedPackageContext,
+        byte[]? availableFeedbackBytes)
     {
         var revision = SafePath.ResolveExistingDirectoryUnderRoot(root, revisionDirectory);
         var sequence = ParseSequence(revision);
@@ -136,7 +191,8 @@ public static class RevisionService
             input,
             inputBytes,
             evidence,
-            packageBinding);
+            packageBinding,
+            scopedPackageContext);
         if (assessment.AssessmentKind != kind || manifest.AssessmentKind != kind)
         {
             throw new DeterministicValidationException(
@@ -154,10 +210,14 @@ public static class RevisionService
         }
         else if (feedbackBytes is null)
         {
-            if (!allowMissingFeedback || AuthorizedPackageScope.IsRequested(input))
+            if (!allowMissingFeedback || AuthorizedPackageScope.IsRequested(input) ||
+                DocxComponentProfile.IsRequested(input))
             {
                 throw new DeterministicValidationException(
-                    "Revision verification requires the exact bound assessment feedback file.");
+                    DocxComponentProfile.IsRequested(input)
+                        ? $"DOCX-component revision '{Path.GetFileName(revision)}' requires its exact bound assessment feedback " +
+                            $"(SHA-256 '{manifest.FeedbackDigest.Value}'); missing or different historical feedback cannot be skipped."
+                        : "Revision verification requires the exact bound assessment feedback file.");
             }
         }
         else
@@ -181,7 +241,8 @@ public static class RevisionService
 
         if (manifest.FeedbackDigest is null || feedback is not null)
         {
-            var expectedReport = ReportService.RenderMarkdown(assessment, input, evidence, feedback, root);
+            var expectedReport = ReportService.RenderMarkdown(
+                assessment, input, evidence, feedback, root, scopedPackageContext);
             if (!reportBytes.AsSpan().SequenceEqual(expectedReport))
             {
                 throw new DeterministicValidationException(
@@ -200,7 +261,8 @@ public static class RevisionService
             manifest.PredecessorManifestDigest,
             manifest.FeedbackDigest,
             manifest.DeclaredChangedIds,
-            root);
+            root,
+            scopedPackageContext);
         ReportService.ValidateManifest(manifest, expectedManifest);
 
         if (sequence == 1)
@@ -244,13 +306,25 @@ public static class RevisionService
                 "Revision chain has a missing or skipped immediate predecessor.");
         }
 
-        var predecessor = VerifyRevision(
+        byte[]? predecessorFeedback = null;
+        if (DocxComponentProfile.IsRequested(input) && availableFeedbackBytes is not null)
+        {
+            var predecessorPath = SafePath.ResolveExistingDirectoryUnderRoot(root, predecessorDirectory);
+            var predecessorManifest = ReportService.ParseManifest(Read(
+                predecessorPath, $"{kind}.validation.json", "predecessor validation manifest"));
+            if (predecessorManifest.FeedbackDigest == ContractJson.RawDigest(availableFeedbackBytes))
+                predecessorFeedback = availableFeedbackBytes;
+        }
+
+        var predecessor = VerifyRevisionCore(
             root,
             predecessorDirectory,
-            feedbackBytes: null,
+            predecessorFeedback,
             packageBinding,
             validateChain: true,
-            allowMissingFeedback: true);
+            allowMissingFeedback: true,
+            scopedPackageContext,
+            availableFeedbackBytes);
         if (ContractJson.RawDigest(predecessor.ManifestBytes) != manifest.PredecessorManifestDigest)
         {
             throw new DeterministicValidationException(
@@ -334,10 +408,12 @@ public static class RevisionService
         {
             var before = beforeRows[id];
             var after = afterRows[id];
-            if ((before.Status != after.Status || AuthorizedPackageScope.IsRequested(predecessor.Input)) &&
+            if ((before.Status != after.Status || AuthorizedPackageScope.IsRequested(predecessor.Input) ||
+                 DocxComponentProfile.IsRequested(predecessor.Input)) &&
                 !after.EvidenceIds.Except(predecessorSelectedEvidence, StringComparer.Ordinal).Any())
             {
-                var changeKind = AuthorizedPackageScope.IsRequested(predecessor.Input) ? "Authorized-scope finding" : "Status";
+                var changeKind = AuthorizedPackageScope.IsRequested(predecessor.Input) ? "Authorized-scope finding" :
+                    DocxComponentProfile.IsRequested(predecessor.Input) ? "DOCX-scope finding" : "Status";
                 throw new DeterministicValidationException(
                     $"{changeKind} change for '{id}' requires evidence absent from the predecessor's entire selected-evidence set.");
             }

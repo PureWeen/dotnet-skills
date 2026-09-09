@@ -55,9 +55,14 @@ READINESS_TEMP="$OUTPUT/.validator-cache" \
 ```
 
 Use the equivalent `run-validator.ps1` launcher on PowerShell, with `$env:READINESS_TEMP`.
-For component revisions, pass `--package-revision` with the exact source package revision.
+For ordinary component revisions, pass `--package-revision` with the exact source package revision.
+For the explicitly selected [DOCX-only component profile](report-contract.md#docx-only-component-profile-v1),
+use `--package-context-revision` and its bound profile/context inputs instead. That relationship
+is scoped package context, not an ordinary full-package prerequisite or component evidence.
 When a revision binds feedback, pass the exact `--feedback` file and, for package feedback,
-`--package-feedback`. Paths resolve beneath `--root` even from another working directory.
+`--package-feedback` on the ordinary path. Scoped-context feedback uses
+`--package-context-feedback` and is retained for context verification, not copied into the
+component output. Paths resolve beneath `--root` even from another working directory.
 Create the output parent first. The reader cannot be placed inside or around a source revision
 lineage, overwrite an existing output, or alter the five-file source revision.
 
@@ -73,6 +78,18 @@ legacy runtime records without bound raw bytes remain explicit commitments, not 
 successes. A retained summary does not prove that its secondary outputs exist or were rerun.
 Component readers bind the package revision but do not copy its evidence into a control claim.
 Supply the separate Library and release reader alongside the control reader.
+
+The DOCX-only component reader retains all 51 existing checks and their separate results while
+grouping only for presentation. It does not export the complete internal validation set or raw
+registered inputs/attachments. Full crosswalks, historical ledgers, context-receipt payloads,
+source/package archives and raw captures remain internal; omission notices do not imply their
+bytes were delivered. Its ordinary `package_validation_sha256` field remains null.
+
+This scoped reader is not a self-contained evidence-validation bundle. Verification requiring
+omitted inputs still needs the retained internal workspace. Selected-only companions must use
+existing evidence mechanisms and correct identities/provenance; never crop and relabel an original
+ledger or weaken canonical verification to fit the export. All output surfaces, including technical
+JSON and fallback paths, remain subject to the approved disclosure rules.
 
 ## Feedback and safe handoff
 
