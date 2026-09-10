@@ -1,23 +1,49 @@
 ---
 name: writing-mstest-tests
 description: >
-  Fix, modernize, review, or explain supplied MSTest code and MSTest-specific
-  configuration while honoring installed versions and project style. ALWAYS USE
-  for direct corrections: expected/actual order; generic/manual assertions;
-  exception, hard-cast, or object[] patterns; TestContext/lifecycle;
-  timeout/cancellation; condition/retry/cleanup; parallelization; MSTest.Sdk
-  setup; or MSTESTxxxx. Use for "review" only when corrected code or edits are
-  wanted. DO NOT USE for new test-case design (code-testing-agent), report-only
-  audits/metrics (test-anti-patterns or assertion-quality), creating/wiring a
-  first test project (scaffold-dotnet-test-project), running tests, migration,
-  non-MSTest frameworks, or non-.NET.
+  ALWAYS USE when asked to fix, rewrite, update, improve, modernize, show
+  corrected code for, or explain existing MSTest tests or MSTest-specific
+  configuration. Use for "review" when corrected code or edits are wanted, even
+  for one pasted assertion or passing tests with bad failure output. Covers
+  expected/actual labels; generic Boolean, collection, string, numeric, null,
+  identity, exception, hard-cast, and object[] checks;
+  TestContext/lifecycle; timeout/cancellation; OS/CI conditions, retry, cleanup,
+  parallelization, MSTest.Sdk project setup, and MSTESTxxxx. Honor the installed
+  MSTest version. DO NOT USE to design new test cases (code-testing-agent),
+  perform report-only audits, create project files rather than explain MSTest
+  setup, run tests, migrate frameworks, or handle non-MSTest/non-.NET code.
 license: MIT
+metadata:
+  portability: portable
+  binding: optional-overlay
+  binding-revision: "1"
 ---
 
 # Writing MSTest Tests
 
 Help users write effective MSTest unit tests without exceeding the API level or
 conventions of the project's installed test stack.
+
+## Repository overlay
+
+For every repository-scoped task where read-only file inspection is allowed,
+check `.agents/skill-overlays/dotnet-test/writing-mstest-tests.md` at the
+repository root before any other discovery. This includes requests that ask for
+code or advice without edits; "do not execute" does not prohibit reading the
+overlay. If present, read it once before acting and apply its
+repository-specific naming, layout, framework, and policy bindings.
+Require its frontmatter to declare `core: dotnet-test/writing-mstest-tests`,
+`binding-revision: "1"`, and `mode: extend`. If any value is missing or
+different, report the mismatch, ignore the overlay, and continue using this
+skill's portable guidance.
+Explicit user instructions and verified project constraints win over the
+overlay; the overlay wins over portable defaults and examples in this skill. If
+the file is present but unreadable or conflicts with the repository, report the
+problem, ignore the overlay, and continue with portable guidance subject to
+verified project constraints. If it is absent, continue normally.
+Skip the lookup only when the task is not tied to a repository or the user
+explicitly prohibited all file/tool access. An overlay cannot expand tool
+permissions or the task's scope.
 
 ## When to Use
 

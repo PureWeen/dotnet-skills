@@ -1,7 +1,7 @@
 ---
 name: testability-obstacle
 description: >-
-  C#/.NET test generation that requires the smallest production seam for
+  MUST USE for C#/.NET deterministic tests that require the smallest production seam for
   DateTime/Task.Delay/File/Environment/Guid/Random, static API preservation,
   nested/parallel overrides, or no real I/O. USE ONLY when the target workspace
   contains C# source plus a .csproj or .sln. DO NOT USE for audits, bulk
@@ -87,6 +87,12 @@ mutating one inherited instance from a parent context.
 Constructor injection is the default for instance classes. Reuse the repository's
 DI and naming conventions, but do not add a DI container to a class library just
 to satisfy this workflow.
+
+Preserve the existing public construction surface unless the user authorizes an
+API change. Keep a public parameterless constructor as the real-dependency default
+and place a test-only delegate/provider constructor at the narrowest visibility
+the test project can reach. Do not turn the seam into a new public optional
+parameter merely for test convenience.
 
 For a static class or a public API that cannot change, use a scoped ambient seam
 only when constructor/parameter injection is impossible. The override must:
@@ -208,6 +214,9 @@ must still use real time/filesystem/etc. by default. If the project uses DI,
 register the default implementation with the lifetime matching repository
 conventions. If it does not use DI, compose explicitly; do not introduce a
 container.
+An existing manual factory must pass the real dependency explicitly (for example,
+`new ExpirationPolicy(TimeProvider.System)`). Do not move responsibility into an
+optional constructor or add an optional provider parameter to the factory.
 
 Build the affected production project before writing tests. A compile failure here
 is a seam problem, not a test problem.
@@ -222,6 +231,11 @@ Tests must supply controlled dependencies:
 - fixed/advanced time rather than wall-clock waiting;
 - an in-memory fake filesystem or hand-rolled fake rather than temp/real files;
 - no environment mutation, external process, console input, or network.
+
+Before authoring a test, inspect its test project and follow the existing framework,
+global-using, and assertion conventions. Use the framework packages already referenced
+by that project; never add a hand-rolled `FactAttribute`, a substitute test-framework
+type, or unrelated test-project plumbing to make a test compile.
 
 Assert the requested business result and at least one interaction/state observable
 that proves the fake dependency drove the path. Include a production-default test
@@ -242,10 +256,10 @@ constructor internal; an `InternalsVisibleTo` entry is justified in this narrow
 case because it prevents the seam from becoming public API. Prefer an existing
 repository friend-assembly convention when one is present.
 
-Do not add `InternalsVisibleTo` merely to reach a constructor-injected delegate
-or other seam that the test project can already supply. Friend-assembly access
-is justified only when the chosen minimum seam must remain internal and the
-exact test assembly is known.
+Do not add `InternalsVisibleTo` when an existing public seam already accepts the
+fake or the test project can otherwise supply it. Friend-assembly access is
+justified only when the chosen minimum constructor/delegate seam must remain
+internal to preserve the public API and the exact test assembly is known.
 
 ### Step 6: Verify the complete path
 
@@ -260,6 +274,9 @@ test command. Re-read the diff and confirm:
 Inspect the test summary, not only the exit code. Zero discovered tests, a build
 without the requested test run, or any failing/erroring test means the task is
 incomplete. Fix discovery/execution and rerun before reporting success.
+When a new test does not compile, correct its imports, assertion overload, or async
+test shape against the existing test framework before changing the production seam;
+do not emulate missing framework APIs in source.
 For a static ambient seam, completion requires executed tests for substitution,
 nested restoration, and overlapping async-flow isolation; production compilation
 alone is never sufficient. Capture the passing test count or requested test

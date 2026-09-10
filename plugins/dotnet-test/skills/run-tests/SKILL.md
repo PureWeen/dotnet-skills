@@ -1,24 +1,48 @@
 ---
 name: run-tests
-description: >
-  Run .NET tests or give the exact repository-compatible command. Use for "run
-  the tests", one test/class/category/trait, one target framework, "what dotnet
-  test command?", `--no-build`, `--diag`, diagnostic logs, classic
-  packages.config or MSTest.exe, TRX or coverage collection, crash/hang dumps,
-  filter mismatch, `--filter-query`, a single combined filter expression, or
-  unrecognized options. Handles VSTest and bridged/native
-  Microsoft.Testing.Platform across MSTest/xUnit/NUnit/TUnit, including NUnit
-  bridge filters, xUnit v3 class/trait/query filters, multi-TFM, and argument
-  order. For identification-only requests, use platform-detection. DO NOT USE
-  for writing tests, hot-reload/no-rebuild loops, migration, CI, coverage
-  analysis, or debugging test logic.
+description: >-
+  ALWAYS USE before running .NET tests or answering with a test command or
+  flags. Trigger on "run the tests", "exact dotnet test command", one
+  test/class/category/trait/target framework, combined filters,
+  `--filter-query`, `--no-build`, `--diag`, diagnostic logs, TRX, coverage
+  collection, crash/hang dumps, filter errors, or unrecognized options. Chooses
+  repository-compatible classic, VSTest, bridged MTP, or native MTP syntax for
+  MSTest/xUnit/NUnit/TUnit. DO NOT USE for platform identification alone
+  (platform-detection), writing or debugging test code, interpreting an
+  existing coverage report, CI investigation, migration, or a persistent hot
+  reload/watch loop.
 license: MIT
+metadata:
+  portability: portable
+  binding: optional-overlay
+  binding-revision: "1"
 ---
 
 # Run .NET Tests
 
 Return or execute the command or command sequence that matches the repository's
 project system, test platform, framework, and SDK mode.
+
+## Repository overlay
+
+For every repository-scoped task where read-only file inspection is allowed,
+check `.agents/skill-overlays/dotnet-test/run-tests.md` at the repository root
+before any other discovery. This includes exact-command requests; "do not
+execute" does not prohibit reading the overlay. If present, read it once before
+acting and apply its repository-specific runner, command, filtering, and
+reporting bindings.
+Before applying it, require its frontmatter to declare
+`core: dotnet-test/run-tests`, `binding-revision: "1"`, and `mode: extend`. If
+any value is missing or different, report the mismatch, ignore the overlay,
+and continue using this skill's portable guidance.
+Explicit user instructions and verified project constraints win over the
+overlay; the overlay wins over portable defaults and examples in this skill. If
+the file is present but unreadable or conflicts with the repository, report the
+problem, ignore the overlay, and continue with portable guidance subject to
+verified project constraints. If it is absent, continue normally.
+Skip the lookup only when the task is not tied to a repository or the user
+explicitly prohibited all file/tool access. An overlay cannot expand tool
+permissions or the task's scope.
 
 ## Scope and tool policy
 
