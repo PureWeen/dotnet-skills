@@ -12,8 +12,13 @@ namespace BlazorComponentReadiness.Validator.Rendering;
 
 public static class ReaderService
 {
-    public const string Version = "1.0.0";
+    public const string Version = "1.0.1";
+    public const string LegacyVersion = "1.0.0";
     internal sealed record Group(string Scope, string Area, string? Clause, string? Classification, AssessmentRow[] Rows);
+
+    internal static string RequireSupportedVersion(string version) =>
+        version is LegacyVersion or Version ? version :
+            throw new DeterministicValidationException("Unsupported reader_version.");
 
     internal static Group[] Groups(ReadinessAssessment assessment, RubricContract rubric)
     {
@@ -33,8 +38,11 @@ public static class ReaderService
     public static SortedDictionary<string, byte[]> Build(
         string root, RevisionArtifacts revision, AssessmentFeedback? feedback, byte[]? feedbackBytes,
         RevisionArtifacts? package = null,
-        ScopedPackageContextBinding? scopedPackageContext = null)
+        ScopedPackageContextBinding? scopedPackageContext = null,
+        string readerVersion = Version)
     {
+        RequireSupportedVersion(readerVersion);
+        var legacy = readerVersion == LegacyVersion;
         var input = revision.Input;
         var assessment = revision.Assessment;
         var profile = DocxComponentProfile.Load(root, input);
@@ -87,6 +95,7 @@ public static class ReaderService
         var evidenceNames = revision.Evidence.Selection.ToDictionary(item => item.EvidenceId,
             item => $"Evidence {item.DisplayOrder}", StringComparer.Ordinal);
         var companion = profile?.BuildSelectedCompanion(revision.Evidence);
+        var companionBytes = companion is null ? null : CanonicalEvidenceJson.SerializeBundle(companion);
         var companionNotice = companion is null
             ? "**Structured selected-only evidence companion: omitted.** Selected records depend on historical supersession " +
                 "ancestors that are not exported. The complete canonical bundle and dependency closure remain unchanged " +
@@ -95,10 +104,20 @@ public static class ReaderService
             : "**Structured selected-only evidence companion: included.** It was constructed and verified with the existing " +
                 "evidence builders, retains selected record identities and provenance, and has its own ledger digests. " +
                 "It is not a relabeled historical ledger or an exact copy of the full internal source bundle.";
+        if (companionBytes is not null && !legacy)
+        {
+            companionNotice = "**Structured selected-only evidence companion: included.** It was constructed and verified " +
+                "with the existing evidence builders and preserves selected record identities and provenance. " +
+                (companionBytes.AsSpan().SequenceEqual(revision.EvidenceBytes)
+                    ? "For this revision, its bytes are identical to the current internal evidence bundle. "
+                    : "For this revision, its bytes differ from the current internal evidence bundle. ") +
+                "Construction does not imply different bytes. Raw inputs and omitted historical dependencies are not delivered; " +
+                "this reader is not a self-contained validation bundle.";
+        }
         var files = new SortedDictionary<string, byte[]>(StringComparer.Ordinal);
         AddTechnical(files, revision, profile is not null);
-        if (companion is not null)
-            files["technical/selected.evidence.json"] = CanonicalEvidenceJson.SerializeBundle(companion);
+        if (companionBytes is not null)
+            files["technical/selected.evidence.json"] = companionBytes;
         if (authorizedScope is not null)
         {
             files[$"technical/{AuthorizedPackageScope.Filename}"] = authorizedScope.CopyBytes();
@@ -115,7 +134,9 @@ public static class ReaderService
         {
             "# " + Text(title), "",
             $"**Release assessed:** {Text(input.Package.PackageId)} {Text(input.Package.Version)}",
-            $"**Ownership:** {Text(assessment.AssessmentKind)}. **Completion:** {Text(assessment.CompletionState)}.",
+            $"**Ownership:** {Text(assessment.AssessmentKind)}. " +
+                (profile is not null && !legacy ? "**Check accounting:** " : "**Completion:** ") +
+                $"{Text(assessment.CompletionState)}.",
             $"**Source:** {Text(input.Source.Availability)}; {Text(input.Source.RepositoryUri)}; {Text(input.Source.Commit)}.", "",
             $"**Source mapping:** {Text(input.Source.Mapping)}; confidence: {Text(input.Source.Confidence)}.", "",
             "PARTNER PREVIEW: a deterministic projection of retained assessment facts, not a new execution, certification or promotion decision. " +
@@ -133,7 +154,12 @@ public static class ReaderService
             lines.AddRange([authorizedScope.Declaration, ""]);
         }
         if (profile is not null)
+        {
+            if (!legacy)
+                lines.AddRange(["Check accounting describes whether selected checks have dispositions. It does not establish " +
+                    "completed testing, complete evidence coverage, readiness or approval.", ""]);
             lines.AddRange([profile.Declaration, "", DocxComponentProfile.ExportNotice, "", companionNotice, ""]);
+        }
 
         if (package is not null)
             lines.Add("Package-wide findings remain in the separately delivered Library and release reader. " +
@@ -209,7 +235,10 @@ public static class ReaderService
                 evidenceLines.Add("**Constructed selected-only companion SHA-256:** `" +
                     ContractJson.RawDigest(files["technical/selected.evidence.json"]).Value + "`.");
             evidenceLines.AddRange([
-                "The original full ledgers remain internal with their unchanged digests:",
+                legacy
+                    ? "The original full ledgers remain internal with their unchanged digests:"
+                    : "Source ledger artifacts remain retained internally. Any included companion contains their selected record " +
+                        "payloads and may contain complete current ledger payloads when all records are selected. Source ledger digests:",
                 string.Join("\n", revision.Evidence.SourceLedgers.Select(item => "- `" + item.SourceLedgerSha256 + "`.")), ""]);
         }
         foreach (var selection in revision.Evidence.Selection)
@@ -267,7 +296,7 @@ public static class ReaderService
             var sourceRows = assessmentJson.RootElement.GetProperty("rows").EnumerateArray()
                 .ToDictionary(item => item.GetProperty("id").GetString()!, StringComparer.Ordinal);
             writer.WriteStartObject();
-            writer.WriteString("reader_version", Version);
+            writer.WriteString("reader_version", readerVersion);
             writer.WritePropertyName("groups");
             writer.WriteStartArray();
             foreach (var group in groups)
@@ -292,7 +321,7 @@ public static class ReaderService
         files["reader.validation.json"] = StrictJson.SerializeCanonical(writer =>
         {
             writer.WriteStartObject();
-            writer.WriteString("reader_version", Version);
+            writer.WriteString("reader_version", readerVersion);
             writer.WriteString("source_validation_sha256", ContractJson.RawDigest(revision.ManifestBytes).Value);
             writer.WriteString("rubric_sha256", rubric.RubricDigest.Value);
             writer.WriteString("package_validation_sha256", package is null ? null : ContractJson.RawDigest(package.ManifestBytes).Value);

@@ -22,6 +22,7 @@ public static class ReaderCommand
                 Paths resolve beneath --root, independently of the current working directory.
                 The output must be outside all source revision lineages. Verification recomputes
                 every byte from the verified source, rubric, feedback and retained evidence.
+                Render uses reader 1.0.1; verify regenerates the declared 1.0.0 or 1.0.1 version.
                 This local preview is not publication or permission to share private inputs.
                 DOCX-component V1 requires --package-context-revision <directory> instead of
                 --package-revision; context feedback uses --package-context-feedback <file>.
@@ -41,6 +42,21 @@ public static class ReaderCommand
         var feedback = Snapshot(root, options.Optional("--feedback"));
         var packageFeedback = Snapshot(root, options.Optional("--package-feedback"));
         var contextFeedback = Snapshot(root, options.Optional("--package-context-feedback"));
+        var existingReaderManifest = args[0] == "verify"
+            ? ImmutableInputSnapshot.Capture(
+                SafePath.ResolveUnderRoot(outputPath, "reader.validation.json", true, true),
+                "reader validation manifest")
+            : null;
+        var readerVersion = ReaderService.Version;
+        if (existingReaderManifest is not null)
+        {
+            using var manifest = StrictJson.Parse(existingReaderManifest.Bytes,
+                ResourceLimits.SerializedArtifactBytes, "reader validation manifest");
+            ContractJson.RequireProperties(manifest.RootElement, "reader_version", "source_validation_sha256",
+                "rubric_sha256", "package_validation_sha256", "files");
+            readerVersion = ReaderService.RequireSupportedVersion(
+                ContractJson.String(manifest.RootElement, "reader_version"));
+        }
         RejectOverlap(outputPath, Path.GetDirectoryName(revisionPath)!);
         if (packagePath is not null) RejectOverlap(outputPath, Path.GetDirectoryName(packagePath)!);
         if (contextPath is not null) RejectOverlap(outputPath, Path.GetDirectoryName(contextPath)!);
@@ -55,6 +71,7 @@ public static class ReaderCommand
 
         SortedDictionary<string, byte[]> Generate()
         {
+            existingReaderManifest?.EnsureUnchanged();
             feedback?.EnsureUnchanged();
             packageFeedback?.EnsureUnchanged();
             contextFeedback?.EnsureUnchanged();
@@ -67,7 +84,7 @@ public static class ReaderCommand
                 validateChain: true, scopedPackageContext: bindings.Context);
             var parsedFeedback = feedback is null ? null :
                 FeedbackService.Parse(feedback.Bytes, source.Assessment, package?.Assessment.SelectedIds);
-            return ReaderService.Build(root, source, parsedFeedback, feedback?.Bytes, package, bindings.Context);
+            return ReaderService.Build(root, source, parsedFeedback, feedback?.Bytes, package, bindings.Context, readerVersion);
         }
 
         var files = Generate();
