@@ -511,6 +511,45 @@ internal static class WorkflowTests
 
         var runtime = File.ReadAllText(Path.Combine(referencesRoot, "area-blazor-runtime.md"));
         AssertContains(runtime, "event handlers, callbacks, conditional branches", "BEQ-09 assignment coverage");
+        var renderModeDecision = Regex.Match(
+            runtime, @"(?ms)^For documentation requirements,.*?(?=^For a `BEQ-05`)").Value;
+        AssertContains(renderModeDecision,
+            "For current `2.0.0` `BEQ-03`, require supported-mode documentation **and** a clear " +
+            "compile-time **or** runtime error for an applicable unsupported-mode diagnostic.",
+            "current render-mode documentation-and-error conjunction");
+        AssertContains(renderModeDecision, "Documentation alone does not discharge the error obligation",
+            "render-mode documentation-only safeguard");
+        AssertContains(renderModeDecision, "an error alone does not discharge documentation",
+            "render-mode error-only safeguard");
+        AssertContains(renderModeDecision, "A directly established missing required conjunct is a `gap`.",
+            "render-mode direct missing-conjunct gap");
+        AssertContains(renderModeDecision,
+            "A blocked or unperformed applicable diagnostic with no direct conflict stays `not tested`, " +
+            "not an inferred pass or absence gap.",
+            "render-mode blocked diagnostic boundary");
+        AssertContains(renderModeDecision,
+            "Clause 4.2 retains the alternative of all modes working correctly versus a documented supported set " +
+            "with clear errors elsewhere.",
+            "render-mode coverage alternatives");
+        AssertContains(renderModeDecision,
+            "Do not invent an unsupported configuration or require support for an unsupported mode.",
+            "render-mode unsupported configuration boundary");
+        AssertContains(renderModeDecision,
+            "Valid prerendering for supported interactive modes is not an unsupported-mode diagnostic.",
+            "render-mode supported prerendering boundary");
+        AssertContains(renderModeDecision,
+            "Keep `BEQ-02` and `BEQ-04` independent; prerendering must not throw.",
+            "render-mode independent documentation and prerendering rows");
+        AssertContains(renderModeDecision,
+            "Only for explicitly selected legacy reproduction under the existing `SKILL.md` route, " +
+            "apply frozen `1.3.0` `BEQ-03`: \"Unsupported modes fail safely or are clearly documented.\"",
+            "render-mode explicitly gated legacy alternative");
+        AssertContains(renderModeDecision, "Do not select legacy to bypass a current requirement.",
+            "render-mode current scope cannot select legacy");
+        AssertContains(renderModeDecision,
+            "For genuinely disjunctive requirements, do not call a gap until every remaining applicable " +
+            "alternative is directly contradicted.",
+            "render-mode decision preserves genuine disjunctions");
 
         var performance = File.ReadAllText(Path.Combine(referencesRoot, "area-trim-performance.md"));
         AssertContains(performance, "no repeated identity surface", "PERF-02 applicability boundary");

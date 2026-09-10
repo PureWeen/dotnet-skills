@@ -81,9 +81,24 @@ Keep non-dynamic callback/cleanup source proof fail-closed until a separate prot
 reconciles without the lifecycle matrix.
 
 For documentation requirements, direct absence from the confirmed complete public corpus is a
-`gap`. For disjunctive requirements such as safe failure **or** documentation, do not call a gap
-until every remaining applicable alternative is directly contradicted. Conditional render-mode
-rows are `not applicable` when that mode is not a confirmed support claim.
+`gap`. For genuinely disjunctive requirements, do not call a gap until every remaining applicable
+alternative is directly contradicted. Conditional render-mode rows are `not applicable` when that
+mode is not a confirmed support claim.
+
+For current `2.0.0` `BEQ-03`, require supported-mode documentation **and** a clear compile-time
+**or** runtime error for an applicable unsupported-mode diagnostic. Documentation alone does not
+discharge the error obligation; an error alone does not discharge documentation. A directly
+established missing required conjunct is a `gap`. A blocked or unperformed applicable diagnostic
+with no direct conflict stays `not tested`, not an inferred pass or absence gap.
+
+Clause 4.2 retains the alternative of all modes working correctly versus a documented supported set
+with clear errors elsewhere. Do not invent an unsupported configuration or require support for an
+unsupported mode. Valid prerendering for supported interactive modes is not an unsupported-mode
+diagnostic. Keep `BEQ-02` and `BEQ-04` independent; prerendering must not throw.
+
+Only for explicitly selected legacy reproduction under the existing `SKILL.md` route, apply frozen
+`1.3.0` `BEQ-03`: "Unsupported modes fail safely or are clearly documented." Do not select legacy
+to bypass a current requirement.
 
 For a `BEQ-05` direct documentation-absence gap, use `public-absence-v1` bound to a
 `public-document-corpus` input.
