@@ -73,6 +73,14 @@ files from the verified source revision, pinned rubric, feedback and local evide
 every byte and the complete file inventory. Moving the directory as a unit preserves its links.
 Re-verification still needs the source input root and revision; it is not an offline certification.
 
+New renders use reader version `1.0.1`. Verification snapshots the existing reader manifest,
+validates its exact fields under the serialized-artifact byte limit, and requires the snapshot
+to remain unchanged while regenerating either `1.0.0` or `1.0.1` in the same renderer. Both
+the mapping and reader manifest carry that version. Missing, malformed, duplicate or unknown
+versions are rejected; choosing a supported version does not bypass exact inventory, byte,
+source, scope or disclosure checks. Existing `1.0.0` readers keep their original bytes and
+presentation wording; verification does not upgrade or rewrite them.
+
 Evidence links identify **local retained artifacts**, not hosted evidence. Declaration-only and
 legacy runtime records without bound raw bytes remain explicit commitments, not missing-file
 successes. A retained summary does not prove that its secondary outputs exist or were rerun.
@@ -84,12 +92,23 @@ grouping only for presentation. It does not export the complete internal validat
 registered inputs/attachments. Full crosswalks, historical ledgers, context-receipt payloads,
 source/package archives and raw captures remain internal; omission notices do not imply their
 bytes were delivered. Its ordinary `package_validation_sha256` field remains null.
+In `1.0.1`, its header labels completion as **check accounting** for those
+51 checks, not completed testing, complete evidence coverage, readiness or approval. Mixed results,
+missing evidence, per-check qualifications and canonical technical files remain unchanged.
 
 This scoped reader is not a self-contained evidence-validation bundle. Verification requiring
 omitted inputs still needs the retained internal workspace. Selected-only companions must use
 existing evidence mechanisms and correct identities/provenance; never crop and relabel an original
 ledger or weaken canonical verification to fit the export. All output surfaces, including technical
 JSON and fallback paths, remain subject to the approved disclosure rules.
+
+An included companion delivers the selected current record payloads. Construction need not
+change bytes: when all source records are selected and the reconstructed bundle is byte-identical,
+the constructed and source bundle SHA-256 values are equal. Otherwise the reader explicitly
+identifies a different selected-only bundle and omitted unselected source records. Neither case
+delivers raw dependencies outside those payloads. If selected records require omitted supersession
+ancestors, the structured companion is omitted instead; the evidence view still preserves selected
+identities, provenance and supersession references without claiming to deliver the historical payloads.
 
 ## Feedback and safe handoff
 
@@ -104,6 +123,13 @@ Only an explicitly supplied, contract-valid snapshot belongs in `--feedback`; do
 convert a private conversation or tracker export into public reader content. Bound feedback is
 shown as escaped literal commentary and its exact bytes retained. It is not evidence and cannot
 waive or change a canonical result.
+
+An identified source may return no feedback items. Preserve its original bytes and retrieval
+state separately; the strict contract permits a header-only table with zero data rows to
+represent that empty result. Do not manufacture commentary or turn the prior assessment into
+feedback. Supply the exact empty snapshot when recording this state, rather than using the
+no-source branch to imply that no source was searched. This binds feedback bytes and retains
+the same revision/correction requirements as other bound feedback.
 
 The reader refuses input manifests or embedded ledgers labeled internal evidence. Keep the
 canonical local report and resolve sharing permissions separately; never relabel internal

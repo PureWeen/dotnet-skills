@@ -305,11 +305,98 @@ internal static class DocxComponentTests
         Assert(canonical.Contains(ContractJson.RawDigest(File.ReadAllBytes(Path.Combine(fixture.Root, ContextName))).Value,
             StringComparison.Ordinal), "separate exact context receipt digest disclosed");
         CheckReader(fixture);
+        CheckCompanionNotice(fixture.Reader, "included", equal: true);
+        Assert(File.ReadAllBytes(Path.Combine(fixture.Reader, "technical", "selected.evidence.json"))
+            .SequenceEqual(CanonicalEvidenceJson.SerializeBundle(fixture.Evidence)),
+            "all-selected reconstruction preserves exact bundle bytes and therefore equal SHA-256 values");
+        TestLegacyReaders(fixture);
     }
+
+    private static void TestLegacyReaders(Fixture fixture)
+    {
+        var context = RevisionService.LoadScopedPackageContextBinding(fixture.Root, fixture.ContextRevision, null);
+        var component = RevisionService.VerifyRevision(fixture.Root, fixture.Revision, null, null,
+            validateChain: true, scopedPackageContext: context);
+        var package = RevisionService.VerifyRevision(fixture.Root, fixture.ContextRevision, null, null, validateChain: true);
+        // Pinned from the unmodified 1.0.0 renderer over these fixtures, including every file's bytes and inventory.
+        foreach (var (source, binding, golden) in new[]
+        {
+            (component, (ScopedPackageContextBinding?)context, "b413f886782634dcf0bb836d273fc18bb5db1d4375267047f1fbac1cd861114f"),
+            (package, (ScopedPackageContextBinding?)null, "223f58d896991e4224d4ca2829571f08d40c1aa2a313f5458eb54c1571fc1ace")
+        })
+        {
+            var reader = NewPath(fixture, "reader-v1-" + source.Kind);
+            var files = ReaderService.Build(fixture.Root, source, null, null,
+                scopedPackageContext: binding, readerVersion: "1.0.0");
+            foreach (var (name, bytes) in files)
+            {
+                var path = Path.Combine(reader, name);
+                Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+                File.WriteAllBytes(path, bytes);
+            }
+            Assert(ReaderTreeDigest(reader) == golden, "1.0.0 component and 48-row package bytes match the original renderer");
+            string[] args = ["reader", "verify", "--root", fixture.Root, "--revision", source.Directory, "--output", reader,
+                .. (binding is null ? Array.Empty<string>() : ContextOptions(fixture))];
+            Cli(args, 0, "legacy reader uses the same strict current canonical source verification");
+            Assert(ReaderTreeDigest(reader) == golden, "verification does not rewrite legacy readers");
+            var manifestPath = Path.Combine(reader, "reader.validation.json");
+            var changedVersion = Encoding.UTF8.GetBytes(File.ReadAllText(manifestPath)
+                .Replace("\"reader_version\":\"1.0.0\"", "\"reader_version\":\"1.0.1\"", StringComparison.Ordinal));
+            MutateFile(manifestPath, changedVersion, () => Cli(args, 1, "changing a supported version cannot relabel legacy bytes"));
+            var reportPath = Path.Combine(reader, "report.md");
+            MutateFile(reportPath, [.. File.ReadAllBytes(reportPath), (byte)'!'],
+                () => Cli(args, 1, "legacy reports remain byte-verified"));
+            if (source.Kind == "component")
+            {
+                foreach (var name in new[] { "component.assessment.json", "component.report.md", "component.validation.json", "selected.evidence.json" })
+                    Assert(files["technical/" + name].SequenceEqual(File.ReadAllBytes(Path.Combine(fixture.Reader, "technical", name))),
+                        "corrected presentation preserves canonical technical and selected evidence bytes: " + name);
+            }
+        }
+    }
+
+    private static void CheckCompanionNotice(string reader, string disposition, bool? equal = null)
+    {
+        foreach (var name in new[] { "report.md", "evidence.md" })
+        {
+            var text = File.ReadAllText(Path.Combine(reader, name));
+            Assert(text.Contains("**Structured selected-only evidence companion: " + disposition + ".**", StringComparison.Ordinal),
+                "explicit companion disposition in " + name);
+            Assert(!text.Contains("not a relabeled historical ledger or an exact copy", StringComparison.Ordinal) &&
+                !text.Contains("The original full ledgers remain internal", StringComparison.Ordinal),
+                "included selected payloads are not mislabeled as absent or necessarily different");
+            if (equal is not null)
+                Assert(text.Contains(equal.Value
+                        ? "For this revision, its bytes are identical to the current internal evidence bundle."
+                        : "For this revision, its bytes differ from the current internal evidence bundle.", StringComparison.Ordinal) &&
+                    text.Contains("preserves selected record identities and provenance", StringComparison.Ordinal) &&
+                    text.Contains("Raw inputs and omitted historical dependencies are not delivered", StringComparison.Ordinal),
+                    "accurate selected-payload and raw-dependency boundaries in " + name);
+            else
+                Assert(!text.Contains("For this revision, its bytes are identical", StringComparison.Ordinal) &&
+                    !text.Contains("For this revision, its bytes differ", StringComparison.Ordinal),
+                    "omission does not compare a nonexistent companion in " + name);
+        }
+    }
+
+    private static string ReaderTreeDigest(string directory) =>
+        ContractJson.RawDigest(StrictJson.SerializeCanonical(writer =>
+        {
+            writer.WriteStartObject();
+            foreach (var path in Directory.GetFiles(directory, "*", SearchOption.AllDirectories)
+                .OrderBy(path => Path.GetRelativePath(directory, path).Replace('\\', '/'), StringComparer.Ordinal))
+                writer.WriteString(Path.GetRelativePath(directory, path).Replace('\\', '/'),
+                    ContractJson.RawDigest(File.ReadAllBytes(path)).Value);
+            writer.WriteEndObject();
+        })).Value;
 
     private static void CheckReader(Fixture fixture)
     {
         using var mapping = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(fixture.Reader, "mapping.json")));
+        using var receipt = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(fixture.Reader, "reader.validation.json")));
+        Assert(mapping.RootElement.GetProperty("reader_version").GetString() == "1.0.1" &&
+            receipt.RootElement.GetProperty("reader_version").GetString() == "1.0.1",
+            "DOCX mapping and receipt agree on corrected reader version");
         using var canonical = JsonDocument.Parse(AssessmentService.Serialize(fixture.Assessment));
         var originals = canonical.RootElement.GetProperty("rows").EnumerateArray()
             .ToDictionary(row => row.GetProperty("id").GetString()!);
@@ -325,6 +412,13 @@ internal static class DocxComponentTests
         Assert(groups.Any(group => group.GetProperty("checks").EnumerateArray()
             .Select(row => row.GetProperty("status").GetString()).Distinct().Count() > 1), "mixed grouped statuses retained");
         var report = File.ReadAllText(Path.Combine(fixture.Reader, "report.md"));
+        Assert(report.Contains("**Check accounting:** complete.", StringComparison.Ordinal) &&
+            report.Contains("It does not establish completed testing, complete evidence coverage, readiness or approval.", StringComparison.Ordinal) &&
+            !report.Contains("**Completion:**", StringComparison.Ordinal),
+            "completion header describes 51-check accounting, not behavior, evidence completeness or readiness");
+        Assert(File.ReadAllText(Path.Combine(fixture.Reader, "evidence.md"))
+            .Contains("complete current ledger payloads when all records are selected", StringComparison.Ordinal),
+            "selected payloads and internally retained ledger artifacts remain distinct");
         Assert(report.Contains("Mixed results.", StringComparison.Ordinal) &&
             report.Contains("runtime remains untested", StringComparison.Ordinal) &&
             report.Contains("evidence is explicitly missing", StringComparison.Ordinal), "mixed results and qualifications visible");
@@ -839,6 +933,7 @@ internal static class DocxComponentTests
                 "selected-only companion preserves selected identities and every evidence edge");
             Assert(companion.SourceLedgers.Single().SourceLedgerSha256 != expanded.SourceLedgers.Single().SourceLedgerSha256,
                 "constructed companion has its own digest, not a relabeled historical ledger");
+            CheckCompanionNotice(reader, "included", equal: false);
             var originalRecords = historical.Records.ToDictionary(record => record.StableId);
             foreach (var record in companion.SourceLedgers.SelectMany(item => item.Ledger.Records))
             {
@@ -916,6 +1011,7 @@ internal static class DocxComponentTests
     private static void CheckSupersessionProjection(
         Fixture fixture, string reader, string source, ReadinessAssessment assessment, EvidenceBundle evidence)
     {
+        CheckCompanionNotice(reader, "omitted");
         var expectedFiles = Directory.GetFiles(fixture.Reader, "*", SearchOption.AllDirectories)
             .Select(path => Path.GetRelativePath(fixture.Reader, path)).ToHashSet(StringComparer.Ordinal);
         Assert(expectedFiles.Remove(Path.Combine("technical", "selected.evidence.json")),

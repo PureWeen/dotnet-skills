@@ -44,6 +44,8 @@ internal static class ReaderTests
             RunReader(root, component, "control-reader", package, feedbackPath, expected: 0);
             CheckProjection(root, package, "package-reader", expectedRows: 60);
             CheckProjection(root, component, "control-reader", expectedRows: 61);
+            TestReaderVersions(root, package);
+            TestEmptyFeedback(root, input, inputBytes);
             var report = File.ReadAllText(Path.Combine(root, "control-reader/report.md"));
             Assert(report.Contains("&lt;script&gt;") && !report.Contains("<script>"), "feedback HTML is literal");
             Assert(report.Contains("&#91;click&#93;") && !report.Contains("[click]("), "feedback links do not become active");
@@ -186,6 +188,10 @@ internal static class ReaderTests
     {
         var output = Path.Combine(root, destination);
         using var mapping = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(output, "mapping.json")));
+        using var manifest = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(output, "reader.validation.json")));
+        Assert(mapping.RootElement.GetProperty("reader_version").GetString() == ReaderService.Version &&
+            manifest.RootElement.GetProperty("reader_version").GetString() == ReaderService.Version &&
+            ReaderService.Version == "1.0.1", "render defaults to matching corrected versions");
         var mapped = mapping.RootElement.GetProperty("groups").EnumerateArray()
             .SelectMany(group => group.GetProperty("checks").EnumerateArray()).ToArray();
         using var canonical = JsonDocument.Parse(source.AssessmentBytes);
@@ -224,6 +230,98 @@ internal static class ReaderTests
             "canonical raw bytes unchanged in technical companion");
         Assert(File.ReadAllBytes(Path.Combine(source.Directory, source.Kind + ".assessment.json")).SequenceEqual(source.AssessmentBytes),
             "source canonical JSON untouched");
+    }
+
+    private static void TestReaderVersions(string root, RevisionArtifacts source)
+    {
+        const string legacyVersion = "1.0.0";
+        var legacyFiles = ReaderService.Build(root, source, null, null, readerVersion: legacyVersion);
+        var destination = "reader-v1";
+        foreach (var (name, bytes) in legacyFiles)
+        {
+            var path = Path.Combine(root, destination, name);
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            File.WriteAllBytes(path, bytes);
+        }
+        RunReader(root, source, destination, operation: "verify");
+        foreach (var directory in new[] { destination, "package-reader" })
+        {
+            var manifestPath = Path.Combine(root, directory, "reader.validation.json");
+            var original = File.ReadAllBytes(manifestPath);
+            var version = directory == destination ? legacyVersion : ReaderService.Version;
+            var otherVersion = version == legacyVersion ? ReaderService.Version : legacyVersion;
+            var manifest = Encoding.UTF8.GetString(original);
+            var field = $"\"reader_version\":\"{version}\"";
+            foreach (var changed in new[]
+            {
+                manifest.Replace(field + ",", ""),
+                manifest.Replace(field, "\"reader_version\":null"),
+                manifest.Replace(field, "\"reader_version\":101"),
+                manifest.Replace(field, "\"reader_version\":{}"),
+                manifest.Replace(field, "\"reader_version\":\"\""),
+                manifest.Replace(field, "\"reader_version\":\"1.0\""),
+                manifest.Replace(field, "\"reader_version\":\"1.0.2\""),
+                manifest.Replace(field, $"\"reader_version\":\" {version}\""),
+                manifest.Replace(field, $"\"reader_version\":\"{otherVersion}\""),
+                manifest.Replace(field, field + "," + field),
+                manifest.Replace(field, field + ",\"unexpected\":true"),
+                "[]", "{"
+            })
+            {
+                File.WriteAllText(manifestPath, changed);
+                RunReader(root, source, directory, expected: 1, operation: "verify");
+            }
+            File.WriteAllBytes(manifestPath, original);
+            using (var oversized = new FileStream(manifestPath, FileMode.Create, FileAccess.Write))
+                oversized.SetLength(ResourceLimits.SerializedArtifactBytes + 1L);
+            RunReader(root, source, directory, expected: 1, operation: "verify");
+            File.WriteAllBytes(manifestPath, original);
+            var mappingPath = Path.Combine(root, directory, "mapping.json");
+            var mapping = File.ReadAllBytes(mappingPath);
+            File.WriteAllText(mappingPath, Encoding.UTF8.GetString(mapping)
+                .Replace(field, $"\"reader_version\":\"{otherVersion}\""));
+            RunReader(root, source, directory, expected: 1, operation: "verify");
+            File.WriteAllBytes(mappingPath, mapping);
+            var reportPath = Path.Combine(root, directory, "report.md");
+            var report = File.ReadAllBytes(reportPath);
+            File.AppendAllText(reportPath, "tamper");
+            RunReader(root, source, directory, expected: 1, operation: "verify");
+            File.WriteAllBytes(reportPath, report);
+            var extra = Path.Combine(root, directory, "unexpected");
+            Directory.CreateDirectory(extra);
+            RunReader(root, source, directory, expected: 1, operation: "verify");
+            Directory.Delete(extra);
+            File.Delete(manifestPath);
+            File.CreateSymbolicLink(manifestPath, Path.Combine(root, "package-reader-copy", "reader.validation.json"));
+            RunReader(root, source, directory, expected: 1, operation: "verify");
+            File.Delete(manifestPath);
+            File.WriteAllBytes(manifestPath, original);
+            RunReader(root, source, directory, operation: "verify");
+        }
+        foreach (var invalid in new string?[] { null, "", "1.0", "1.0.2" })
+        {
+            try
+            {
+                _ = ReaderService.Build(root, source, null, null, readerVersion: invalid!);
+                throw new InvalidOperationException("Unsupported direct renderer version must fail.");
+            }
+            catch (DeterministicValidationException) { }
+        }
+    }
+
+    private static void TestEmptyFeedback(string root, InputManifest input, byte[] inputBytes)
+    {
+        var feedbackPath = Path.Combine(root, "empty-feedback.md");
+        var bytes = Encoding.UTF8.GetBytes("# Assessment feedback\n\n| Requirement IDs | Feedback |\n|---|---|\n");
+        File.WriteAllBytes(feedbackPath, bytes);
+        var source = Create(root, input, inputBytes, "package", "2.0.0", "empty-feedback-source", null, feedbackPath);
+        RunReader(root, source, "empty-feedback-reader", feedback: feedbackPath);
+        RunReader(root, source, "empty-feedback-reader", feedback: feedbackPath, operation: "verify");
+        var report = File.ReadAllText(Path.Combine(root, "empty-feedback-reader", "report.md"));
+        Assert(!report.Contains("No tracker or feedback source was searched.", StringComparison.Ordinal),
+            "an explicitly supplied empty feedback result is not represented as an unsearched source");
+        Assert(File.ReadAllBytes(Path.Combine(root, "empty-feedback-reader", "technical", "feedback.txt"))
+            .SequenceEqual(bytes), "empty feedback retains its exact original bytes");
     }
 
     private static void TestMutations(string root, RevisionArtifacts package, RevisionArtifacts component, string feedbackPath, byte[] feedback)
