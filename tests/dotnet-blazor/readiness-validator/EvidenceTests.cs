@@ -20,6 +20,7 @@ internal static class EvidenceTests
 
     public static void Run(string repositoryRoot, string pluginRoot)
     {
+        EvidenceHandoffTests.Run(repositoryRoot, pluginRoot);
         TestKnownAnswersAndCanonicalBytes();
         TestCliCommandSurface();
         TestEvidenceDraftProducer(repositoryRoot);
@@ -240,7 +241,10 @@ internal static class EvidenceTests
                 CliApplication.Run(arguments, new StringWriter(), new StringWriter()),
                 "evidence draft producer exit");
             var firstBytes = File.ReadAllBytes(outputPath);
-            _ = CanonicalEvidenceJson.ParseDraftDocument(firstBytes);
+            AssertEqual(
+                "2026-09-07T18:00:00Z",
+                CanonicalEvidenceJson.ParseDraftDocument(firstBytes).Records.Single().Provenance.CapturedAtUtc,
+                "explicit historical capture instant is preserved, not replaced by the current clock");
             var secondPath = Path.Combine(root, "draft-02.json");
             arguments[3] = secondPath;
             AssertEqual(
@@ -513,7 +517,9 @@ internal static class EvidenceTests
             {
                 ("bad-locator.json", 11, "source:../unsafe"),
                 ("bad-scope.json", 7, "not-a-scope"),
-                ("bad-time.json", 15, "not-a-timestamp")
+                ("bad-time.json", 15, "not-a-timestamp"),
+                ("offset-time.json", 15, "2026-09-07T18:00:00+00:00"),
+                ("fractional-time.json", 15, "2026-09-07T18:00:00.000Z")
             };
             foreach (var (fileName, index, value) in metadataCases)
             {

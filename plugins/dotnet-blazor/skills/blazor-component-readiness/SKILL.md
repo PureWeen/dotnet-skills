@@ -189,15 +189,25 @@ owner evidence. Lower-ranked evidence cannot override contradictory higher-ranke
 Build immutable ledgers, bind every input to confirmed locators and digests, keep component
 evidence isolated, and apply the status/protocol boundaries in the linked area playbooks.
 Use `evidence draft-add` for ordinary typed draft authoring; it computes bounded
-content digests and does not validate evidence or readiness.
+content digests and does not validate readiness. For registered reviewer-generated analysis,
+use its `--root --manifest --evidence-input` mode to derive the registered basename and digest
+together, not a producer label or hand-authored locator.
 Failed retrieval remains `unresolved`; owner declarations do not replace unrelated proof.
 Unapproved extensions are not DOCX defects; package-owned `SEC-01` through `SEC-03` use one shared
 library security packet.
 
-Initialize the assessment before building ledgers. Use `assessment export-identity`,
+When authorized collection produces a derived result, preserve its pre-output manifest and
+result. Append only that authorized result to new candidates, discover a new draft and explicitly
+confirm the new manifest. Confirmation is a separate command, never implicit in evidence
+construction; this step does not authorize unrelated input additions.
+Initialize the assessment from the final confirmed manifest before building ledgers. Use `assessment export-identity`,
 `evidence ledger-build`, `evidence ledger-validate`, and `evidence bundle` in the
 [canonical identity and ledger sequence](references/input-candidates.md).
-Never hand-author or reformat canonical identity/subject bytes.
+Completed handoffs require `evidence bundle --root <output> --manifest <final-confirmed-input>`;
+structural-only bundling does not accept input linkage. Rebuild downstream artifacts through
+the producers after input changes; never hand-author canonical identity/subject bytes or force
+EV1 changes. An explicitly authorized identity-only handoff may retain unscored rows and must
+not be presented as a scored assessment or report.
 
 Read the applicable area playbooks while collecting evidence:
 [security/privacy](references/area-security-privacy.md),
@@ -329,7 +339,8 @@ coverage surface. This gate does not add requirements to ordinary readiness runs
 Run automatically; do not report completion until all applicable checks pass:
 
 1. `inputs validate` for every confirmed input.
-2. `evidence ledger-validate` for every ledger and rebuild/validate the selected bundle.
+2. `evidence ledger-validate` for every ledger and rebuild the selected bundle in input-bound
+   `--root --manifest` mode against the final confirmed input. Structural-only success is insufficient.
 3. `assessment validate` and `report verify` for every current revision.
 4. For split mode, verify every component binds the exact validated package revision.
 5. For library mode, `library reconcile`, `library validate`, and `library index`; require all

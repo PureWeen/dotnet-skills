@@ -119,6 +119,46 @@ public static class AssessmentService
         return assessment;
     }
 
+    public static void ValidateInputIdentity(
+        ExactAssessmentIdentity identity,
+        InputManifest input,
+        ReadOnlySpan<byte> inputBytes)
+    {
+        EvidenceIdentity.ValidateAssessment(identity);
+        if (input.State != "confirmed")
+        {
+            throw new DeterministicValidationException("A draft input manifest cannot be used for assessment.");
+        }
+
+        var expectedInputDigest = InputManifestService.Digest(inputBytes);
+        var expectedPackage = new EvidencePackageIdentity(
+            input.Package.PackageId,
+            input.Package.Version,
+            input.Package.NupkgDigest);
+        if (identity.InputManifestDigest != expectedInputDigest ||
+            identity.Package != expectedPackage)
+        {
+            throw new DeterministicValidationException(
+                "Assessment identity must match the confirmed input-manifest digest and package identity exactly. " +
+                "Initialize/export identity from the final confirmed manifest and rebuild downstream ledgers and bundle.");
+        }
+
+        if (identity.AssessmentKind is "unified" or "component")
+        {
+            if (identity.ComponentId is null ||
+                !input.Components.Any(component => component.Id == identity.ComponentId))
+            {
+                throw new DeterministicValidationException(
+                    "Assessment component must be present in the confirmed input manifest.");
+            }
+        }
+
+        if (identity.AssessmentKind == "package" && identity.ComponentId is not null)
+        {
+            throw new DeterministicValidationException("Package assessments cannot identify a component.");
+        }
+    }
+
     public static void Validate(
         string root,
         ReadinessAssessment assessment,
@@ -136,39 +176,13 @@ public static class AssessmentService
             throw new DeterministicValidationException("Assessment schema or kind is invalid.");
         }
 
-        EvidenceIdentity.ValidateAssessment(assessment.Identity);
-        if (input.State != "confirmed")
-        {
-            throw new DeterministicValidationException("A draft input manifest cannot be used for assessment.");
-        }
-
-        var expectedInputDigest = InputManifestService.Digest(inputBytes);
-        var expectedPackage = new EvidencePackageIdentity(
-            input.Package.PackageId,
-            input.Package.Version,
-            input.Package.NupkgDigest);
-        if (assessment.Identity.InputManifestDigest != expectedInputDigest ||
-            assessment.Identity.Package != expectedPackage ||
-            evidence.Assessment != assessment.Identity)
+        ValidateInputIdentity(assessment.Identity, input, inputBytes);
+        if (evidence.Assessment != assessment.Identity)
         {
             throw new DeterministicValidationException(
                 "Assessment, input-manifest digest, package identity, component, and evidence identity must match exactly.");
         }
-
-        if (assessment.AssessmentKind is "unified" or "component")
-        {
-            if (assessment.Identity.ComponentId is null ||
-                !input.Components.Any(component => component.Id == assessment.Identity.ComponentId))
-            {
-                throw new DeterministicValidationException(
-                    "Assessment component must be present in the confirmed input manifest.");
-            }
-        }
-
-        if (assessment.AssessmentKind == "package" && assessment.Identity.ComponentId is not null)
-        {
-            throw new DeterministicValidationException("Package assessments cannot identify a component.");
-        }
+        var expectedPackage = assessment.Identity.Package;
 
         var profile = DocxComponentProfile.Load(root, input);
         if (profile is not null)

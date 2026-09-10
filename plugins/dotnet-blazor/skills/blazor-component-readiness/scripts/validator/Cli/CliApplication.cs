@@ -14,6 +14,7 @@ public static class CliApplication
 
         Commands:
           package inspect    Inspect the exact identity and digest of a local .nupkg.
+          release facts      Collect offline facts from six confirmed release inputs.
           source inventory-archive
                              Inventory regular files in a retained source archive.
           source capture-inventory
@@ -88,6 +89,11 @@ public static class CliApplication
             if (string.Equals(args[0], "evidence", StringComparison.Ordinal))
             {
                 return EvidenceCommand.Run(args.Skip(1).ToArray(), output);
+            }
+
+            if (string.Equals(args[0], "release", StringComparison.Ordinal))
+            {
+                return ReleaseCommand.Run(args.Skip(1).ToArray(), output);
             }
 
             if (string.Equals(args[0], "inputs", StringComparison.Ordinal))

@@ -91,7 +91,10 @@ ordinary full-package prerequisite. This does not authorize an additional worker
    preserve both source outcomes. Never change reviewed manifests or NuGet configuration.
    If grouped, registered, selected, or composite children apply, complete every post-initialization
    lifecycle operation with a digest-bound raw observation or operation-specific not-tested reason.
-5. Build immutable evidence ledgers/bundle, initialize and populate the assessment, validate it,
+5. Initialize/export identity from the final explicitly confirmed inputs, then build immutable
+   evidence ledgers and an input-bound `evidence bundle --root --manifest`. Use registered
+   `evidence draft-add --root --manifest --evidence-input` for retained reviewer analysis.
+   Structural-only bundling is not accepted input linkage. Populate the assessment, validate it,
    render the next revision, and run `report verify`. Before assigning each status, apply the
    status-boundary decision order. Do not use a behavior outcome as proof of an implementation
    mechanism. A source-proven callback or cleanup gap requires `source-proof-v1`, must cite the
