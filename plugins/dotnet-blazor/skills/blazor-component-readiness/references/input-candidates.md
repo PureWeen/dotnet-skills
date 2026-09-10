@@ -33,6 +33,18 @@ source and owner provenance fields, render modes, and lifecycle tokens. Free-for
 kinds and exclusion subjects remain descriptive text. Construction checks token validity,
 not whole-input completeness, and preserves the original valid values.
 
+Before constructing a scoped component input, compare the complete source record with its
+[bound package context](report-contract.md#docx-only-component-profile-v1), including mapping
+and confidence. Rewording mapping prose changes that identity. Carry forward an unchanged,
+still-true source record and record new reuse/acquisition details separately; do not copy a
+materially false mapping merely to satisfy equality.
+
+Canonical documentation/retrieval URLs exclude queries and fragments. Preserve the actual
+requested URL, final URL, and returned bytes in acquisition records. Do not strip a query from
+an earlier fetch and relabel its content. If a permitted query-free URL is available, retrieve
+it as a separate attempt and retain any redirect relationship; otherwise report the locator
+limitation rather than editing generated candidates or weakening the grammar.
+
 `--package-method` uses the existing package-origin subset of `add-retrieval --method`;
 the generated help lists both. Repository fetching is not a package-origin method.
 NuGet v3 and v2 both use `package-feed`;
@@ -46,6 +58,14 @@ from the latest output; preserve the earlier file. Paths embedded in candidates 
 to the later `inputs discover --root`, not relative to the candidate file itself.
 Quote shell arguments containing whitespace. The code does not retrieve files or establish
 that a locator is official; it records the supplied facts without inventing provenance.
+
+PowerShell orchestration should invoke the resolved launcher explicitly or use an unambiguous
+helper name such as `Invoke-Readiness`; aliases can take precedence over a short function name.
+Capture the CLI exit code before another command changes it. CLI completion and writing a
+separate operation log are different outcomes: a failed log write does not prove that the CLI
+failed or that no output exists. Preserve any created output, inspect its actual validity and
+identity, and write new command receipts rather than repeatedly rewriting a growing log or
+retrying against an existing candidate path.
 
 Use the relevant typed commands for the rest of the discovered input closure:
 

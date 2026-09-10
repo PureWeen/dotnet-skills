@@ -21,6 +21,22 @@ route/assets; build/start the smallest consumer; assert one target renders; run 
 interaction; expand only after that smoke gate. Missing prerequisites, stale routes, absent assets,
 or host startup failures are probe blockers unless direct evidence ties them to the package.
 
+Retain the fixture's supported-context basis before scoring: applicable hosting mode, container
+or form restrictions, registration, and the exact API/version used. Distinguish a documented
+supported setup from an intentional unsupported-mode diagnostic or other negative control.
+Current documentation may identify a caveat without proving the assessed release's contract.
+If a contrast depends on a prohibited or unestablished setup, preserve it as a qualified
+observation and repeat the smallest relevant supported-context case before attributing a defect.
+Do not erase a valid unsupported-mode diagnostic when that diagnostic is itself the requirement.
+
+Establish useful capture, not merely a successful automation command. At initial use and after
+navigation or visibility changes, retain the actual target, renderer, delivered input event, and
+corresponding state/callback or attributable failure. Accepted debugger/automation commands with
+no delivered event do not demonstrate failed component input handling. Record target coverage
+and page visibility, and compare a known input target when needed to distinguish delivery from
+component behavior. Programmatic API calls or DOM changes may supply separately labeled evidence;
+they do not replace a missing native interaction or prove visible UI.
+
 ## Inspect and exercise
 
 - public parameters, mutation, binding pairs, required parameters, docs, and compatibility;

@@ -148,6 +148,12 @@ When the context revision binds feedback, provide its exact bytes with
 `--package-context-feedback`. This verifies the context's receipt; it is not component feedback
 and is not copied into the component reader. V1 rejects ordinary `--package-feedback`.
 
+Source equality here means the entire `source` record: availability, repository URI, commit,
+mapping, and confidence, not just the repository/commit pair. Preserve that record when reusing
+the same still-valid context; place new investigation/reuse narrative in separate retrieval or
+assessment context. A materially different source claim requires a valid new binding, not a
+prose edit to a confirmed manifest or a relaxed equality check.
+
 For this profile, `package_reference` remains null in both the component assessment and validation
 manifest: no ordinary full-package prerequisite is asserted. The typed scoped context is bound
 through the confirmed input identity and its distinct descriptor. Reader
