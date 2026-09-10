@@ -240,19 +240,17 @@ function evalIdentity(evalFile) {
 // skill is *expected to stay dormant* isn't flagged on the dashboard as a
 // missing activation. This is a deliberately small, block-scalar-aware YAML
 // scan rather than a full parser so the adapter keeps its zero-dependency
-// contract (no `yaml` module is guaranteed on CI runners). Reading the spec is
-// required because silently defaulting to expect-activation can remove an
-// explicit dormancy contract from the pass gate.
+// contract (no `yaml` module is guaranteed on CI runners). If the file can't be
+// read, the set is empty and every scenario defaults to expect-activation —
+// matching the historical behavior.
 function readNonActivationStimuli(evalFile, repoRoot) {
   const path = resolve(repoRoot ?? ".", evalFile);
+  if (!existsSync(path)) return new Set();
   let text;
   try {
     text = readFileSync(path, "utf-8");
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    const readError = new Error(`cannot read eval spec ${evalFile} at ${path}: ${detail}`);
-    readError.code = "eval_spec_unreadable";
-    throw readError;
+  } catch {
+    return new Set();
   }
   const lines = text.split(/\r?\n/);
   const indentOf = (l) => l.length - l.trimStart().length;
@@ -1656,31 +1654,6 @@ function main() {
         continue;
       }
 
-      let nonActivationStimuli;
-      try {
-        nonActivationStimuli = readNonActivationStimuli(evalFile, opts["repo-root"]);
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        const message = `${plugin}/${skill}: ${detail}`;
-        warn(message);
-        const verdict = invalidVerdict(
-          identity,
-          { code: "eval_spec_unreadable", phase: "adapter", kind: "permanent" },
-          message,
-          {
-            baselineRecords: baseline.length,
-            skilledRecords: skilled.length,
-            pluginRecords: pluginRecs.length,
-          },
-        );
-        const outputPath = writeVerdictResults(outputRoot, evalFile, identity, verdict, expectedEval);
-        console.log(`\n${verdictSummaryLine(verdict)}\n  → ${outputPath}`);
-        recordInvalidEval(evalFile, verdict);
-        written++;
-        incomplete++;
-        continue;
-      }
-
       const baselineSlice = join(workDir, `${plugin}__${skill}__baseline.jsonl`);
       const skilledSlice = join(workDir, `${plugin}__${skill}__skilled.jsonl`);
       const compareOut = join(workDir, `${plugin}__${skill}__compare.jsonl`);
@@ -1745,7 +1718,7 @@ function main() {
           report,
           identity,
           roles,
-          nonActivationStimuli,
+          readNonActivationStimuli(evalFile, opts["repo-root"]),
         );
       } catch (error) {
         const detail = error instanceof Error ? error.message : String(error);

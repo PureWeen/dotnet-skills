@@ -1,4 +1,3 @@
-using System.Threading.Tasks;
 using TUnit.Core;
 
 namespace Contoso.Notifications.Tests;

@@ -24,9 +24,7 @@ Run the appropriate lint/format command to fix code style issues.
 
 If not provided, check in order:
 
-1. The exact command or relevant Commands excerpt supplied by the caller; if
-   the caller instead supplies a document, it must provide its absolute
-   `<TESTAGENT_DIR>/research.md` or `<TESTAGENT_DIR>/plan.md` path
+1. `.testagent/research.md` or `.testagent/plan.md` for Commands section
 2. Project files:
    - `*.csproj` / `*.sln` → `dotnet format`
    - `package.json` → `npm run lint:fix` or `npm run format`

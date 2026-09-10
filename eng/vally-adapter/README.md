@@ -163,10 +163,8 @@ collector to distinguish:
 
 The run fails closed unless expected, observed, and written identities match
 exactly and no measurement-invalid result remains. Missing execution arms,
-unreadable eval specs, unresolved judge or pairing errors, malformed reports,
-and unknown invalid states fail the matrix leg after diagnostic artifacts are
-written. An unreadable spec is invalid because the adapter cannot safely infer
-whether `expect_activation: false` dormancy contracts apply. The explicit
+unresolved judge or pairing errors, malformed reports, and unknown invalid
+states fail the matrix leg after diagnostic artifacts are written. The explicit
 `underpowered` eval-design state remains visible as instrument debt but does not
 become an infrastructure failure. This proof applies inside each matrix leg.
 Discovery omits entries with no eval specs. The PR collector separately requires

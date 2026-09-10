@@ -8,7 +8,6 @@
       "--prerelease",
       "--",
       "--stdio",
-      "--daemon-mode",
       "--autoLoadProjects"
     ],
     "extensionToLanguage": {
