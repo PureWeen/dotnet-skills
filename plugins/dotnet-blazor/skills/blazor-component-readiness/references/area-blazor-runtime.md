@@ -2,6 +2,22 @@
 
 Applies to `BEQ-*`.
 
+## Disposable component probes
+
+Component assessments exercise every claimed render mode; package-only does not use this
+component runtime or lifecycle procedure. Create disposable consumer apps outside the reviewed
+repository under the approved scratch/output root. Use the exact package, not a local rebuild.
+Record restore/build/start commands, runtime observations, browser console/network evidence,
+prerequisites and blockers. A build is not runtime proof. Stop at the approved timebox and keep
+remaining applicable rows `not tested`.
+
+Pin and record the supported SDK before restore. For `net10.0`, do not inherit a preview SDK
+merely because it is the host default. A public NuGet v2 endpoint is an allowed read-only fallback
+when v3 is unavailable; retain both outcomes and never edit reviewed manifests or configuration.
+Remove disposable apps and raw logs after retaining bounded commands, results, relevant snippets
+and digests. Retain a failed probe only when needed for reproduction and record why; exclude
+secrets, credentials, unrelated private URLs and machine-specific absolute paths from reports.
+
 ## Render-mode matrix
 
 Exercise every confirmed claimed mode using the exact package:

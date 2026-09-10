@@ -7,6 +7,11 @@ default local reading view, together with its evidence and technical companions.
 preview of retained facts, not a second assessment, new execution, certification, or permission
 to publish. Do not rewrite the table manually or promote a mixed group to a pass.
 
+Before generic rendering or fallback, explicitly profile-bound work must read the complete
+[DOCX-only component profile](docx-component-profile.md). Its scoped-context/feedback binding,
+lineage and export restrictions take precedence over ordinary component examples.
+A scope/disclosure failure blocks the deliverable, not permission for an unscoped fallback.
+
 The four columns are `Requirement | Check / requirement | Result | Evidence`.
 Current rubric rows group only by existing ownership, area, clause and classification.
 Every check retains its entire requirement, status, observation, owner action, follow-up and
@@ -43,6 +48,15 @@ Full-library assessment still requires top-level isolated writable worker sessio
 cannot provide them cannot run full-library mode. The reader itself is a local deterministic
 command and needs no agent/model service or tracker integration.
 
+For ordinary component revisions, pass `--package-revision` with the exact source package revision.
+For the explicitly selected [DOCX-only component profile](docx-component-profile.md),
+use `--package-context-revision` and its bound profile/context inputs instead. That relationship
+is scoped package context, not an ordinary full-package prerequisite or component evidence.
+When a revision binds feedback, pass the exact `--feedback` file and, for package feedback,
+`--package-feedback` on the ordinary path. Scoped-context feedback uses
+`--package-context-feedback` and is retained for context verification, not copied into the
+component output. Paths resolve beneath `--root` even from another working directory.
+
 ```bash
 SKILL_DIR="<directory-containing-loaded-SKILL.md>"
 OUTPUT="<confirmed-local-assessment-root>"
@@ -55,18 +69,10 @@ READINESS_TEMP="$OUTPUT/.validator-cache" \
 ```
 
 Use the equivalent `run-validator.ps1` launcher on PowerShell, with `$env:READINESS_TEMP`.
-For ordinary component revisions, pass `--package-revision` with the exact source package revision.
-For the explicitly selected [DOCX-only component profile](report-contract.md#docx-only-component-profile-v1),
-use `--package-context-revision` and its bound profile/context inputs instead. That relationship
-is scoped package context, not an ordinary full-package prerequisite or component evidence.
-When a revision binds feedback, pass the exact `--feedback` file and, for package feedback,
-`--package-feedback` on the ordinary path. Scoped-context feedback uses
-`--package-context-feedback` and is retained for context verification, not copied into the
-component output. Paths resolve beneath `--root` even from another working directory.
 Create the output parent first. The reader cannot be placed inside or around a source revision
 lineage, overwrite an existing output, or alter the five-file source revision.
 
-The output contains `report.md`, `evidence.md`, `mapping.json`, `reader.validation.json`,
+The ordinary output contains `report.md`, `evidence.md`, `mapping.json`, `reader.validation.json`,
 retained `evidence/*.bin` artifacts, and byte-identical canonical files under `technical/`.
 The mapping records every check's original fields and its group. Verification regenerates all
 files from the verified source revision, pinned rubric, feedback and local evidence, comparing

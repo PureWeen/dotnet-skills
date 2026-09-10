@@ -85,5 +85,7 @@ legacy verification; neither schema stores a duplicate boundary token.
 - Newer direct evidence and named current-toolchain results control the current row even when they
   differ from a retained comparison label. Preserve and explain the evidence delta.
 - Feedback and decision guidance never establish a status.
+- Match each claim to its exact evidence field: `RepositoryUrl` is not `ProjectUrl`.
+- Absence of a feature claim does not establish absence of the feature for `not applicable`.
 
 Do not substitute alternate status words or abbreviations.

@@ -3,6 +3,11 @@
 Feedback is user-owned Markdown beside the applicable package/component `revisions` directory. The
 validator may read it but never creates, rewrites, normalizes, or deletes it.
 
+For an explicitly profile-bound component, read [the DOCX-only profile](docx-component-profile.md)
+before the ordinary relationship/key and package-feedback rules below. Use its scoped-context
+flags, exact predecessor feedback and narrower disclosure contract; ordinary missing-feedback
+fallback and `--package-feedback` do not apply.
+
 The user may identify feedback in files, supplied exports, or authorized sources through available
 read-only tools; no particular tracker is required. A GitHub issue URL is one optional source:
 preserve the body and available comments, original authors, dates,

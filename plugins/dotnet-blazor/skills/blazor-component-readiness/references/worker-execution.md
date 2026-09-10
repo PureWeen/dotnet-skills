@@ -17,6 +17,11 @@ For full-library work, use the library-level unsupported-host message required b
 
 Create one directory per confirmed unit below the approved run root. Before launch:
 
+An explicitly assigned DOCX-only unit must first read [the profile](docx-component-profile.md):
+stage its exact scoped-context revision/closure and use `--package-context-revision`, with
+`--package-context-feedback` when bound, instead of the ordinary full-package binding below.
+The 48 context checks are not component findings or ordinary library completion.
+
 1. Copy only the exact confirmed input manifest, package bytes, validated package revision, the
    package-wide files referenced by that revision's input manifest, unit-specific
    source/documents/evidence, worker prompt, and a trusted plugin copy.
@@ -131,6 +136,15 @@ calling the validator. Relative CLI file arguments resolve beneath `--root`, not
 coordinator's current directory. For example, with `/work/unit/output` as the root, use
 `--revision /work/unit/output/revisions/0001` (or `--revision revisions/0001`), never
 `--revision output/revisions/0001`. Apply the same rule to reader output and package bindings.
+Pass absolute `--root`, `--revision`, `--output`, and `--package-revision` paths for ordinary
+verification, or the profile's scoped-context flags instead. Never prepend the artifact root
+to a path that already includes it.
+
+Apply the [shared coverage gate](assessment-workflow.md#3-apply-statuses-and-reconcile-coverage)
+before accepting any revision, including one produced in the coordinator context. Reconcile
+each accessible evidence family and reject skipped claimed modes, duplicate ownership, sibling
+leakage, repository-wide component records or wrong package binding. Low record count alone
+is not failure when compact shared evidence supports every cited claim.
 
 Write a completed handoff only after the requested investigation and final verification finish.
 A structurally valid report whose accessible requested probes were never attempted is unfinished

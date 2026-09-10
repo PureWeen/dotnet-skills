@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -7,6 +8,11 @@ internal static class WorkflowTests
 {
     private static readonly string[] RequiredReferences =
     [
+        "assessment-workflow.md",
+        "offline-release-facts.md",
+        "docx-component-profile.md",
+        "input-candidates.md",
+        "partner-preview.md",
         "report-contract.md",
         "feedback-contract.md",
         "library-assessment.md",
@@ -48,6 +54,7 @@ internal static class WorkflowTests
 
         Assert(File.ReadLines(skillPath).Count() < 500, "portable skill must remain below 500 lines");
         Assert(skill.Length < 20_000, "portable skill must remain below the 5,000-token chars/4 warning proxy");
+        AssertFrontmatter(skill, "fc2661e8a8ac2561f12c987945ab60efa01c0a39486d8ab38bc12f1f0e971f24", "skill");
 
         foreach (var reference in RequiredReferences)
         {
@@ -58,22 +65,8 @@ internal static class WorkflowTests
                 $"portable skill must progressively link reference: {reference}");
         }
 
-        foreach (Match match in Regex.Matches(skill, @"\]\(([^)]+)\)"))
-        {
-            var value = match.Groups[1].Value;
-            if (value.StartsWith("http", StringComparison.OrdinalIgnoreCase) ||
-                value.StartsWith('#'))
-            {
-                continue;
-            }
-
-            Assert(!Path.IsPathRooted(value), $"skill link must be relative: {value}");
-            var normalized = value.Replace('\\', '/').Split('#')[0];
-            Assert(
-                normalized.Split('/', StringSplitOptions.RemoveEmptyEntries).Length <= 2,
-                $"skill link must be at most one directory deep: {value}");
-            Assert(File.Exists(Path.Combine(skillRoot, normalized)), $"broken skill link: {value}");
-        }
+        AssertInstructionLinks(pluginRoot, skillPath, referencesRoot);
+        AssertReadingRoutes(skill, referencesRoot);
 
         AssertContains(skill, "explicit vendor self-assessment", "explicit-intent router");
         AssertContains(skill, "ordinary Blazor authoring/debugging", "ordinary-work dormancy");
@@ -89,26 +82,11 @@ internal static class WorkflowTests
         AssertContains(skill, "`source-available`, `closed-source`, or `unresolved`", "source availability");
         AssertContains(skill, "owner-supplied-internal-evidence", "owner evidence");
         AssertContains(skill, "owner-supplied-public-evidence", "public owner evidence");
-        AssertContains(skill, "current-generation.json", "authoritative library index pointer");
-        AssertContains(skill, "every claimed render mode", "render-mode coverage");
-        AssertContains(skill, "dynamic_child_lifecycle.applicability", "conditional lifecycle gate");
-        AssertContains(skill, "comparison inputs-freeze", "blinded comparison freeze");
-        AssertContains(skill, "comparison inputs-validate", "blinded comparison validation");
-        AssertContains(skill, "coverage surface", "blinded comparison evidence-surface coverage");
-        AssertContains(skill, "`source-proof-v1`", "structured source proof");
-        AssertContains(skill, "`public-absence-v1`", "typed public absence proof");
-        AssertContains(skill, "`direct-failure-v1`", "typed direct failure proof");
-        AssertContains(skill, "source capture-archive", "archive source capture command");
+        AssertOwnedRules(referencesRoot);
         AssertContains(skill, "Never run Git metadata commands inside an archive", "archive Git boundary");
-        AssertContains(skill, "same-job source build plus privileged signing/publishing is a gap", "release job trust boundary");
-        AssertContains(skill, "one mutable path is not a digest-bound immutable handoff", "immutable artifact boundary");
-        AssertContains(skill, "component assignment through a public `[Parameter]` setter is mutation", "parameter mutation boundary");
-        AssertContains(skill, "mutable cascade proves `PERF-05` applicability, not a gap", "cascading rerender measurement boundary");
-        AssertContains(skill, "legacy v1", "legacy assessment verification");
         AssertContains(skill, "Package-only", "package-only mode");
         AssertContains(skill, "components: []", "empty package inventory");
-        AssertContains(skill, "no component worker", "package-only worker boundary");
-        AssertContains(skill, "Skip this step for package-only.", "package-only skips library orchestration");
+        AssertContains(skill, "No component worker", "package-only worker boundary");
         AssertContains(skill, "Single component, unified", "unified mode");
         AssertContains(skill, "Single package, split", "split mode");
         AssertContains(skill, "Full library", "library mode");
@@ -118,47 +96,17 @@ internal static class WorkflowTests
         AssertContains(skill, "feedback", "feedback workflow");
         AssertContains(skill, "factual correction", "correction workflow");
         AssertContains(skill, "decision-guidance.md", "decision guidance");
-        AssertContains(skill, "source validation-manifest SHA-256", "guidance source digest");
         AssertContains(skill, "Run automatically", "automatic validation");
+        var workflow = File.ReadAllText(Path.Combine(referencesRoot, "assessment-workflow.md"));
         Assert(
             Regex.IsMatch(
-                skill,
+                workflow,
                 @"assessment init --kind unified\b[^\r\n]*--component <component-id>"),
             "unified assessment init example requires the component identity");
 
         foreach (var status in Statuses)
         {
             AssertContains(skill, $"`{status}`", $"status '{status}'");
-        }
-
-        foreach (var command in new[]
-        {
-            "package inspect",
-            "source capture-archive",
-            "inputs discover",
-            "inputs confirm",
-            "inputs validate",
-            "evidence ledger-build",
-            "evidence ledger-validate",
-            "evidence bundle",
-            "assessment init --kind unified",
-            "assessment init --kind package",
-            "assessment init --kind component",
-            "assessment canonicalize",
-            "assessment export-identity",
-            "assessment validate",
-            "assessment revise",
-            "report render",
-            "report verify",
-            "inventory discover",
-            "inventory confirm",
-            "inventory status",
-            "library reconcile",
-            "library validate",
-            "library index"
-        })
-        {
-            AssertContains(skill, command, $"CLI command '{command}'");
         }
 
         foreach (var limit in new[] { "256 MiB nupkg", "1 MiB nuspec", "4 MiB authored ledger",
@@ -177,6 +125,202 @@ internal static class WorkflowTests
         AssertWorkerLaunchContract(pluginRoot);
         AssertReadinessLauncherExample(skillRoot);
         AssertOptionalJqInventoryProjection(pluginRoot);
+    }
+
+    private static void AssertFrontmatter(string text, string expected, string label)
+    {
+        var frontmatter = Regex.Match(text, @"\A---\r?\n.*?\r?\n---\r?\n", RegexOptions.Singleline).Value;
+        Assert(frontmatter.Length > 0, $"{label} frontmatter must exist");
+        var digest = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(frontmatter)));
+        Assert(digest == expected, $"{label} routing metadata/tools/frontmatter bytes must stay unchanged");
+    }
+
+    private static void AssertInstructionLinks(string pluginRoot, string skillPath, string referencesRoot)
+    {
+        var paths = new[] { skillPath }
+            .Concat(RequiredReferences.Select(name => Path.Combine(referencesRoot, name)))
+            .Concat(Directory.GetFiles(Path.Combine(pluginRoot, "agents"), "*.agent.md"));
+        foreach (var path in paths)
+        {
+            foreach (Match match in Regex.Matches(File.ReadAllText(path), @"\]\(([^)]+)\)"))
+            {
+                var value = match.Groups[1].Value;
+                if (value.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+                    value.StartsWith("http://", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                Assert(!Path.IsPathRooted(value), $"instruction link must be relative: {path}: {value}");
+                var parts = value.Replace('\\', '/').Split('#', 2);
+                if (path == skillPath)
+                {
+                    Assert(parts[0].Split('/', StringSplitOptions.RemoveEmptyEntries).Length <= 2,
+                        $"skill link must be at most one directory deep: {value}");
+                }
+
+                var target = parts[0].Length == 0 ? path :
+                    Path.GetFullPath(Path.Combine(Path.GetDirectoryName(path)!, parts[0]));
+                var relative = Path.GetRelativePath(pluginRoot, target);
+                Assert(!relative.StartsWith("..", StringComparison.Ordinal) && !Path.IsPathRooted(relative),
+                    $"instruction link must stay within the portable plugin: {value}");
+                Assert(File.Exists(target), $"broken instruction link: {path}: {value}");
+                if (parts.Length == 2)
+                {
+                    var anchors = Regex.Matches(File.ReadAllText(target), @"(?m)^#{1,6} (.+?)\r?$")
+                        .Select(heading => Regex.Replace(heading.Groups[1].Value.ToLowerInvariant(),
+                            @"[^\p{L}\p{N}\s_-]", "").Replace(' ', '-'));
+                    Assert(anchors.Contains(parts[1], StringComparer.Ordinal),
+                        $"broken instruction anchor: {path}: {value}");
+                }
+            }
+        }
+    }
+
+    private static void AssertReadingRoutes(string skill, string referencesRoot)
+    {
+        var routes = new (string Name, string[] Owners)[]
+        {
+            ("DOCX-only component", ["docx-component-profile.md"]),
+            ("Package-only", ["assessment-workflow.md"]),
+            ("Single component, unified", ["assessment-workflow.md"]),
+            ("Single package, split / ordinary bound component",
+                ["assessment-workflow.md", "report-contract.md#ordinary-component-binding",
+                 "library-assessment.md#split-coordination", "worker-execution.md"]),
+            ("Full library", ["library-assessment.md", "worker-execution.md"]),
+            ("Targeted follow-up / worksheet", ["targeted-profiles.md", "status-boundaries.md"]),
+            ("Offline release facts / authorized identity-only handoff", ["offline-release-facts.md", "input-candidates.md"]),
+            ("Existing reader, feedback or correction", ["report-contract.md", "partner-preview.md", "feedback-contract.md"]),
+            ("Explicit blinded comparison", ["blinded-comparison.md", "worker-execution.md"])
+        };
+        foreach (var (name, owners) in routes)
+        {
+            var row = skill.Split('\n').Single(line => line.StartsWith($"| **{name}** |", StringComparison.Ordinal));
+            foreach (var owner in owners)
+            {
+                AssertContains(row, $"(references/{owner})", $"explicit next-read owner for {name}");
+            }
+            if (name is "Package-only" or "Offline release facts / authorized identity-only handoff")
+            {
+                foreach (var forbidden in new[] { "library-assessment.md", "worker-execution.md",
+                             "area-blazor-runtime.md", "area-accessibility.md" })
+                {
+                    Assert(!row.Contains($"(references/{forbidden})", StringComparison.Ordinal),
+                        $"{name} must not require {forbidden}");
+                }
+            }
+        }
+
+        // Required edges are explicit, task-scoped prerequisites, not every navigation backlink.
+        var edges = new (string Owner, string Target)[]
+        {
+            ("assessment-workflow.md", "input-candidates.md"),
+            ("assessment-workflow.md", "status-boundaries.md"),
+            ("assessment-workflow.md", "area-provenance-integrity.md"),
+            ("assessment-workflow.md", "artifact-acquisition.md"),
+            ("assessment-workflow.md", "artifact-acquisition.md#original-library-source-closure"),
+            ("assessment-workflow.md", "documentation-discovery.md"),
+            ("assessment-workflow.md", "report-contract.md"),
+            ("assessment-workflow.md", "partner-preview.md"),
+            ("offline-release-facts.md", "input-candidates.md"),
+            ("library-assessment.md", "worker-execution.md"),
+            ("area-accessibility.md", "area-blazor-runtime.md#cheap-preflight"),
+            ("area-trim-performance.md", "artifact-acquisition.md#original-library-source-closure")
+        };
+        foreach (var (owner, target) in edges)
+        {
+            AssertContains(File.ReadAllText(Path.Combine(referencesRoot, owner)), $"({target})",
+                $"{owner} required prerequisite {target}");
+        }
+        var workflow = File.ReadAllText(Path.Combine(referencesRoot, "assessment-workflow.md"));
+        var offline = File.ReadAllText(Path.Combine(referencesRoot, "offline-release-facts.md"));
+        var input = File.ReadAllText(Path.Combine(referencesRoot, "input-candidates.md"));
+        AssertContains(offline, "does not require", "unscored route exclusions");
+        AssertContains(input, "does not require", "unscored producer exception");
+        foreach (var forbidden in new[] { "library-assessment.md", "worker-execution.md", "area-blazor-runtime.md",
+                     "area-accessibility.md", "assessment-workflow.md" })
+        {
+            Assert(!offline.Contains($"({forbidden})", StringComparison.Ordinal),
+                $"offline facts must not add a mandatory {forbidden} read");
+            Assert(!input.Contains($"({forbidden})", StringComparison.Ordinal),
+                $"shared producer must not add a mandatory {forbidden} read");
+        }
+        Assert(!workflow.Contains("comparison inputs-freeze", StringComparison.Ordinal) &&
+               !workflow.Contains("inventory discover", StringComparison.Ordinal) &&
+               !workflow.Contains("## Render-mode matrix", StringComparison.Ordinal),
+            "common workflow must not embed conditional comparison, library or component procedures");
+        AssertContains(skill, "not mandatory reread cycles", "finite reading graph");
+        AssertContains(skill, "Acquisition/document discovery may be skipped", "confirmed-input route");
+
+        AssertBefore(workflow, "(docx-component-profile.md)", "assessment init --kind", "profile before generic initialization");
+        AssertBefore(workflow, "(status-boundaries.md)", "## 4.", "status rules before canonical production");
+        AssertBefore(workflow, "explicitly", "assessment export-identity", "confirmation before identity");
+        AssertBefore(input, "(docx-component-profile.md)", "assessment init --kind", "profile before producer initialization");
+        var report = File.ReadAllText(Path.Combine(referencesRoot, "report-contract.md"));
+        AssertBefore(report, "(docx-component-profile.md)", "## Ordinary component binding", "profile before ordinary binding");
+        var reader = File.ReadAllText(Path.Combine(referencesRoot, "partner-preview.md"));
+        AssertBefore(reader, "(docx-component-profile.md)", "reader render", "profile before reader generation");
+        var feedback = File.ReadAllText(Path.Combine(referencesRoot, "feedback-contract.md"));
+        AssertBefore(feedback, "(docx-component-profile.md)", "Component feedback keys", "profile before ordinary feedback keys");
+        var worker = File.ReadAllText(Path.Combine(referencesRoot, "worker-execution.md"));
+        AssertBefore(worker, "(docx-component-profile.md)", "1. Copy only", "profile before ordinary unit staging");
+        AssertContains(report, "### DOCX-only component profile (V1)", "old profile anchor preserved");
+        AssertContains(File.ReadAllText(Path.Combine(referencesRoot, "artifact-acquisition.md")),
+            "## Offline release facts", "old acquisition anchor preserved");
+    }
+
+    private static void AssertBefore(string text, string prerequisite, string action, string label)
+    {
+        var first = text.IndexOf(prerequisite, StringComparison.Ordinal);
+        var next = text.IndexOf(action, StringComparison.Ordinal);
+        Assert(first >= 0 && next > first, label);
+    }
+
+    private static void AssertOwnedRules(string referencesRoot)
+    {
+        var ownership = new (string Owner, string[] Rules)[]
+        {
+            ("artifact-acquisition.md", ["package inspect", "source capture-archive", "actual library project or solution",
+                "does not establish complete project/import closure", "style/theme assets"]),
+            ("input-candidates.md", ["inputs discover", "inputs confirm", "inputs validate",
+                "evidence draft-add", "assessment export-identity", "evidence ledger-build",
+                "evidence ledger-validate", "evidence bundle", "explicitly `inputs confirm`", "EV1"]),
+            ("assessment-workflow.md", ["assessment init --kind unified", "assessment init --kind package",
+                "assessment canonicalize", "assessment validate", "report render", "report verify",
+                "legacy v1", "structural validation", "Missing supplied probe results",
+                "blanket not-tested template", "Low record count alone", "timebox",
+                "no component selection or component-specific source closure"]),
+            ("report-contract.md", ["assessment init --kind component", "assessment revise",
+                "Source validation manifest SHA-256:", "explicit", "decision-guidance.md"]),
+            ("library-assessment.md", ["inventory discover", "inventory confirm", "inventory status",
+                "library reconcile", "library validate", "library index", "current-generation.json",
+                "unsupported host: full-library assessment requires isolated workers"]),
+            ("blinded-comparison.md", ["comparison inputs-freeze", "comparison inputs-validate",
+                "coverage surface", "before reading evidence"]),
+            ("status-boundaries.md", ["public-absence-v1", "direct-failure-v1",
+                "`RepositoryUrl` is not `ProjectUrl`", "Absence of a feature claim"]),
+            ("area-ci-release.md", ["actual release job graph", "privileged", "path equality and in-place ordering"]),
+            ("area-blazor-runtime.md", ["every claimed render mode", "dynamic_child_lifecycle.applicability", "`source-proof-v1`",
+                "public `[Parameter]`", "event handlers, callbacks, conditional branches",
+                "not runtime proof", "delivered input event", "supported-context basis", "net10.0"]),
+            ("area-trim-performance.md", ["mutable", "applicable rerender risk", "Without descendant render counts",
+                "no repeated identity surface", "owner evidence required"]),
+            ("offline-release-facts.md", ["never authenticated", "RDF equivalence was not assessed",
+                "not RDF equivalence or", "not-comparable", "all ten required", "64 MiB",
+                "pre-output confirmed manifest", "separate explicit", "result-basename"]),
+            ("docx-component-profile.md", ["all 51", "48-check", "entire `source` record",
+                "--package-context-revision", "--package-context-feedback", "V1 rejects ordinary",
+                "feedback-bound predecessor", "supersession ancestor", "not a self-contained",
+                "package_reference", "package_validation_sha256", "no raw registered inputs"])
+        };
+        foreach (var (owner, rules) in ownership)
+        {
+            var text = File.ReadAllText(Path.Combine(referencesRoot, owner));
+            foreach (var rule in rules)
+            {
+                AssertContains(text, rule, $"{owner} owns '{rule}'");
+            }
+        }
     }
 
     private static void AssertRubricIsSoleRequirementSource(string referencesRoot)
@@ -236,6 +380,24 @@ internal static class WorkflowTests
             pluginRoot, "agents", "blazor-component-readiness.agent.md"));
         var worker = File.ReadAllText(Path.Combine(
             pluginRoot, "agents", "blazor-component-readiness-worker.agent.md"));
+        var referencesRoot = Path.Combine(pluginRoot, "skills", "blazor-component-readiness", "references");
+        var execution = File.ReadAllText(Path.Combine(referencesRoot, "worker-execution.md"));
+        var library = File.ReadAllText(Path.Combine(referencesRoot, "library-assessment.md"));
+        var workflow = File.ReadAllText(Path.Combine(referencesRoot, "assessment-workflow.md"));
+
+        AssertFrontmatter(coordinator, "18edba3c0611831e4ef19019d388023b63edf936462da4a32c77ac52db00a6fa", "coordinator");
+        AssertFrontmatter(worker, "6a8fa2da87d8a37658fa5bbe8b55e7a9a8a7df6fe00cc46110c8bba8b08fa3c3", "worker");
+        foreach (var persona in new[] { coordinator, worker })
+        {
+            foreach (var owner in new[] { "assessment-workflow.md", "docx-component-profile.md", "blinded-comparison.md" })
+            {
+                AssertContains(persona, $"../skills/blazor-component-readiness/references/{owner}",
+                    $"persona must route to {owner}");
+            }
+            AssertBefore(persona, "permissions or content exclusion",
+                persona == coordinator ? "## Route before acting" : "## Execute the selected unit route",
+                "trusted-root denial must precede persona execution");
+        }
 
         AssertContains(coordinator, "user-invocable: true", "coordinator invocation");
         AssertContains(coordinator, "disable-model-invocation: true", "coordinator ambient routing");
@@ -270,12 +432,13 @@ internal static class WorkflowTests
         AssertContains(coordinator, "explicit trusted plugin root", "coordinator explicit source context");
         AssertContains(coordinator, "exact source path", "coordinator source identity receipt");
         AssertContains(coordinator, "permissions or content exclusion", "coordinator denial boundary");
-        AssertContains(coordinator, "matching inherited `PWD`", "coordinator cwd/PWD launch contract");
-        AssertContains(coordinator, "native argv", "coordinator native launch receipt");
+        AssertContains(coordinator, "references/worker-execution.md", "coordinator launch prerequisite");
+        AssertContains(execution, "set inherited `PWD` to that same absolute path", "coordinator cwd/PWD launch contract owner");
+        AssertContains(execution, "full argv", "coordinator native launch receipt owner");
         AssertContains(coordinator, "A validated revision is not proof that the requested investigation finished.", "investigation completion boundary");
-        AssertContains(coordinator, "do not accept a blanket not-tested template as a completed assessment", "placeholder handoff rejection");
-        AssertContains(coordinator, "Pass absolute `--root`, `--revision`, `--output`, and `--package-revision` paths", "absolute verification arguments");
-        AssertContains(coordinator, "exactly one top-level `blazor-component-readiness-worker` session", "top-level worker isolation");
+        AssertContains(workflow, "do not accept a blanket not-tested template as a completed assessment", "placeholder handoff rejection owner");
+        AssertContains(execution, "Pass absolute `--root`, `--revision`, `--output`, and `--package-revision` paths", "absolute verification arguments owner");
+        AssertContains(library, "exactly one top-level `blazor-component-readiness-worker` session", "top-level worker isolation owner");
         AssertContains(coordinator, "unsupported host: full-library assessment requires isolated workers", "coordinator unsupported-host stop");
         AssertContains(coordinator, "decision-guidance.md", "coordinator decision guidance");
         AssertContains(coordinator, "reconcile", "coordinator interruption recovery");
@@ -293,22 +456,18 @@ internal static class WorkflowTests
         AssertContains(worker, "Do not discover or add components", "worker scope prohibition");
         AssertContains(worker, "every claimed render mode", "worker mode coverage");
         AssertContains(worker, "Missing supplied probe results are work to perform", "active evidence collection");
-        AssertContains(worker, "`RepositoryUrl` is not `ProjectUrl`", "distinct metadata fields");
-        AssertContains(worker, "Absence of a feature claim does not establish absence of the feature", "conditional applicability evidence");
+        AssertContains(worker, "shared assessment workflow", "worker producer and status prerequisites");
         AssertContains(worker, "only when the requested investigation and final verification are finished", "meaningful worker completion");
         AssertContains(worker, "Do not use a blanket not-tested assignment as the final assessment.", "blanket placeholder rejection");
         Assert(!NormalizeWhitespace(worker).Contains(
             "For a complete validated revision, return `blockers: []`", StringComparison.Ordinal),
             "structural validation alone must not authorize completed handoff");
         AssertContains(worker, "comparison inputs-validate", "blind worker input gate");
-        AssertContains(worker, "browser interop, styles/assets, tests, and samples", "worker source closure");
-        AssertContains(worker, "`source-proof-v1`", "worker structured source proof");
-        AssertContains(worker, "`public-absence-v1`", "worker public absence proof");
-        AssertContains(worker, "`direct-failure-v1`", "worker direct failure proof");
-        AssertContains(worker, "privileged job that executes source build steps", "worker release job trust boundary");
-        AssertContains(worker, "one mutable workspace path", "worker immutable artifact boundary");
-        AssertContains(worker, "component-owned assignment through a public `[Parameter]` setter", "worker parameter mutation boundary");
-        AssertContains(worker, "require direct descendant render evidence for a gap", "worker cascading rerender measurement boundary");
+        AssertBefore(worker, "references/docx-component-profile.md", "Accept only",
+            "profile exception before worker binding acceptance");
+        AssertContains(worker, "references/artifact-acquisition.md", "worker source closure prerequisite");
+        AssertContains(worker, "references/area-blazor-runtime.md", "worker component proof prerequisite");
+        AssertContains(worker, "selected area owners before evidence/status decisions", "worker classification owner prerequisites");
         AssertContains(worker, "unit_id:", "worker handoff unit");
         AssertContains(worker, "revision_path:", "worker handoff revision");
         AssertContains(worker, "report_path:", "worker handoff report");
@@ -376,6 +535,7 @@ internal static class WorkflowTests
         AssertContains(library, "append-only state receipt", "library state receipts");
         AssertContains(library, "`pending`, `active`, `completed`, `blocked`, or `incomplete`", "library states");
         AssertContains(library, "one top-level writable worker session per unit", "library isolation");
+        AssertContains(library, "coordinator-managed split request requires separate unit execution", "split execution isolation");
         AssertContains(library, "factual status counts", "factual library index");
         AssertContains(library, "current-generation.json", "generation index publication");
         AssertContains(library, "compatibility caches", "index cache recovery");

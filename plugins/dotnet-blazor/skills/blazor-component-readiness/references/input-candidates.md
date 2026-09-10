@@ -34,7 +34,7 @@ kinds and exclusion subjects remain descriptive text. Construction checks token 
 not whole-input completeness, and preserves the original valid values.
 
 Before constructing a scoped component input, compare the complete source record with its
-[bound package context](report-contract.md#docx-only-component-profile-v1), including mapping
+[bound package context](docx-component-profile.md), including mapping
 and confidence. Rewording mapping prose changes that identity. Carry forward an unchanged,
 still-true source record and record new reuse/acquisition details separately; do not copy a
 materially false mapping merely to satisfy equality.
@@ -193,6 +193,8 @@ not the retained result's basename. This mode does not infer provenance from the
 kind, accept owner-input substitutions, or discover/confirm inputs. Claims, method and capture
 instant remain explicit. `--input` still means the previous evidence draft for immutable append.
 
+## Post-output confirmation
+
 If an authorized collection produced a result after confirmation, preserve its original manifest
 and bytes. Use `inputs candidates add-evidence` on the retained latest candidates, write a new
 candidate, `inputs discover` a new draft and explicitly `inputs confirm` a new final manifest.
@@ -200,6 +202,12 @@ Keep all existing approved registrations; add only the authorized derived result
 an old identity or mutate a manifest to resolve stale bindings.
 
 ## Canonical identity and ledger sequence
+
+For an explicitly selected DOCX-only component, read [the complete profile](docx-component-profile.md)
+before initialization: it uses `--package-context-revision` and, when bound,
+`--package-context-feedback`, not the ordinary package binding below.
+An authorized identity-only handoff may retain an unscored skeleton; it does not require
+row scoring, assessment validation or report/reader production.
 
 Initialize the assessment from the final, post-output confirmed inputs before building evidence ledgers. Export
 its identity through the validator; do not hand-author hashes/IDs, extract JSON with a
@@ -288,7 +296,7 @@ claim the handoff succeeded. Preserve any partial output on failure and follow t
 policy. Canonical ledgers, identities, and accepted reports remain unchanged.
 
 For unified or component scope, use that scope's existing `assessment init` options
-(including the selected component and required package revision), then export its identity
+(including the selected component and required ordinary package or scoped-context revision), then export its identity
 the same way. A component ledger uses:
 
 ```text
@@ -299,4 +307,5 @@ Existing ledger-kind and scope restrictions still apply. A package assessment ha
 component identity and cannot produce a component ledger. Reuse the exported identity
 for bundle construction; select actual ledger record IDs. Export is only a deterministic
 projection of an existing canonical assessment, not validation of its evidence, bindings,
-or readiness. Assessment validation and report verification remain mandatory.
+or readiness. For scored canonical assessments, assessment validation and report verification
+remain mandatory; the explicitly authorized unscored identity-only handoff is not a report.

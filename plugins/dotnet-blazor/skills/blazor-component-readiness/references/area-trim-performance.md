@@ -2,6 +2,15 @@
 
 Applies to `TA-*` and `PERF-*`.
 
+For package/library analyzer, trim and AOT checks, require the
+[original source closure](artifact-acquisition.md#original-library-source-closure), not library
+or worker orchestration. Apply only the requested ownership's rows; package-only does not need
+component performance or lifecycle probes.
+Pin and record the supported SDK before consumer restore; for `net10.0`, do not inherit a
+preview SDK merely because it is the host default. If public NuGet v3 is unavailable, a public
+v2 endpoint is an allowed read-only fallback; retain both outcomes and never change reviewed
+manifests or configuration.
+
 Restore the exact package into a disposable consumer. Publish with trimming and trim analysis;
 separate package-attributable warnings from app/toolchain warnings, then load and exercise the
 published output. Inspect reflection, dynamic code, serialization, and JS interop. Configuration

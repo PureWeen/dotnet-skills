@@ -2,8 +2,23 @@
 
 This orchestration is not required for a standalone Library and release report. Package-only
 uses `assessment init --kind package`, report verification, and the package reader without a
-component inventory or library index. The original library source-closure requirement below
-still applies to its analyzer, trim, and AOT checks.
+component inventory or library index. Its original library source-closure prerequisite is owned
+by [artifact acquisition](artifact-acquisition.md#original-library-source-closure), not orchestration.
+
+## Split coordination
+
+For an ordinary split request, preserve one 60-row `package` handoff and one bound 61-row
+`component` handoff per confirmed component. Reject `unified.assessment.*` as a mode mismatch.
+A coordinator-managed split request requires separate unit execution; a request for an already
+bound component alone does not introduce library orchestration.
+Use exactly one top-level `blazor-component-readiness-worker` session per confirmed unit when
+separate execution is required; read [worker execution](worker-execution.md) before staging or
+launch. Single unified work stays in one bounded context unless the owner explicitly requests
+separate execution. Package-only has no component worker or library inventory/index.
+
+Each unit follows [shared assessment workflow](assessment-workflow.md) and its selected area
+owners. Exact full-package binding precedes component work; scoped recovery/profile results
+cannot substitute for ordinary split or full-library completion.
 
 ## Capability gate
 
@@ -11,6 +26,7 @@ Full-library work requires separate top-level writable worker sessions. Nested c
 text-only and cannot own validator artifacts. If separate sessions are unavailable, stop before
 inventory confirmation with `unsupported host: full-library assessment requires isolated workers`.
 Do not serialize all components through one shared model context.
+Never invoke the worker through a nested agent/task tool.
 
 ## Inventory and ownership
 
@@ -30,11 +46,12 @@ A component handoff receives only its unit inputs and exact package revision. Re
 documents/source/evidence, duplicate unit IDs, changed package identities, missing modes, or
 repository-wide rows in a component result.
 
-Before library analyzer, trim, or AOT checks, acquire and record the original library source
-closure for the exact package identity: repository/archive provenance, source revision, and the
-actual library project or solution. A synthetic consumer that references the package is not the
-reviewed library target. If the original project or closure is unavailable, record the bounded
-missing input and keep the corresponding result incomplete.
+Use the loaded skill's launcher after the capability gate and owner confirmation:
+
+```text
+<launcher> inventory discover --root <output> --candidates <inventory-candidates.json> --output <output>/inventory.draft.json
+<launcher> inventory confirm --root <output> --draft <output>/inventory.draft.json --output <output>/inventory.confirmed.json
+```
 
 ## Run state and receipts
 
