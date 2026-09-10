@@ -42,8 +42,8 @@ public static class EvidenceCommand
           --nupkg only with package-artifact-metadata; use --content with every
           other existing provenance kind. --content is a regular file bounded by
           ResourceLimits.SupplementalInputAggregateBytes (64 MiB). The locator is logical
-          provenance metadata, never a filesystem path. No caller-supplied hash,
-          network access, inferred metadata, or guessed timestamp is accepted.
+          provenance metadata, never a filesystem path. No caller-supplied hash
+          or network access is accepted; metadata is explicit, not inferred.
           --input accepts any valid draft through the existing parser normalization
           and never rewrites that original file. The output is a fresh untrusted
           draft, not evidence validation or a readiness conclusion.
@@ -83,6 +83,9 @@ public static class EvidenceCommand
         not aliases for these logical locators.
         captured_at_utc records the actual capture instant in UTC, for example
         YYYY-MM-DDTHH:mm:ssZ; it is not a guessed package publication date.
+        Timestamp validation checks canonical UTC-second format, not whether the
+        supplied instant truthfully describes capture. Explicit recorded historical
+        capture times are preserved; deterministic repeats use the same supplied value.
         The example is a draft, not evidence or a claim of whole-input completeness.
         ledger-build generates stable IDs and canonical source-ledger bytes.
 

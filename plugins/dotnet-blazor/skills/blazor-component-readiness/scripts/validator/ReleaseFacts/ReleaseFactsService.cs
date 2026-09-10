@@ -167,7 +167,7 @@ public sealed partial class ReleaseFactsService
             comparisons.Add(new("sbom-document", "structural-json", Fact("spdx22.document"),
                 Fact("sbom-statement.predicate"),
                 JsonElement.DeepEquals(document22.RootElement, predicate) ? "match" : "mismatch",
-                "JSON structural equality, not byte equality or RDF equivalence; object order ignored, array order and absent/null retained."));
+                "Compared JSON structure only; RDF equivalence was not assessed."));
             Succeeded("All eleven comparisons executed; incompatible kinds are explicitly not-comparable.");
             var result = new ReleaseFactsResult(1, "release-facts/1.0.0", 1,
                 new(Path.GetRelativePath(root, inputPath).Replace('\\', '/'), Hash(manifestBytes)),

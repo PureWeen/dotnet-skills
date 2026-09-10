@@ -239,15 +239,23 @@ internal static class ReleaseFactsTests
             "--output", fixture.Path("skeleton.json"));
         Cli("assessment", "export-identity", "--assessment", fixture.Path("skeleton.json"),
             "--output", fixture.Path("identity.json"));
+        var capturedAt = DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'",
+            System.Globalization.CultureInfo.InvariantCulture);
         Cli("evidence", "draft-add", "--output", fixture.Path("evidence-draft.json"),
             "--claim", "Mechanical facts target.sha256 and release-package.sha256 differ in comparisons target-release.",
             "--scope", "repository-wide", "--kind", "reviewer-generated-analysis",
             "--method", "Offline release facts CLI; specific fact IDs target.sha256 and release-package.sha256. No authentication.",
-            "--captured-at", DateTime.UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'"),
+            "--captured-at", capturedAt,
             "--root", fixture.Root, "--manifest", postInput, "--evidence-input", "first.json");
+        var draft = CanonicalEvidenceJson.ParseDraftDocument(File.ReadAllBytes(fixture.Path("evidence-draft.json")));
+        Assert(draft.Records.Single().Provenance.CapturedAtUtc == capturedAt,
+            "post-result capture argument preserved in typed draft");
         Cli("evidence", "ledger-build", "--kind", "repository", "--subject", fixture.Path("identity.json"),
             "--draft", fixture.Path("evidence-draft.json"), "--nupkg", fixture.Target, "--output", fixture.Path("ledger.json"));
         Cli("evidence", "ledger-validate", "--ledger", fixture.Path("ledger.json"));
+        var ledger = CanonicalEvidenceJson.ParseSourceLedger(File.ReadAllBytes(fixture.Path("ledger.json")));
+        Assert(ledger.Records.Single().Provenance.CapturedAtUtc == capturedAt,
+            "post-result capture argument preserved in source ledger");
         using var ledgerJson = JsonDocument.Parse(File.ReadAllBytes(fixture.Path("ledger.json")));
         var id = ledgerJson.RootElement.GetProperty("records")[0].GetProperty("stable_id").GetString()!;
         Cli("evidence", "bundle", "--assessment", fixture.Path("identity.json"), "--source-ledger", fixture.Path("ledger.json"),
@@ -257,6 +265,11 @@ internal static class ReleaseFactsTests
         var bundle = CanonicalEvidenceJson.ParseBundle(File.ReadAllBytes(fixture.Path("bundle.json")));
         EvidenceInputBindingValidator.Validate(fixture.Root, assessment, input, bundle);
         Assert(bundle.Selection.Single().EvidenceId == id, "existing producer-generated EV1 consumed by bundle");
+        Assert(bundle.SourceLedgers.SelectMany(source => source.Ledger.Records)
+                   .Single(record => record.StableId == bundle.Selection.Single().EvidenceId)
+                   .Provenance.CapturedAtUtc == capturedAt,
+            "post-result capture argument preserved in selected bundle record");
+        Console.WriteLine("Post-result capture argument preserved through draft, ledger and selected bundle; metadata truth is not assessed.");
         Assert(Directory.GetFiles(fixture.Root, "*report*", SearchOption.AllDirectories).Length == 0,
             "integration does not render a report");
     }
@@ -273,6 +286,7 @@ internal static class ReleaseFactsTests
         fixture.Confirm();
         var result = fixture.Collect("compatible.json");
         ExpectComparison(result, "spdx30-release", "match");
+        ExpectDocumentComparison(fixture, result, byteIdentical: true, "match");
         Assert(result.Facts.Single(item => item.Id == "spdx30.file-sha256").Source.Pointer ==
                "/@graph/2/hashValue", "unique local reference resolves with target pointer");
         Assert(result.Facts.Single(item => item.Id == "spdx30.verification-link").Source.Pointer ==
@@ -284,18 +298,49 @@ internal static class ReleaseFactsTests
             new KeyValuePair<string, JsonNode?>(pair.Key, pair.Value?.DeepClone())));
         fixture.WriteSbom(reordered);
         fixture.Confirm();
-        ExpectComparison(fixture.Collect("object-order.json"), "sbom-document", "match");
+        ExpectDocumentComparison(fixture, fixture.Collect("object-order.json"), byteIdentical: false, "match");
 
         var altered = fixture.Spdx22.DeepClone().AsObject();
         altered["optional"] = null;
         fixture.WriteSbom(altered);
         fixture.Confirm();
-        ExpectComparison(fixture.Collect("null.json"), "sbom-document", "mismatch");
+        ExpectDocumentComparison(fixture, fixture.Collect("null.json"), byteIdentical: false, "mismatch");
         altered.Remove("optional");
         altered["creators"] = new JsonArray("second", "first");
         fixture.WriteSbom(altered);
         fixture.Confirm();
-        ExpectComparison(fixture.Collect("order.json"), "sbom-document", "mismatch");
+        ExpectDocumentComparison(fixture, fixture.Collect("order.json"), byteIdentical: false, "mismatch");
+    }
+
+    private static void ExpectDocumentComparison(
+        Fixture fixture, ReleaseFactsResult result, bool byteIdentical, string outcome)
+    {
+        using var archive = ZipFile.OpenRead(fixture.Path("spdx22.zip"));
+        using var entry = archive.GetEntry(Entry22)!.Open();
+        using var document = new MemoryStream();
+        entry.CopyTo(document);
+        var documentBytes = document.ToArray();
+        using var bundle = JsonDocument.Parse(File.ReadAllBytes(fixture.Path("sbom.json")));
+        var payload = Convert.FromBase64String(bundle.RootElement.GetProperty("dsseEnvelope")
+            .GetProperty("payload").GetString()!);
+        using var statement = JsonDocument.Parse(payload);
+        var predicateBytes = Encoding.UTF8.GetBytes(statement.RootElement.GetProperty("predicate").GetRawText());
+        Assert(documentBytes.SequenceEqual(predicateBytes) == byteIdentical,
+            $"actual document encodings byte-identical={byteIdentical}");
+        var documentFact = result.Facts.Single(fact => fact.Id == "spdx22.document");
+        var predicateFact = result.Facts.Single(fact => fact.Id == "sbom-statement.predicate");
+        Assert(documentFact.Kind == "document-checksum" && predicateFact.Kind == "document-checksum" &&
+               documentFact.Algorithm == "sha256" && predicateFact.Algorithm == "sha256",
+            "document digest kinds and algorithms preserved");
+        Assert(documentFact.Value == Hash(documentBytes) && predicateFact.Value == Hash(predicateBytes),
+            "document digests identify actual selected ZIP entry and decoded predicate bytes");
+        Assert((documentFact.Value == predicateFact.Value) == byteIdentical,
+            $"document digest equality agrees with actual encoding equality={byteIdentical}");
+        ExpectComparison(result, "sbom-document", outcome);
+        var comparison = result.Comparisons.Single(item => item.Id == "sbom-document");
+        Assert(comparison.Mode == "structural-json" &&
+               comparison.Reason == "Compared JSON structure only; RDF equivalence was not assessed.",
+            $"structural {outcome} must state exactly that RDF equivalence was not assessed; actual: {comparison.Reason}");
     }
 
     private static void TestFatalInputs(string root)

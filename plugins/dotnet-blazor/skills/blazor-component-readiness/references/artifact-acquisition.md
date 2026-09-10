@@ -179,8 +179,10 @@ are never disguised as `not-comparable`. A complete collection may contain `matc
 and `not-comparable`. The latter applies only to supported, unambiguous operands with incompatible
 declared kinds/algorithms. In particular, file-associated `PackageVerificationCode` is **not**
 a package-file checksum. Its separately labeled literal-value equality makes no identity or
-authentication claim. Embedded-SBOM comparison uses structural JSON equality (object order
-ignored, array order and absent/null retained), not byte equality or RDF equivalence.
+authentication claim. Embedded-SBOM comparison uses structural JSON equality: object order
+is ignored, array order and absent/null are retained. Both matches and mismatches report:
+`Compared JSON structure only; RDF equivalence was not assessed.`
+Independent document digest facts describe the serialized bytes, separately from structural comparison.
 Different document hashes establish different serialized bytes, not RDF equivalence or
 non-equivalence. Structural JSON comparison outcomes likewise establish no RDF-level relationship.
 

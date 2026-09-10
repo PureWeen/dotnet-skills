@@ -96,9 +96,36 @@ claims and inspection/capture facts; never invent provenance metadata.
 Evidence drafts are not canonical ledgers, and their logical locators are not filesystem paths.
 For ordinary authoring, use the typed producer rather than transcribing computed hashes into JSON:
 
-```text
-<launcher> evidence draft-add --output evidence-draft-01.json --claim "<observed atomic claim>" --scope repository-wide --kind package-artifact-metadata --locator package:whole-nupkg --method "<actual capture method>" --captured-at <actual-utc> --nupkg <exact.nupkg>
+For a new capture, obtain UTC mechanically at the capture step and pass it explicitly in the
+same shell/block. These Bash examples run in the shell where you defined `readiness` using
+SKILL.md; a later tool call does not inherit that function. For PowerShell, use the shipped
+launcher with `$SkillDir` and scratch configured by SKILL.md, not a `readiness` function.
+
+Bash:
+
+```bash
+CAPTURED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" &&
+readiness evidence draft-add --output evidence-draft-01.json \
+  --claim "<observed atomic claim>" --scope repository-wide \
+  --kind package-artifact-metadata --locator package:whole-nupkg \
+  --method "<actual capture method>" --captured-at "$CAPTURED_AT" --nupkg "<exact.nupkg>"
 ```
+
+PowerShell:
+
+```powershell
+$CapturedAt = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
+& (Join-Path $SkillDir "scripts/validator/run-validator.ps1") evidence draft-add `
+  --output evidence-draft-01.json --claim "<observed atomic claim>" --scope repository-wide `
+  --kind package-artifact-metadata --locator package:whole-nupkg `
+  --method "<actual capture method>" --captured-at $CapturedAt --nupkg "<exact.nupkg>"
+```
+
+When recording an actual earlier capture, use its already-recorded canonical UTC instant
+instead of obtaining a new clock value. Do not substitute a run-start value, file mtime,
+guessed time or backfill. Timestamp validation checks format, not the truth of capture metadata.
+Repeating the same evidence command into a new output with the same explicit capture value
+remains deterministic; do not obtain a new instant merely to repeat that recorded capture.
 
 `draft-add` computes the digest itself and accepts no hash override. Package artifact
 records require `--nupkg`; other existing provenance kinds support the manual `--content
@@ -113,10 +140,30 @@ output is an untrusted draft, not evidence validation or readiness. Existing val
 manual drafts remain supported by `ledger-build`; the producer does not replace
 their existing integrity or binding checks.
 
-For reviewer-generated analysis of a registered artifact, use the registered mode instead:
+For reviewer-generated analysis of a registered artifact, use the registered mode instead.
+At this capture step, the derived result must already exist and be retained, registered and
+explicitly confirmed in the final manifest. Only then obtain this capture's UTC value and invoke
+the producer in the same shell/block; do not precompute it before generating the result.
 
-```text
-<launcher> evidence draft-add --output <new-evidence-draft.json> --claim "<specific observed fact>" --scope repository-wide --kind reviewer-generated-analysis --root <output> --manifest <final.confirmed.json> --evidence-input <result-basename> --method "<actual mechanical capture method>" --captured-at <actual-utc>
+Bash (in the defining shell):
+
+```bash
+CAPTURED_AT="$(date -u '+%Y-%m-%dT%H:%M:%SZ')" &&
+readiness evidence draft-add --output "<new-evidence-draft.json>" \
+  --claim "<specific observed fact>" --scope repository-wide --kind reviewer-generated-analysis \
+  --root "<output>" --manifest "<final.confirmed.json>" --evidence-input "<result-basename>" \
+  --method "<actual mechanical capture method>" --captured-at "$CAPTURED_AT"
+```
+
+PowerShell:
+
+```powershell
+$CapturedAt = [DateTimeOffset]::UtcNow.ToString("yyyy-MM-dd'T'HH:mm:ss'Z'", [System.Globalization.CultureInfo]::InvariantCulture)
+& (Join-Path $SkillDir "scripts/validator/run-validator.ps1") evidence draft-add `
+  --output "<new-evidence-draft.json>" --claim "<specific observed fact>" `
+  --scope repository-wide --kind reviewer-generated-analysis `
+  --root "<output>" --manifest "<final.confirmed.json>" --evidence-input "<result-basename>" `
+  --method "<actual mechanical capture method>" --captured-at $CapturedAt
 ```
 
 All three registration options are required together. The producer validates the confirmed
