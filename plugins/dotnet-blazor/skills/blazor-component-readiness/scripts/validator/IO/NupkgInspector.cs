@@ -9,6 +9,18 @@ namespace BlazorComponentReadiness.Validator.IO;
 
 public static class NupkgInspector
 {
+    public static byte[] SerializeInspection(PackageIdentity identity) => StrictJson.SerializeCanonical(writer =>
+    {
+        writer.WriteStartObject();
+        writer.WriteNumber("schema_version", 1);
+        writer.WriteString("package_id", identity.Id);
+        writer.WriteString("package_version", identity.Version);
+        writer.WriteString("nupkg_sha256", identity.NupkgSha256);
+        writer.WriteNumber("nupkg_size", identity.NupkgSize);
+        writer.WriteString("nuspec_entry", identity.NuspecEntry);
+        writer.WriteEndObject();
+    });
+
     private const int UnixFileTypeMask = 0xF000;
     private const int UnixSymbolicLink = 0xA000;
     private static readonly Regex PackageIdPattern = new(

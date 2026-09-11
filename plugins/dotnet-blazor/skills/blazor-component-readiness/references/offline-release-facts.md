@@ -1,5 +1,10 @@
 # Offline release facts
 
+For an explicitly requested authorized-48 preparation pass that also needs package inspection,
+full source inventory and derived layout, use [operator-invoked package preparation](package-preparation.md).
+It wraps this unchanged collector and retains successful outputs for separate confirmation;
+it is not mandatory assessment/report publication or an automatic model launch.
+
 Use `release facts` only for already retained, confirmed inputs. It does not retrieve releases,
 fetch JSON-LD contexts, use credentials, authenticate signatures, score requirements or establish
 publication freshness. Internal provenance comparisons are not additional partner obligations.

@@ -14,6 +14,7 @@ public static class CliApplication
 
         Commands:
           package inspect    Inspect the exact identity and digest of a local .nupkg.
+          package prepare    Collect package facts/full archive inventory and seal a receipt.
           release facts      Collect offline facts from six confirmed release inputs.
           source inventory-archive
                              Inventory regular files in a retained source archive.
@@ -170,6 +171,8 @@ public static class CliApplication
 
     private static int RunPackage(IReadOnlyList<string> args, TextWriter output)
     {
+        if (args.Count > 0 && args[0] == "prepare")
+            return PreparationCommand.Run(args.Skip(1).ToArray(), output);
         if (args.Count == 0 || IsHelp(args[0]))
         {
             output.WriteLine(PackageInspectHelp);
@@ -191,17 +194,7 @@ public static class CliApplication
         var packagePath = options.Single("--nupkg");
         var outputPath = options.Optional("--output");
         var identity = NupkgInspector.Inspect(packagePath);
-        var json = StrictJson.SerializeCanonical(writer =>
-        {
-            writer.WriteStartObject();
-            writer.WriteNumber("schema_version", 1);
-            writer.WriteString("package_id", identity.Id);
-            writer.WriteString("package_version", identity.Version);
-            writer.WriteString("nupkg_sha256", identity.NupkgSha256);
-            writer.WriteNumber("nupkg_size", identity.NupkgSize);
-            writer.WriteString("nuspec_entry", identity.NuspecEntry);
-            writer.WriteEndObject();
-        });
+        var json = NupkgInspector.SerializeInspection(identity);
 
         if (outputPath is not null)
         {

@@ -1,5 +1,6 @@
 using BlazorComponentReadiness.Validator.Inputs;
 using BlazorComponentReadiness.Validator.IO;
+using BlazorComponentReadiness.Validator.Preparation;
 
 namespace BlazorComponentReadiness.Validator.Cli;
 
@@ -13,7 +14,7 @@ public static class InputsCommand
           readiness-validator inputs candidates <init|add-...> --help
           readiness-validator inputs discover --root <dir> --nupkg <path> --candidates <json> --output <draft>
           readiness-validator inputs confirm --root <dir> --draft <json> --output <confirmed>
-          readiness-validator inputs validate --root <dir> --manifest <confirmed>
+          readiness-validator inputs validate --root <dir> --manifest <confirmed> [--preparation <sealed-receipt>]
         """;
 
     public static int Run(IReadOnlyList<string> args, TextWriter output)
@@ -80,13 +81,18 @@ public static class InputsCommand
             return ExitCodes.Success;
         }
 
-        var options = CommandOptions.Parse(args, "--root", "--manifest");
+        var options = CommandOptions.Parse(args, "--root", "--manifest", "--preparation");
         var bytes = BoundedIO.ReadAllBytes(
             options.Single("--manifest"),
             ResourceLimits.SerializedArtifactBytes,
             "confirmed input manifest");
         var manifest = InputManifestService.Parse(bytes);
         InputManifestService.Validate(manifest, Path.GetFullPath(options.Single("--root")), requireConfirmed: true);
+        if (options.Optional("--preparation") is { } receipt)
+        {
+            PreparationService.Validate(options.Single("--root"), receipt, manifest);
+            output.WriteLine("Preparation bindings and selected registrations validated (accounting/correspondence only).");
+        }
         return ExitCodes.Success;
     }
 

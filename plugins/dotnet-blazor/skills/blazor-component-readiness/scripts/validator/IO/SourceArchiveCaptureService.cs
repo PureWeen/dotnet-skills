@@ -10,7 +10,7 @@ namespace BlazorComponentReadiness.Validator.IO;
 /// <summary>
 /// Verifies selected files against a retained source archive without invoking Git or extracting it.
 /// </summary>
-public static class SourceArchiveCaptureService
+public static partial class SourceArchiveCaptureService
 {
     /// <summary>
     /// Inventories actual archive paths without establishing source provenance or project completeness.
@@ -271,7 +271,8 @@ public static class SourceArchiveCaptureService
         byte[] archiveBytes,
         IReadOnlyDictionary<string, string> selectedEntries,
         string? inventoryPrefix = null,
-        ICollection<InventoryEntry>? inventoryEntries = null)
+        ICollection<InventoryEntry>? inventoryEntries = null,
+        FullArchiveScan? full = null)
     {
         try
         {
@@ -292,6 +293,7 @@ public static class SourceArchiveCaptureService
                 }
 
                 SafePath.ValidateArchiveEntry(entry.FullName, IsZipSymbolicLink(entry));
+                full?.ZipMember(entry);
                 if (!names.Add(CanonicalArchiveName(entry.FullName)))
                 {
                     throw new DeterministicValidationException(
@@ -310,7 +312,9 @@ public static class SourceArchiveCaptureService
                     "source archive entry");
                 using var entryStream = entry.Open();
                 var selected = selectedEntries.ContainsKey(entry.FullName);
+                var previousBytes = expandedBytes;
                 var content = ReadEntry(entryStream, selected, ref expandedBytes);
+                full?.ReadSize(entry.Length, expandedBytes - previousBytes);
                 if (selected)
                 {
                     result.Add(
@@ -335,7 +339,8 @@ public static class SourceArchiveCaptureService
         byte[] archiveBytes,
         IReadOnlyDictionary<string, string> selectedEntries,
         string? inventoryPrefix = null,
-        ICollection<InventoryEntry>? inventoryEntries = null)
+        ICollection<InventoryEntry>? inventoryEntries = null,
+        FullArchiveScan? full = null)
     {
         try
         {
@@ -344,6 +349,7 @@ public static class SourceArchiveCaptureService
             // Bound metadata and padding too, before the TAR reader consumes them.
             long decompressedBytes = 0;
             using var expanded = new MemoryStream(ReadEntry(gzip, retain: true, ref decompressedBytes), writable: false);
+            if (full is not null) full.TarStreamBytes = decompressedBytes;
             using var reader = new TarReader(expanded, leaveOpen: false);
             var names = new HashSet<string>(StringComparer.Ordinal);
             var result = new Dictionary<string, CapturedArchiveContent>(StringComparer.Ordinal);
@@ -362,6 +368,7 @@ public static class SourceArchiveCaptureService
 
                 if (entry.EntryType == TarEntryType.GlobalExtendedAttributes)
                 {
+                    if (full is not null) full.ReaderMetadataEntries++;
                     continue;
                 }
 
@@ -373,6 +380,7 @@ public static class SourceArchiveCaptureService
                 }
 
                 SafePath.ValidateArchiveEntry(entry.Name, isSymbolicLink: false);
+                full?.Member(entry.Name, isDirectory, entry.Length);
                 if (!names.Add(CanonicalArchiveName(entry.Name)))
                 {
                     throw new DeterministicValidationException(
@@ -392,7 +400,9 @@ public static class SourceArchiveCaptureService
 
                 AddInventoryEntry(inventoryEntries, inventoryPrefix, entry.Name);
                 var selected = selectedEntries.ContainsKey(entry.Name);
+                var previousBytes = expandedBytes;
                 var content = ReadEntry(entry.DataStream ?? Stream.Null, selected, ref expandedBytes);
+                full?.ReadSize(entry.Length, expandedBytes - previousBytes);
                 if (selected)
                 {
                     result.Add(

@@ -211,6 +211,7 @@ Assert(
 var testGroups = new Dictionary<string, Action>(StringComparer.Ordinal)
 {
     ["foundation"] = () => FoundationTests.Run(root, plugin),
+    ["preparation"] = () => PreparationTests.Run(root, plugin),
     ["release-facts"] = () => ReleaseFactsTests.Run(root, plugin),
     ["evidence"] = () => EvidenceTests.Run(root, plugin),
     ["assessment"] = () => AssessmentTests.Run(root, plugin),
