@@ -216,6 +216,11 @@ Read the applicable area playbooks while collecting evidence:
 [trim/performance](references/area-trim-performance.md),
 [CI/release](references/area-ci-release.md), and
 [support/lifecycle](references/area-support-lifecycle.md).
+Before a positive source-based conclusion, apply its
+[route-reading gate](references/source-route-reading.md):
+inventory the component's applicable API surfaces, obtain complete relevant declarations, and
+follow their helpers through the actual outbound path. One safe writer does not close other
+identified input routes; an unread deciding body is missing evidence, not a product gap.
 
 ### 3. Run applicable probes
 
