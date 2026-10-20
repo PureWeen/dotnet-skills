@@ -42,6 +42,11 @@ manifest has SHA-256
 | Package/component isolation, interrupted-run recovery, revision chaining and index publication | `../readiness-validator/LibraryTests.cs` |
 | Positive activation, explicit coordinator/worker behavior, blind gates and ordinary-work dormancy | `agent.blazor-component-readiness/eval.yaml`, `blazor-component-readiness/eval.yaml` |
 
+The BCL-only workflow tests retain the documented under-500-line `SKILL.md` boundary
+and progressive-reference checks. Actual `cl100k_base` BPE size profiling and advisories
+belong to the shipping `skill-validator check`; chars/4 is only a reference estimate,
+not a second hard gate.
+
 Every integrity boundary keeps positive acceptance coverage and fail-closed
 negative or mutation coverage in the referenced suites. Model evaluations
 measure activation and workflow behavior; they do not replace deterministic

@@ -43,7 +43,8 @@ they do not replace a missing native interaction or prove visible UI.
 - callback awaiting, exception routing, renderer affinity, and rerendering;
 - timers, subscriptions, cancellation, object/module/listener ownership, and async disposal;
 - JS initialization, module scope, serialization, DOM sinks, and custom-element upgrade;
-- CSS isolation or documented global styles;
+- component-style isolation, absence of inline style attributes, and documentation and
+  prefixing of any global CSS surface;
 - initial/update render, late children, keyed reorder, selected removal/disablement, navigation,
   reset, detach/reattach, repeated initialization, callback failure, and cancellation;
 - typed values in both directions for every claimed supported shape.
@@ -63,6 +64,14 @@ contradicts the source proof and must be reconciled instead of bypassed.
 `source-proof-v1` is currently limited to components whose dynamic-child lifecycle is required.
 Keep non-dynamic callback/cleanup source proof fail-closed until a separate protocol defines how it
 reconciles without the lifecycle matrix.
+
+For `BEQ-20`, associate relevant declarations with their selectors in the reached exact shipped
+CSS, including custom properties on document-root selectors. Distinguish document-root from
+component/helper scope; neither a name list nor prefixed helper selectors alone establishes
+global prefix coverage. Direct evidence of an applicable global surface missing a required
+prefix establishes a bounded static `gap`, even when documentation correspondence is unresolved.
+Record that uncertainty separately, without claiming documentation is absent. Remediation must
+satisfy both documentation and prefixing; do not infer an unobserved runtime CSS collision.
 
 For documentation requirements, direct absence from the confirmed complete public corpus is a
 `gap`. For disjunctive requirements such as safe failure **or** documentation, do not call a gap

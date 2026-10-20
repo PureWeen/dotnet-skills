@@ -47,7 +47,7 @@ internal static class WorkflowTests
         var skill = File.ReadAllText(skillPath);
 
         Assert(File.ReadLines(skillPath).Count() < 500, "portable skill must remain below 500 lines");
-        Assert(skill.Length < 20_000, "portable skill must remain below the 5,000-token chars/4 warning proxy");
+        // Actual BPE size profiling and advisories belong to the shipping skill-validator.
 
         foreach (var reference in RequiredReferences)
         {
@@ -352,6 +352,13 @@ internal static class WorkflowTests
 
         var runtime = File.ReadAllText(Path.Combine(referencesRoot, "area-blazor-runtime.md"));
         AssertContains(runtime, "event handlers, callbacks, conditional branches", "BEQ-09 assignment coverage");
+        AssertContains(runtime, "associate relevant declarations with their selectors", "BEQ-20 selector/declaration evidence");
+        AssertContains(runtime, "custom properties on document-root selectors", "BEQ-20 document-root surface");
+        AssertContains(runtime, "component/helper scope; neither a name list nor prefixed helper selectors alone establishes", "BEQ-20 scope/prefix evidence boundary");
+        AssertContains(runtime, "prefix establishes a bounded static `gap`, even when documentation correspondence is unresolved", "BEQ-20 independent prefix conjunct");
+        AssertContains(runtime, "Record that uncertainty separately, without claiming documentation is absent", "BEQ-20 documentation uncertainty");
+        AssertContains(runtime, "satisfy both documentation and prefixing", "BEQ-20 conjunctive remediation");
+        AssertContains(runtime, "do not infer an unobserved runtime CSS collision", "BEQ-20 static/runtime boundary");
 
         var performance = File.ReadAllText(Path.Combine(referencesRoot, "area-trim-performance.md"));
         AssertContains(performance, "no repeated identity surface", "PERF-02 applicability boundary");
