@@ -210,7 +210,7 @@ internal static class Lp04Checks
 
     private static void CheckOracle([CallerFilePath] string source = "")
     {
-        Require(Catalog.Digest(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(source)!, "lp04_expectations.py"))) ==
+        Require(Catalog.Digest(File.ReadAllBytes(Path.Combine(Path.GetDirectoryName(source)!, "oracles", "lp04_expectations.py"))) ==
             "ade0f30f19d623877168b7808984ef26413c2449c85ee1ea353600fe528f6ab4", "Frozen oracle bytes (never executed)");
     }
 

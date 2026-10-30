@@ -5,22 +5,24 @@ using System.Text;
 using BlazorPackageResolver;
 
 var data = Path.Combine(AppContext.BaseDirectory, "data");
-var fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "cases.json");
+using var corpus = new FixtureCorpus();
+var fixtureRoot = corpus.Root;
+var fixture = Path.Combine(fixtureRoot, "cases.json");
 var catalog = Catalog.Load(data);
 var registry = Registry.Bootstrap(catalog);
 if (args is ["lp02"])
 {
-    Lp02Checks.Run(registry, Path.Combine(AppContext.BaseDirectory, "fixtures", "lp02"));
+    Lp02Checks.Run(registry, Path.Combine(fixtureRoot, "lp02"));
     return;
 }
 if (args is ["lp03"])
 {
-    Lp03Checks.Run(registry, catalog, Path.Combine(AppContext.BaseDirectory, "fixtures", "lp03"));
+    Lp03Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp03"));
     return;
 }
 if (args is ["lp04"])
 {
-    Lp04Checks.Run(registry, catalog, Path.Combine(AppContext.BaseDirectory, "fixtures", "lp04"));
+    Lp04Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp04"));
     return;
 }
 var expectedIds = ("LP-01 LP-02 LP-03 LP-04 LP-05 LP-06 LP-07 LP-08 LP-09 LP-10 " +
@@ -126,7 +128,7 @@ var applicable = Implemented(Fake("LP-01", input => Result(input, "missing-licen
     .Dispatch(new ResolverCase("applicable-missing", "LP-01", [], new Dictionary<string, CheckedInput>()));
 Check(applicable.Applicability == "applicable" && applicable.RequiredInput == "license-text",
     "Known applicability can escalate for missing facts");
-var branches = Path.Combine(AppContext.BaseDirectory, "fixtures", "branch-cases.json");
+var branches = Path.Combine(fixtureRoot, "branch-cases.json");
 var positiveInvocations = 0;
 CaseResult Positive(ResolverCase input)
 {
@@ -159,8 +161,8 @@ var pinned = new PinnedInput("package", "package.txt",
 Throws(() => branchRegistry.Dispatch(new ResolverCase("positive", "LP-01", [pinned],
     new Dictionary<string, CheckedInput> { ["package"] = new(pinned, "tampered"u8.ToArray()) })));
 Check(positiveInvocations == 2, "Tampered checked buffer rejected before handler invocation");
-var lp05Fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "lp05", "cases.json");
-var lp01Directory = Path.Combine(AppContext.BaseDirectory, "fixtures", "lp01");
+var lp05Fixture = Path.Combine(fixtureRoot, "lp05", "cases.json");
+var lp01Directory = Path.Combine(fixtureRoot, "lp01");
 var lp01Fixture = Path.Combine(lp01Directory, "cases.json");
 var lp01Output = Replay.Run(lp01Fixture, registry);
 Check(lp01Output.SequenceEqual(Replay.Run(lp01Fixture, registry)),
@@ -175,9 +177,9 @@ using (var doc = JsonDocument.Parse(lp01Output))
     NoClaims(doc.RootElement);
 }
 Lp01BoundaryChecks.Run(registry, lp01Directory);
-Lp02Checks.Run(registry, Path.Combine(AppContext.BaseDirectory, "fixtures", "lp02"));
-Lp03Checks.Run(registry, catalog, Path.Combine(AppContext.BaseDirectory, "fixtures", "lp03"));
-Lp04Checks.Run(registry, catalog, Path.Combine(AppContext.BaseDirectory, "fixtures", "lp04"));
+Lp02Checks.Run(registry, Path.Combine(fixtureRoot, "lp02"));
+Lp03Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp03"));
+Lp04Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp04"));
 var lp01Syncfusion = Environment.GetEnvironmentVariable("LP01_SYNCFUSION_NUPKG");
 var lp01Infragistics = Environment.GetEnvironmentVariable("LP01_INFRAGISTICS_NUPKG");
 Check((lp01Syncfusion is null) == (lp01Infragistics is null),
@@ -288,8 +290,8 @@ using (var retained = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(lp05Dire
             "Portable retained replay receipt must match pinned input and frozen result.");
     }
 }
-var lp05Bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
-    "fixtures", "lp05", "packages", "expression.nupkg"));
+var lp05Bytes = File.ReadAllBytes(Path.Combine(fixtureRoot,
+    "lp05", "packages", "expression.nupkg"));
 var lp05Pinned = new PinnedInput("package", "nonexistent-but-pinned.nupkg", Catalog.Digest(lp05Bytes));
 var lp05Case = new ResolverCase("path-independent", "LP-05", [lp05Pinned],
     new Dictionary<string, CheckedInput> { ["package"] = new(lp05Pinned, lp05Bytes) });
@@ -312,7 +314,7 @@ Throws(() => registry.Dispatch(lp05Case with
 Check(lp05Output.SequenceEqual(Replay.Run(lp05Fixture, registry)),
     "LP-05 tamper rejection does not affect later deterministic replay");
 Lp05BoundaryChecks.Run(registry);
-var lp06Fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "lp06", "cases.json");
+var lp06Fixture = Path.Combine(fixtureRoot, "lp06", "cases.json");
 var lp06Output = Replay.Run(lp06Fixture, registry);
 Check(lp06Output.SequenceEqual(Replay.Run(lp06Fixture, registry)),
     "All frozen LP-06 branches replay with identical canonical output bytes");
@@ -365,8 +367,8 @@ using (var retained = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(lp06Dire
     }
 }
 Lp06BoundaryChecks.Run(registry);
-var lp06Bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
-    "fixtures", "lp06", "packages", "url.nupkg"));
+var lp06Bytes = File.ReadAllBytes(Path.Combine(fixtureRoot,
+    "lp06", "packages", "url.nupkg"));
 var lp06Pinned = new PinnedInput("package", "nonexistent-but-pinned.nupkg", Catalog.Digest(lp06Bytes));
 var lp06Case = new ResolverCase("path-independent", "LP-06", [lp06Pinned],
     new Dictionary<string, CheckedInput> { ["package"] = new(lp06Pinned, lp06Bytes) });
@@ -380,7 +382,7 @@ Throws(() => registry.Dispatch(lp06Case with
 }));
 Check(lp06Output.SequenceEqual(Replay.Run(lp06Fixture, registry)),
     "LP-06 tamper rejection does not affect later deterministic replay");
-var lp07Fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "lp07", "cases.json");
+var lp07Fixture = Path.Combine(fixtureRoot, "lp07", "cases.json");
 var lp07Output = Replay.Run(lp07Fixture, registry);
 Check(lp07Output.SequenceEqual(Replay.Run(lp07Fixture, registry)),
     "All frozen LP-07 branches replay with identical canonical output bytes");
@@ -433,8 +435,8 @@ using (var retained = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(lp07Dire
     }
 }
 Lp07BoundaryChecks.Run(registry);
-var lp07Bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
-    "fixtures", "lp07", "packages", "sha1.nupkg"));
+var lp07Bytes = File.ReadAllBytes(Path.Combine(fixtureRoot,
+    "lp07", "packages", "sha1.nupkg"));
 var lp07Pinned = new PinnedInput("package", "nonexistent-but-pinned.nupkg", Catalog.Digest(lp07Bytes));
 var lp07Case = new ResolverCase("path-independent", "LP-07", [lp07Pinned],
     new Dictionary<string, CheckedInput> { ["package"] = new(lp07Pinned, lp07Bytes) });
@@ -448,7 +450,7 @@ Throws(() => registry.Dispatch(lp07Case with
 }));
 Check(lp07Output.SequenceEqual(Replay.Run(lp07Fixture, registry)),
     "LP-07 tamper rejection does not affect later deterministic replay");
-var lp08Fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "lp08", "cases.json");
+var lp08Fixture = Path.Combine(fixtureRoot, "lp08", "cases.json");
 var lp08Output = Replay.Run(lp08Fixture, registry);
 Check(lp08Output.SequenceEqual(Replay.Run(lp08Fixture, registry)),
     "All frozen LP-08 branches replay with identical canonical output bytes");
@@ -501,8 +503,8 @@ using (var retained = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(lp08Dire
     }
 }
 Lp08BoundaryChecks.Run(registry);
-var lp08Bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
-    "fixtures", "lp08", "packages", "plain.nupkg"));
+var lp08Bytes = File.ReadAllBytes(Path.Combine(fixtureRoot,
+    "lp08", "packages", "plain.nupkg"));
 var lp08Pinned = new PinnedInput("package", "nonexistent-but-pinned.nupkg", Catalog.Digest(lp08Bytes));
 var lp08Case = new ResolverCase("path-independent", "LP-08", [lp08Pinned],
     new Dictionary<string, CheckedInput> { ["package"] = new(lp08Pinned, lp08Bytes) });
@@ -520,7 +522,7 @@ Throws(() => registry.Dispatch(lp08Case with
 }));
 Check(lp08Output.SequenceEqual(Replay.Run(lp08Fixture, registry)),
     "LP-08 tamper rejection does not affect later deterministic replay");
-var lp09Fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "lp09", "cases.json");
+var lp09Fixture = Path.Combine(fixtureRoot, "lp09", "cases.json");
 var lp09Output = Replay.Run(lp09Fixture, registry);
 Check(lp09Output.SequenceEqual(Replay.Run(lp09Fixture, registry)),
     "All frozen LP-09 branches replay with identical canonical output bytes");
@@ -573,8 +575,8 @@ using (var retained = JsonDocument.Parse(File.ReadAllBytes(Path.Combine(lp09Dire
     }
 }
 Lp09BoundaryChecks.Run(registry);
-var lp09Bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory,
-    "fixtures", "lp09", "packages", "plain.nupkg"));
+var lp09Bytes = File.ReadAllBytes(Path.Combine(fixtureRoot,
+    "lp09", "packages", "plain.nupkg"));
 var lp09Pinned = new PinnedInput("package", "nonexistent-but-pinned.nupkg", Catalog.Digest(lp09Bytes));
 var lp09Case = new ResolverCase("path-independent", "LP-09", [lp09Pinned],
     new Dictionary<string, CheckedInput> { ["package"] = new(lp09Pinned, lp09Bytes) });
@@ -592,7 +594,7 @@ Throws(() => registry.Dispatch(lp09Case with
 }));
 Check(lp09Output.SequenceEqual(Replay.Run(lp09Fixture, registry)),
     "LP-09 tamper rejection does not affect later deterministic replay");
-var lp10Fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "lp10", "cases.json");
+var lp10Fixture = Path.Combine(fixtureRoot, "lp10", "cases.json");
 var lp10Output = Replay.Run(lp10Fixture, registry);
 Check(lp10Output.SequenceEqual(Replay.Run(lp10Fixture, registry)),
     "All frozen LP-10 branches replay with identical canonical output bytes");
@@ -606,7 +608,7 @@ using (var doc = JsonDocument.Parse(lp10Output))
     NoClaims(doc.RootElement);
 }
 Lp10BoundaryChecks.Run(registry, lp10Fixture);
-var pi01Fixture = Path.Combine(AppContext.BaseDirectory, "fixtures", "pi01", "cases.json");
+var pi01Fixture = Path.Combine(fixtureRoot, "pi01", "cases.json");
 var pi01Output = Replay.Run(pi01Fixture, registry);
 Check(pi01Output.SequenceEqual(Replay.Run(pi01Fixture, registry)),
     "All frozen PI-01 branches replay with identical canonical output bytes");
@@ -619,7 +621,7 @@ using (var doc = JsonDocument.Parse(pi01Output))
         "Exact 138-case PI-01 synthetic branch matrix");
     NoClaims(doc.RootElement);
 }
-Pi01BoundaryChecks.Run(registry);
+Pi01BoundaryChecks.Run(registry, fixtureRoot);
 MetadataSiblingChecks.Run(registry);
 Throws(() => Implemented(Fake("LP-01", input =>
     Result(input, "bad", "deterministic", "unknown", "guessed", null, null, null)))
@@ -698,16 +700,17 @@ try
     CliReject("Invalid resolver catalog or replay contract.", "replay", path);
     File.WriteAllText(path, suite.Replace("\"path\": \"owner.txt\"", "\"path\": \"\\u0000\""));
     CliReject("Invalid resolver catalog or replay contract.", "replay", path);
-    CliReject("Usage: blazor-package-resolver [coverage | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]", "replay");
+    CliReject("Usage: blazor-package-resolver [coverage | resolve <request.json> | package <nupkg> | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]", "replay");
 }
 finally
 {
     Directory.Delete(temp, true);
 }
 
-var source = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
+RequestChecks.Run(registry, fixtureRoot);
+var source = FixtureCorpus.Runtime;
 var allowed = new HashSet<string>(StringComparer.Ordinal)
-    { "Catalog.cs", "Registry.cs", "Cases.cs", "Program.cs",
+    {     "Catalog.cs", "Registry.cs", "Cases.cs", "Program.cs", "Requests.cs",
       "Lp01LicensePolicyResolver.cs", "Lp01SpdxExpression.cs", "Lp01CaseFold.cs",
       "Lp01ArchiveIntegrity.cs", "AssemblyInfo.cs",
       "Lp02PublicSourceResolver.cs", "Lp02SourceAcquisition.cs",
@@ -718,7 +721,7 @@ var allowed = new HashSet<string>(StringComparer.Ordinal)
       "Lp08AuthorsResolver.cs", "Lp09ProjectUrlResolver.cs",
       "Lp10BinaryAttributionResolver.cs", "NuGetNuspecReader.cs",
       "Pi01StrongNameResolver.cs", "Pi01PeInspector.cs" };
-var allowedFiles = allowed.Concat(["BlazorPackageResolver.csproj", "README.md",
+var allowedFiles = allowed.Concat(["BlazorPackageResolver.csproj", "Resolver.props", "restore-offline.config",
     "data/provenance.json", "data/rubric.json", "data/requirement-basis.json",
     "data/lp01-casefold-15.0.0.json"])
     .ToHashSet(StringComparer.Ordinal);

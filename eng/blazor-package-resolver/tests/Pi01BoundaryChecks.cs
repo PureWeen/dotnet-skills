@@ -18,9 +18,9 @@ internal static class Pi01BoundaryChecks
         "<package xmlns=\"http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd\">" +
         "<metadata><id>Sample.PI01</id><version>1.0.0</version></metadata></package>");
 
-    internal static void Run(Registry registry)
+    internal static void Run(Registry registry, string fixtureRoot)
     {
-        var directory = Path.Combine(AppContext.BaseDirectory, "fixtures", "pi01");
+        var directory = Path.Combine(fixtureRoot, "pi01");
         var suite = JsonSerializer.Deserialize<CaseSuite>(
             File.ReadAllBytes(Path.Combine(directory, "cases.json")), FixtureJson)
             ?? throw new InvalidDataException("Missing PI-01 frozen cases.");

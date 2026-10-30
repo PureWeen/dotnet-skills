@@ -1,13 +1,26 @@
-# Blazor package resolver bootstrap
+# Deterministic Blazor package resolvers
 
-This standalone, dependency-free .NET CLI is a **non-scoring dispatch foundation**, not
-a skill, assessment, readiness authority, or component resolver. The full 112-row
+This dependency-free .NET CLI is a **non-scoring dispatch foundation**, not
+an assessment, readiness authority, or component resolver. Its canonical production source
+and data now ship in
+[`blazor-package-readiness-resolver`](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/SKILL.md).
+The local project imports that source directly; there is no second production copy.
+The installed cross-platform launcher builds only the trusted tool with empty feeds and
+external temporary outputs; it never restores or executes assessed code.
+
+The [compact corpus contract](tests/CORPUS.md) explains byte-locked generation, automatic
+temporary-root replay, exact parent comparison and the **narrowed PI-01 independence claim**.
+Every `tests/fixtures/...` path below is a preserved **logical materialized path**, not a
+required checked-in tree. Historical contracts remain exact raw seeds under `tests/corpus/seeds/`.
+The 868 row scenarios, two foundation scenarios and complete expected outputs are unchanged.
+
+The full 112-row
 normative rubric and JSON crosswalk/basis are copied byte-for-byte from
 `fefdaccbfdc0f34cec3d3ca5b8f7ea3fce4a68e3`, the tip of
 `https://github.com/dotnet/skills` branch `shneuvil-public-blazor-readiness`
 at copy time. Branch tips can move; the copied bytes remain independently
 pinned by the original paths, Git blob IDs and SHA-256 digests in
-`data/provenance.json`. The loader checks both digests, crosswalk clauses,
+the canonical runtime's `data/provenance.json`. The loader checks both digests, crosswalk clauses,
 source version and all core scopes. Only the 60 `repository-wide` core rows
 enter the registry; the 52 component rows and the separate TA-08 extension
 are excluded. LP-01 through LP-10 have deterministic checked-byte
@@ -35,7 +48,7 @@ Run `python eng\blazor-package-resolver\tests\lp01_expectations.py`
 to check the frozen oracle and policy bytes independently of production.
 
 LP-03's **offline production handler** implements the accepted Phase A contract
-at [`tests/fixtures/lp03/README.md`](tests/fixtures/lp03/README.md), frozen at
+at [the retained LP-03 contract](tests/corpus/seeds/lp03__README.md), frozen at
 `a8824050de091f44d90848847c33f499d0db834c`. That historical Phase A ledger,
 oracle and all its checked bytes remain unchanged, including its pre-production
 status statements. Production consumes checked buffers only; it never consults
@@ -91,7 +104,8 @@ checks the unchanged oracle: 49 fixed weakened-rule variants / 61 executions
 meta-checks. `ResolverChecks -- lp03` independently materializes all 33 fixed
 in-memory recipes in C#, executes every registered witness against production,
 compares full canonical results, checks the five loaders before dispatch and
-tests parser/resource/checked-buffer/culture boundaries. It never calls Python.
+tests parser/resource/checked-buffer/culture boundaries. Python constructs locked fixture
+bytes only; classification and counterfactual execution remain native.
 The full suite also runs these checks. Optional actual retained runs require
 both `LP03_SYNCFUSION_NUPKG` and `LP03_INFRAGISTICS_NUPKG`; exact lengths,
 digests and actual nuspec identities are verified from the same buffers.
@@ -101,7 +115,7 @@ separately rejected. Supply the corresponding `LP01_*` and `LP02_*` pairs to
 include their retained regressions in the full suite.
 
 LP-04's **offline production handler** implements the accepted
-[`notice-coverage-v1` Phase A contract](tests/fixtures/lp04/README.md), frozen at
+[`notice-coverage-v1` Phase A contract](tests/corpus/seeds/lp04__README.md), frozen at
 `68893eb6d5bf8ebab919a8787069c9870a110039`. All accepted Phase A files remain
 byte-identical, including historical pre-production status statements.
 Production reads only checked buffers, never fixture names, ledgers, case IDs,
@@ -151,12 +165,12 @@ and 116 native fixed-memory recipes), 256 registration/empty-witness
 meta-checks, five loader rejections, six retained binding negatives and 218
 strict parser/resource/checked-buffer/culture runtime boundaries. It compares
 complete canonical results, not just branch counts. Counterfactual controls are
-internal friend-assembly test entry points admitting only the 108 frozen labels;
+friend-assembly test entry points compiled only with `RESOLVER_TEST_HOOKS`, admitting only the 108 frozen labels;
 unknown labels are rejected and normal dispatch has no weakening option.
 The shared ZIP validator's alias bypass is
 used only by those explicit counterfactual checks; all existing/default callers
 retain strict name validation and every counterfactual retains raw range/CRC
-validation. The tests never invoke Python. Run the unchanged independent
+validation. Python only materializes locked fixture bytes, never classifications. Run the unchanged independent
 `python eng\blazor-package-resolver\tests\lp04_expectations.py` (also `-O`)
 separately. Optional paired `LP04_SYNCFUSION_NUPKG` /
 `LP04_INFRAGISTICS_NUPKG` bindings verify exact retained bytes/identities and
@@ -200,23 +214,38 @@ Run from the repository root with the normal SDK in `global.json`:
 
 ```text
 dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- coverage
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/lp01/cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/lp02/cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/lp03/cases.json
-dotnet run --project eng\blazor-package-resolver\BlazorPackageResolver.csproj -- replay eng\blazor-package-resolver\tests\fixtures\lp04\cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/lp05/cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/lp06/cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/lp07/cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/lp08/cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/lp09/cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/lp10/cases.json
-dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj -- replay eng/blazor-package-resolver/tests/fixtures/pi01/cases.json
+python eng/blazor-package-resolver/tests/corpus.py verify --parent
+python eng/blazor-package-resolver/tests/test_corpus.py
+python eng/blazor-package-resolver/tests/corpus.py replay foundation
+python eng/blazor-package-resolver/tests/corpus.py replay lp01
+python eng/blazor-package-resolver/tests/corpus.py replay lp02
+python eng/blazor-package-resolver/tests/corpus.py replay lp03
+python eng/blazor-package-resolver/tests/corpus.py replay lp04
+python eng/blazor-package-resolver/tests/corpus.py replay lp05
+python eng/blazor-package-resolver/tests/corpus.py replay lp06
+python eng/blazor-package-resolver/tests/corpus.py replay lp07
+python eng/blazor-package-resolver/tests/corpus.py replay lp08
+python eng/blazor-package-resolver/tests/corpus.py replay lp09
+python eng/blazor-package-resolver/tests/corpus.py replay lp10
+python eng/blazor-package-resolver/tests/corpus.py replay pi01
 dotnet run --project eng/blazor-package-resolver/tests/ResolverChecks.csproj
 dotnet run --project eng/blazor-package-resolver/tests/ResolverChecks.csproj -- lp03
 dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj -- lp04
 dotnet run --configuration Release --project eng\blazor-package-resolver\tests\ResolverChecks.csproj -- lp04
 ```
+
+Installed use needs only the complete plugin:
+
+```text
+python plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/scripts/run-resolver.py package <supplied.nupkg>
+python plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/scripts/run-resolver.py resolve <checked-request.json>
+```
+
+`resolve` admits a bounded schema-version-1 request with `case_id`, `row_id` and pinned
+`inputs`, without requiring or inventing expected answers. It uses the unchanged handlers
+and canonical result writer. Native checks compare this path against all 870 accepted
+foundation/row outcomes. Invalid bindings, duplicates, unknown fields, links and resource
+limits fail explicitly. The installed launcher does not expose acquisition.
 
 `coverage` emits ordered, canonical UTF-8 JSON with the two source digests and
 per-row scope, text, clause, and work state. `replay` reads a `schema_version: 1`
@@ -247,7 +276,7 @@ command disables application credentials, cookies, proxies, redirects and
 decompression; replay never retrieves anything. The full contract,
 acquisition procedure, schema, numerical limits, 33 frozen oracle cases,
 15 focused runtime cases (48 total named synthetic cases) and two opt-in retained escalations are in
-[`tests/fixtures/lp02/README.md`](tests/fixtures/lp02/README.md).
+[the retained LP-02 contract](tests/corpus/seeds/lp02__README.md).
 The accepted base has no readiness skill acquisition infrastructure; this
 implementation reuses the existing checked-input/digest/replay and bounded
 archive/nuspec surfaces instead of importing a second evidence framework.
@@ -377,7 +406,7 @@ or a specific `missing_fact`, `required_input`, and `next_category`. Branches of
 the same future row may take different paths. Deterministic branches need a
 finding and evidence; unknown applicability must escalate. A known applicable
 branch may also escalate when a named fact/input remains missing. The dispatcher
-escalates the other 51 unimplemented rows as `package-dispatcher`, not as a claimed row
+escalates the other 49 unimplemented rows as `package-dispatcher`, not as a claimed row
 resolver. Registry construction rejects missing/extra IDs, component or extension
 IDs, handlers without registrations, implementation declarations without matching
 handlers, and handlers on TBD rows.

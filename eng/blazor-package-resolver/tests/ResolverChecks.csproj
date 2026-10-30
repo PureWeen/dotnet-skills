@@ -7,8 +7,8 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\BlazorPackageResolver.csproj" />
-    <Content Include="..\data\*.json" Link="data\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
-    <Content Include="fixtures\**\*" CopyToOutputDirectory="PreserveNewest" />
+    <ProjectReference Include="..\BlazorPackageResolver.csproj" AdditionalProperties="EnableResolverTestHooks=true" />
+    <Content Include="..\..\..\plugins\dotnet-blazor\skills\blazor-package-readiness-resolver\scripts\resolver\data\*.json"
+             Link="data\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

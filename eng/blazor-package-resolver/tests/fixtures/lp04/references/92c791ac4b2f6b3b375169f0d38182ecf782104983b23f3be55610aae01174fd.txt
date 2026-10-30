@@ -1,1 +1,0 @@
-Fictional bundled widget attribution must be retained.

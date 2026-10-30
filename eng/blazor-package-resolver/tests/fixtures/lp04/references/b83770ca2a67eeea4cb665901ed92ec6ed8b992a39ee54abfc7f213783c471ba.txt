@@ -1,4 +1,0 @@
-Aggregate header
-Fictional complete short license; preserve these bytes.
-Fictional A attribution must be retained.
-Fictional bundled widget attribution must be retained.
