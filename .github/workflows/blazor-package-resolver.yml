@@ -4,12 +4,16 @@ on:
   pull_request:
     paths:
       - "eng/blazor-package-resolver/**"
+      - "plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/**"
+      - "plugins/dotnet-blazor/skills/blazor-component-readiness/**"
       - ".github/workflows/blazor-package-resolver.yml"
       - "global.json"
   push:
     branches: [main]
     paths:
       - "eng/blazor-package-resolver/**"
+      - "plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/**"
+      - "plugins/dotnet-blazor/skills/blazor-component-readiness/**"
       - ".github/workflows/blazor-package-resolver.yml"
       - "global.json"
   workflow_dispatch:
@@ -31,9 +35,17 @@ jobs:
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v5
         with:
           global-json-file: global.json
+          dotnet-version: "10.0.x"
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Verify compact corpus and rejection boundaries
+        run: python eng/blazor-package-resolver/tests/test_corpus.py
       - name: Build
         run: dotnet build eng/blazor-package-resolver/tests/ResolverChecks.csproj --nologo
       - name: Check synthetic contracts and architecture
         run: dotnet run --project eng/blazor-package-resolver/tests/ResolverChecks.csproj --no-build
       - name: Replay synthetic cases
-        run: dotnet run --project eng/blazor-package-resolver/BlazorPackageResolver.csproj --no-build -- replay eng/blazor-package-resolver/tests/fixtures/cases.json
+        run: python eng/blazor-package-resolver/tests/corpus.py replay foundation
+      - name: Check installed offline resolver and report handoff
+        run: python eng/blazor-package-resolver/tests/test_shipping.py

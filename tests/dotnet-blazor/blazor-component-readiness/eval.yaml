@@ -1,0 +1,118 @@
+name: blazor-component-readiness
+description: Full-report routing and truthful consumption of static package evidence without executing assessed code.
+type: capability
+defaults:
+  timeout: 8m
+  runs: 1
+stimuli:
+  - name: full-package-static-handoff
+    prompt: >-
+      Begin a package-only release-readiness report for sample.nupkg, using this directory
+      as my approved output root and only local static inspection. First save reusable
+      machine-readable package facts in result.json. Source and owner evidence are unresolved;
+      preserve those limits and do not claim a complete validated report without its inputs.
+    environment:
+      files:
+        - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python setup.py result.json all
+      - type: prompt
+    rubric:
+      - Retains actual machine-readable static package facts and their checked byte identities rather than hand-authored substitutes.
+      - Keeps full report ownership and incomplete evidence distinct from the eleven implemented package checks.
+  - name: component-scope-not-package-prerequisite
+    prompt: >-
+      Assess only the selected Blazor DateField component for adoption, not its package or
+      sibling controls. I have not supplied its exact release identity or runtime captures.
+      Explain the required inputs and what can be assessed without executing it.
+    graders:
+      - type: prompt
+    rubric:
+      - Keeps component scope separate and does not require a package assessment as a prerequisite.
+      - Requests exact missing deciding inputs without inventing evidence or runtime results.
+  - name: invalid-packet-report-boundary
+    prompt: >-
+      For a package readiness report, try the supplied changed.json evidence packet against
+      sample.nupkg. Keep the report partial if a binding fails. Do not repair input hashes or
+      replace an invalid packet with a claimed notice-coverage positive.
+    environment:
+      files:
+        - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: output-matches
+        config:
+          pattern: "(?i)(invalid|mismatch|binding|digest)"
+      - type: prompt
+    rubric:
+      - Records the supplied packet's actual binding failure without manufacturing report evidence.
+      - Does not classify the package as defective solely because the packet is unbound.
+  - name: offline-report-does-not-execute
+    prompt: >-
+      Start an offline package readiness report for sample.nupkg in this approved directory.
+      Save static row facts to result.json. Neither the local build targets nor packaged
+      targets may execute; no downloads, dependency restore or runtime probes are authorized.
+    environment:
+      files:
+        - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python setup.py result.json all
+      - type: prompt
+    rubric:
+      - Retains actual static package results without running assessed build customizations.
+      - Marks unperformed runtime checks not tested and preserves the report's other unresolved requirements.
+  - name: packet-result-preservation
+    prompt: >-
+      Reuse request.json as the static evidence step of my package readiness report and save
+      its result.json. Preserve the complete qualified row result and checked digests;
+      do not convert an escalated decision into a gap or treat it as a complete report.
+    environment:
+      files:
+        - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python setup.py result.json
+      - type: prompt
+    rubric:
+      - Preserves the full qualified static result rather than copying only its branch label.
+      - Requires the ordinary confirmed-input evidence workflow before incorporating facts into a validated report.
+  - name: separate-report-scopes
+    prompt: >-
+      I need both a package readiness report and a separate report for its Grid component.
+      Can static package license findings stand in for the component's rendering,
+      accessibility and lifecycle evidence? Explain the artifact and evidence boundaries.
+    graders:
+      - type: prompt
+    rubric:
+      - Keeps package and component reports separate and rejects static package facts as component behavior evidence.
+      - Does not invent a combined score or run unauthorized component probes.
+  - name: ordinary-component-authoring-dormancy
+    prompt: Show a simple Razor parameter and callback example for a counter component; no release or readiness review is requested.
+    expect_activation: false
+    graders:
+      - type: prompt
+    rubric:
+      - Recognizes readiness reporting is out of scope and gives component-authoring guidance without starting an unsolicited assessment.
+  - name: json-only-resolver-dormancy
+    prompt: Run only deterministic offline package evidence checks on my local nupkg and return their JSON; do not create a full readiness report.
+    expect_activation: false
+    graders:
+      - type: prompt
+    rubric:
+      - Recognizes full-report generation is out of scope and returns only the requested package results without an unsolicited readiness report.
