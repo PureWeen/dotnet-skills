@@ -14,6 +14,12 @@ package/version/digest, requested kind, approved external output root, exclusion
 Do not begin assessment probes from an unconfirmed manifest or broaden an assigned unit.
 Supplied artifacts are starting inputs, not proof that the requested investigation is complete.
 
+The approved output root may already exist. Directory existence alone is not prior assessment
+content and is never a reason to stop. Inspect its entry names before writing, create missing
+directories, and rely on the producers' no-overwrite behavior. If an intended output filename or
+run directory already contains retained work, preserve it and select a new child run directory or
+report the exact collision; do not reject an empty or host-precreated root.
+
 Enforce the skill's [assessed-code execution prerequisite](../SKILL.md#assessed-code-execution-prerequisite)
 before executable collection. Input confirmation does not authorize execution or establish host
 isolation; continue permitted static work and preserve actual prerequisite blockers.
