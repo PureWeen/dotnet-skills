@@ -13,6 +13,7 @@ public static class AssessmentCommand
 
         Usage:
           readiness-validator assessment init --kind <package|component> --root <dir> --input <confirmed> --output <json> [--component <id>] [--package-revision <dir>] [--package-feedback <markdown>]
+          readiness-validator assessment apply-decisions --assessment <initialized-or-draft-json> --decisions <decision-json> --output <draft-json>
           readiness-validator assessment canonicalize --assessment <json> --output <canonical-json>
           readiness-validator assessment export-identity --assessment <canonical-assessment> --output <new-identity-json>
           readiness-validator assessment validate --root <dir> --input <confirmed> --assessment <json> --evidence <bundle> [--package-revision <dir>] [--package-feedback <markdown>]
@@ -25,6 +26,9 @@ public static class AssessmentCommand
         Do not hand-author or reformat exported identity files. canonicalize writes a full
         assessment, not a standalone evidence identity. It also orders evidence IDs in rows,
         findings, and summary groups without adding, removing, or deduplicating references.
+        apply-decisions updates only mutable draft fields from a data file; omitted rows retain
+        their existing draft values. It rejects duplicate or unknown row IDs and immutable-field
+        changes are impossible through this command.
         Completed evidence handoffs require evidence bundle --root/--manifest to
         accept input linkage. This does not score null rows or validate readiness;
         assessment validate remains required for assessment correctness.
@@ -45,12 +49,36 @@ public static class AssessmentCommand
         return args[0] switch
         {
             "init" => Initialize(args.Skip(1).ToArray(), output),
+            "apply-decisions" => ApplyDecisions(args.Skip(1).ToArray(), output),
             "canonicalize" => Canonicalize(args.Skip(1).ToArray(), output),
             "export-identity" => ExportIdentity(args.Skip(1).ToArray(), output),
             "validate" => Validate(args.Skip(1).ToArray(), output),
             "revise" => Revise(args.Skip(1).ToArray(), output),
             _ => throw new UsageException($"Unknown assessment command '{args[0]}'.")
         };
+    }
+
+    private static int ApplyDecisions(IReadOnlyList<string> args, TextWriter output)
+    {
+        if (args.Count == 1 && IsHelp(args[0]))
+        {
+            output.WriteLine(Help);
+            return ExitCodes.Success;
+        }
+
+        var options = CommandOptions.Parse(args, "--assessment", "--decisions", "--output");
+        var assessment = AssessmentService.Parse(BoundedIO.ReadAllBytes(
+            options.Single("--assessment"),
+            ResourceLimits.SerializedArtifactBytes,
+            "assessment"));
+        var decisions = AssessmentDraftDecisionService.Parse(BoundedIO.ReadAllBytes(
+            options.Single("--decisions"),
+            ResourceLimits.SerializedArtifactBytes,
+            "assessment draft decisions"));
+        WriteNew(
+            options.Single("--output"),
+            AssessmentService.Serialize(AssessmentDraftDecisionService.Apply(assessment, decisions)));
+        return ExitCodes.Success;
     }
 
     private static int Canonicalize(IReadOnlyList<string> args, TextWriter output)

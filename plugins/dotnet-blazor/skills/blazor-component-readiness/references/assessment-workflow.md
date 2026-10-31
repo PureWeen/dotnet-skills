@@ -106,6 +106,41 @@ Low record count alone is not failure when each mapping is supported. Derive fin
 summaries from those decisions, not family prefixes; do not accept a blanket not-tested template
 as a completed assessment.
 
+Write bulk decisions as a data file, never as row prose embedded in a shell command. This is
+required on every host and prevents Windows command-line limits from turning a complete assessment
+into an environment failure. Use a file-writing or patch tool to create `decisions.json`; do not
+generate it with an inline PowerShell/Bash/Python payload. The decision file contract is:
+
+```json
+{
+  "schema_version": 1,
+  "rows": [{
+    "id": "LP-05",
+    "status": "verified",
+    "observation": "Requirement-specific inspected fact and its limits.",
+    "evidence_ids": ["ev1-example"],
+    "owner_action": null,
+    "assessment_follow_up": null,
+    "not_applicable_rationale": null
+  }],
+  "findings": [],
+  "summary_groups": [],
+  "completion_state": "incomplete"
+}
+```
+
+Omit intentionally unassigned rows; they retain their existing draft values. Include every assigned
+row exactly once. Then apply the data with a short trusted-validator invocation:
+
+```text
+<launcher> assessment apply-decisions --assessment <initialized-or-current-draft> --decisions <decisions.json> --output <new-draft.json>
+```
+
+The command rejects duplicate/unknown row IDs and cannot alter identity, rubric, requirement text,
+scope or area. Canonical validation still owns evidence references, findings, summaries, status
+requirements and completion. Keep shell invocations to paths and flags; never place assessment
+prose or serialized JSON in shell arguments.
+
 Before closing, reconcile the immutable ledger with confirmed scope and the row decisions.
 Counts, hashes and a validated revision do not establish coverage or investigation completion.
 
@@ -122,7 +157,7 @@ contexts are unsupported; a component requires no package assessment:
 ```
 
 Use [optional package binding](report-contract.md#ordinary-component-binding) only when
-explicitly supplied. Edit a **DRAFT**, then canonicalize to
+explicitly supplied. Apply decisions to a **DRAFT** with `assessment apply-decisions`, then canonicalize to
 a **new** file before validation, rendering or revision. Canonicalization checks JSON structure,
 not evidence, claims, bindings or completion. Only assessment schema 2 is accepted; unsupported
 assessment schemas and rubric identities are rejected, not migrated.

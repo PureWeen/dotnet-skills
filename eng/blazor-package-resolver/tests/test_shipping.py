@@ -142,6 +142,47 @@ def isolated_checks(plugin, work, setup):
     for kind in ("component", "package"):
         run(initialize(kind, kind + ".json"), work, env)
         run([sys.executable, "check_report.py", kind + ".json", kind], assessment)
+    package = json.loads((assessment / "package.json").read_bytes())
+    decisions = {
+        "schema_version": 1,
+        "rows": [
+            {
+                "id": row["id"],
+                "status": "not tested",
+                "observation": ("Static-only installed-plugin decision payload proves file-driven "
+                                "draft authoring without embedding assessment prose in a shell command. " * 3).strip(),
+                "evidence_ids": [],
+                "owner_action": None,
+                "assessment_follow_up": "Supply requirement-specific evidence before completion.",
+                "not_applicable_rationale": None,
+            }
+            for row in package["rows"]
+        ],
+        "findings": [],
+        "summary_groups": [],
+        "completion_state": "incomplete",
+    }
+    decisions_path = assessment / "package.decisions.json"
+    decisions_path.write_text(json.dumps(decisions), encoding="utf-8")
+    if decisions_path.stat().st_size <= 32767:
+        raise ValueError("Decision-file regression payload must exceed the Windows command-line limit.")
+    run([*command, "assessment", "apply-decisions", "--assessment", str(assessment / "package.json"),
+         "--decisions", str(decisions_path), "--output", str(assessment / "package.draft.json")], work, env)
+    package_draft = json.loads((assessment / "package.draft.json").read_bytes())
+    if len(package_draft["rows"]) != 60 or any(row["status"] != "not tested" for row in package_draft["rows"]):
+        raise ValueError("File-driven assessment decisions did not update all package rows.")
+    duplicate = json.loads(json.dumps(decisions))
+    duplicate["rows"].append(duplicate["rows"][0])
+    (assessment / "duplicate.decisions.json").write_text(json.dumps(duplicate), encoding="utf-8")
+    run([*command, "assessment", "apply-decisions", "--assessment", str(assessment / "package.json"),
+         "--decisions", str(assessment / "duplicate.decisions.json"),
+         "--output", str(assessment / "duplicate.draft.json")], work, env, code=1)
+    unknown = json.loads(json.dumps(decisions))
+    unknown["rows"][0]["id"] = "UNKNOWN-ROW"
+    (assessment / "unknown.decisions.json").write_text(json.dumps(unknown), encoding="utf-8")
+    run([*command, "assessment", "apply-decisions", "--assessment", str(assessment / "package.json"),
+         "--decisions", str(assessment / "unknown.decisions.json"),
+         "--output", str(assessment / "unknown.draft.json")], work, env, code=1)
     gold = json.loads((assessment / "component.json").read_bytes())
     def reject(change):
         value = json.loads(json.dumps(gold))
@@ -176,7 +217,8 @@ def isolated_checks(plugin, work, setup):
     (assessment / "result.json").write_bytes(result)
     run([sys.executable, "setup.py", "result.json", "all"], assessment)
     worker_command(plugin, work)
-    print("Single-skill staging: component 52/package 60 rows, four outcome-grader mutations, "
+    print("Single-skill staging: component 52/package 60 rows, file-driven >32K decision application "
+          "with duplicate/unknown rejection, four outcome-grader mutations, "
           "two normative drift rejections, installed manifest drift rejection, standalone resolver "
           "and exact documented Bash handoff passed; no worker was launched.")
 

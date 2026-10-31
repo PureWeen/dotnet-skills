@@ -87,6 +87,22 @@ public sealed record AssessmentSummaryGroup(
     IReadOnlyList<string> RequirementIds,
     IReadOnlyList<string> EvidenceIds);
 
+public sealed record AssessmentRowDecision(
+    string Id,
+    string Status,
+    string Observation,
+    IReadOnlyList<string> EvidenceIds,
+    string? OwnerAction,
+    string? AssessmentFollowUp,
+    string? NotApplicableRationale);
+
+public sealed record AssessmentDraftDecisions(
+    int SchemaVersion,
+    IReadOnlyList<AssessmentRowDecision> Rows,
+    IReadOnlyList<AssessmentFinding> Findings,
+    IReadOnlyList<AssessmentSummaryGroup> SummaryGroups,
+    string CompletionState);
+
 public sealed record ReadinessAssessment(
     int SchemaVersion,
     string AssessmentKind,
