@@ -66,7 +66,9 @@ if (-not [string]::Equals([IO.Path]::GetFileName($skillRoot), 'blazor-component-
     throw 'The readiness skill requires SKILL.md and its bundled plugin-manifest.json.'
 }
 $pluginRoot = $skillRoot
-if ([string]::Equals([IO.Path]::GetFileName([IO.Path]::GetDirectoryName($skillRoot)), 'skills', $comparison)) {
+if ([string]::Equals([IO.Path]::GetFileName([IO.Path]::GetDirectoryName($skillRoot)), 'skills', $comparison) -and
+    ([IO.File]::Exists((Join-Path $skillRoot '../../plugin.json')) -or
+     [IO.File]::Exists((Join-Path $skillRoot '../blazor-package-readiness-resolver/SKILL.md')))) {
     $pluginRoot = Resolve-PhysicalDirectoryPath (Join-Path $skillRoot '../..')
     if (-not [IO.File]::Exists((Join-Path $pluginRoot 'plugin.json'))) {
         throw 'The installed readiness layout requires its authoritative plugin.json.'

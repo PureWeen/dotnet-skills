@@ -1,9 +1,12 @@
 # Offline resolver handoff for package-based assessments
 
 The sibling skill `blazor-package-readiness-resolver` owns
-deterministic package/evidence dispatch. Load it before interpreting results; it is shipped
-in the same plugin. Direct JSON-only resolver requests belong there, not to the full-report
-workflow.
+deterministic package/evidence dispatch. In a full plugin installation, load it before
+interpreting results. Direct JSON-only resolver requests belong there, not to the full-report
+workflow. A single-skill staging of this consumer intentionally does not include that sibling:
+initialize the separate report from confirmed inputs, preserve unresolved static rows, and
+state that resolver replay is unavailable. Do not invent JSON results, search an unrelated
+checkout, download tools, or block the report's own input/assessment initialization.
 
 1. Use the approved exact local `.nupkg`. Invoke the sibling's
    `scripts/run-resolver.py package <path>` or `resolve <request.json>` with supplied checked
@@ -30,6 +33,10 @@ workflow.
    The resolver implements only 11 of 60 package rows and no component-specific row.
    Never manufacture completion, legal correctness, release approval or certification.
 
-The canonical rubric and basis are shared with the sibling resolver's `scripts/resolver/data/`
-directory; the report validator reads those exact digest-pinned bytes. A broken plugin
-installation is an explicit failure, never an arbitrary host-checkout fallback.
+The validator reads its own `references/rubric.json` and `references/requirement-basis.json`.
+They are byte-exact generated copies of the resolver's canonical data, checked against frozen
+digests at runtime. Repository version synchronization regenerates both copies and
+`plugin-manifest.json`; generated copies are excluded from release-bearing content. Missing
+or altered local assets fail explicitly. When a plugin manifest is installed, its snapshot
+must match byte-for-byte; isolated staging uses the bundled snapshot without requiring a
+parent manifest. No arbitrary host-checkout fallback is permitted.

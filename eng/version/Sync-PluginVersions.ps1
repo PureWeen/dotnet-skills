@@ -92,10 +92,34 @@ Set-Location -LiteralPath $repoRoot
 # canonical-filter guard in the main loop.
 $ContentExcludedFiles = @('plugin.json', '.codex-plugin/plugin.json', '.claude-plugin/plugin.json', 'version.json')
 
+function Get-GeneratedFiles {
+    param([string] $Plugin)
+    if (-not (Test-Path (Join-Path $pluginsRoot $Plugin 'skills/blazor-component-readiness/SKILL.md'))) {
+        return [ordered]@{}
+    }
+    return [ordered]@{
+        'skills/blazor-component-readiness/plugin-manifest.json' = 'plugin.json'
+        'skills/blazor-component-readiness/references/rubric.json' = 'skills/blazor-package-readiness-resolver/scripts/resolver/data/rubric.json'
+        'skills/blazor-component-readiness/references/requirement-basis.json' = 'skills/blazor-package-readiness-resolver/scripts/resolver/data/requirement-basis.json'
+    }
+}
+
+function Test-EqualBytes {
+    param([string] $Source, [string] $Destination)
+    if (-not (Test-Path -LiteralPath $Source -PathType Leaf)) {
+        throw "Required generated-file source is missing: $Source"
+    }
+    return (Test-Path -LiteralPath $Destination -PathType Leaf) -and
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($Source)) -ceq
+        [Convert]::ToBase64String([IO.File]::ReadAllBytes($Destination))
+}
+
 # The canonical `pathFilters` array every plugin's version.json must contain: include the whole
 # plugin subtree ('.') minus the content-excluded files above.
 function Get-CanonicalFilters {
-    @('.') + ($ContentExcludedFiles | ForEach-Object { ":!$_" })
+    param([string] $Plugin)
+    @('.') + (@($ContentExcludedFiles) + @((Get-GeneratedFiles $Plugin).Keys) |
+        ForEach-Object { ":!$_" })
 }
 
 # Replace only the "version" value so the rest of the manifest stays byte-identical
@@ -139,7 +163,8 @@ function Get-VersionBase {
 # that leaves the base unchanged is release-neutral.
 function Test-EffectiveContentChange {
     param([string] $Plugin, [string] $From, [string] $To)
-    $excludes = $ContentExcludedFiles | ForEach-Object { ":(exclude)plugins/$Plugin/$_" }
+    $excludes = @($ContentExcludedFiles) + @((Get-GeneratedFiles $Plugin).Keys) |
+        ForEach-Object { ":(exclude)plugins/$Plugin/$_" }
     $touched = git diff --name-only --diff-filter=ACMRD $From $To -- "plugins/$Plugin" @excludes
     if ($LASTEXITCODE -ne 0) {
         throw "Could not compare effective content for plugin '$Plugin' from '$From' to '$To'."
@@ -332,9 +357,10 @@ function Get-AuthoritativeVersion {
     return $result
 }
 
-# Plugins whose version-affecting files changed between two commits. The stamped manifests
-# (plugin.json, .codex-plugin/plugin.json, and .claude-plugin/plugin.json) are output,
-# not input, so they're excluded; everything else under the plugin counts — including version.json,
+# Plugins whose content or generated consumer assets may need synchronization. Stamped manifests
+# are normally excluded, but a consumer snapshot must also follow root-only metadata changes.
+# Selection does not imply a release: Test-EffectiveContentChange excludes generated outputs.
+# Everything else under the plugin counts — including version.json,
 # since a base bump (0.1 -> 0.2) with no other change must still be detected so /version-bump can
 # stamp the reset patch.
 # Used by /version-bump to scope -PredictMerge to exactly the plugins the PR touched.
@@ -345,7 +371,8 @@ function Get-ChangedPlugins {
             $_ -match '^plugins/[^/]+/' -and
             $_ -notmatch '^plugins/[^/]+/plugin\.json$' -and
             $_ -notmatch '^plugins/[^/]+/\.codex-plugin/plugin\.json$' -and
-            $_ -notmatch '^plugins/[^/]+/\.claude-plugin/plugin\.json$'
+            $_ -notmatch '^plugins/[^/]+/\.claude-plugin/plugin\.json$' -or
+            ($_ -match '^plugins/([^/]+)/plugin\.json$' -and (Get-GeneratedFiles $Matches[1]).Count -gt 0)
         } |
         ForEach-Object { ($_ -split '/')[1] } |
         Sort-Object -Unique
@@ -431,12 +458,12 @@ foreach ($name in $Plugins) {
     # pathFilters must stay exactly canonical because they document the same release-neutral files
     # that this script excludes from content comparisons. Reject drift so the declared versioning
     # contract and the implementation cannot silently disagree.
-    $canonicalFilters = @(Get-CanonicalFilters | Sort-Object)
+    $canonicalFilters = @(Get-CanonicalFilters $name | Sort-Object)
     $filtersProp = (Get-Content (Join-Path $pluginsRoot $name 'version.json') -Raw |
         ConvertFrom-Json).PSObject.Properties['pathFilters']
     $actualFilters = if ($filtersProp) { @($filtersProp.Value | Sort-Object) } else { @() }
     if (($actualFilters -join "`n") -ne ($canonicalFilters -join "`n")) {
-        throw "version.json pathFilters for plugin '$name' must be the canonical set [$((Get-CanonicalFilters) -join ', ')] — check plugins/$name/version.json"
+        throw "version.json pathFilters for plugin '$name' must be the canonical set [$((Get-CanonicalFilters $name) -join ', ')] — check plugins/$name/version.json"
     }
 
     if ($PredictMerge) {
@@ -478,9 +505,16 @@ foreach ($name in $Plugins) {
         throw "Computed version '$computed' for plugin '$name' is not a valid major.minor.patch — check plugins/$name/version.json"
     }
 
-    # All host manifests share the computed version, but their other fields can be host-specific.
+    # Host manifests retain their own fields; only bundled consumer snapshots are exact copies.
+    $generatedFiles = Get-GeneratedFiles $name
+    $generatedDrift = $false
+    foreach ($target in $generatedFiles.Keys) {
+        if (-not (Test-EqualBytes (Join-Path $pluginDir $generatedFiles[$target]) (Join-Path $pluginDir $target))) {
+            $generatedDrift = $true
+        }
+    }
     $changed = ($computed -ne $current) -or ($computed -ne $currentCodex) -or
-               ($computed -ne $currentClaude)
+               ($computed -ne $currentClaude) -or $generatedDrift
 
     if ($OnlyChanged -and -not $changed) { continue }
 
@@ -488,6 +522,12 @@ foreach ($name in $Plugins) {
         [void](Set-ManifestVersion -Path $manifest -Version $computed)
         [void](Set-ManifestVersion -Path $codexManifest -Version $computed)
         [void](Set-ManifestVersion -Path $claudeManifest -Version $computed)
+        foreach ($target in $generatedFiles.Keys) {
+            $destination = Join-Path $pluginDir $target
+            [void](New-Item -ItemType Directory -Path (Split-Path $destination -Parent) -Force)
+            [IO.File]::WriteAllBytes($destination, [IO.File]::ReadAllBytes(
+                (Join-Path $pluginDir $generatedFiles[$target])))
+        }
     }
 
     $results.Add([ordered]@{

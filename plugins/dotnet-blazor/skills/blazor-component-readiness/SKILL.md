@@ -176,7 +176,11 @@ component input, not permission to score package-wide criteria.
 ## Conditional evidence and operation owners
 
 For a package-based assessment, load the sibling skill `blazor-package-readiness-resolver` and follow
-[the static result handoff](references/package-resolver.md). Invoke its bundled launcher on
+[the static result handoff](references/package-resolver.md) when the full plugin is installed.
+If only this skill is staged, its bundled rubric/basis and validator still support input
+confirmation and separate package/component drafts. Report unavailable resolver replay explicitly;
+leave unsupported static conclusions unresolved rather than inventing results or blocking init.
+With the sibling available, invoke its bundled launcher on
 the exact local package and any supplied checked packet; consume the machine-readable output
 for LP-01 through LP-10 and PI-01 without inventing scope/owner evidence. Preserve complete row
 contracts and explicit unresolved results. These are static package facts, not component

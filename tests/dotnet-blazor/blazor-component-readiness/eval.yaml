@@ -1,31 +1,57 @@
 name: blazor-component-readiness
-description: Full-report routing and truthful consumption of static package evidence without executing assessed code.
+description: Self-contained report drafts and truthful optional static-evidence handoff.
 type: capability
 defaults:
   timeout: 8m
   runs: 1
 stimuli:
-  - name: full-package-static-handoff
+  - name: package-draft-with-unresolved-source
     prompt: >-
-      Begin a package-only release-readiness report for sample.nupkg, using this directory
-      as my approved output root and only local static inspection. First save reusable
-      machine-readable package facts in result.json. Source and owner evidence are unresolved;
-      preserve those limits and do not claim a complete validated report without its inputs.
+      Start a package-only release-readiness draft for the supplied sample.nupkg in this
+      approved output directory. It was obtained locally; source correspondence remains
+      unresolved. Confirm the local input record as confirmed.json and save assessment.json.
+      Do not execute package code or claim a completed or validated readiness report.
     environment:
       files:
         - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+        - src: fixtures
           dest: .
       commands:
         - python setup.py
     graders:
       - type: run-command
         config:
-          command: python setup.py result.json all
+          command: python check_report.py assessment.json package
       - type: prompt
     rubric:
-      - Retains actual machine-readable static package facts and their checked byte identities rather than hand-authored substitutes.
-      - Keeps full report ownership and incomplete evidence distinct from the eleven implemented package checks.
-  - name: component-scope-not-package-prerequisite
+      - Produces a separate incomplete package draft bound to the exact confirmed local bytes.
+      - Preserves unresolved source and untested requirements without inventing static resolver results.
+  - name: isolated-component-draft
+    prompt: >-
+      Initialize only a release-readiness draft for my selected DateField component, ID
+      date-field, in sample.nupkg. I confirm its interactive-server mode and that dynamic
+      children are not applicable because this test control has no dynamic children.
+      The package is a local file; source correspondence is unresolved. Use this approved
+      directory, save confirmed.json and assessment.json, and do not require a separate
+      package assessment or execute the component.
+    environment:
+      files:
+        - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python check_report.py assessment.json component
+      - type: prompt
+    rubric:
+      - Produces the distinct incomplete component draft without demanding a package assessment.
+      - Treats the supplied component declarations as input facts, not runtime verification.
+  - name: missing-release-inputs
     prompt: >-
       Assess only the selected Blazor DateField component for adoption, not its package or
       sibling controls. I have not supplied its exact release identity or runtime captures.
@@ -35,11 +61,12 @@ stimuli:
     rubric:
       - Keeps component scope separate and does not require a package assessment as a prerequisite.
       - Requests exact missing deciding inputs without inventing evidence or runtime results.
-  - name: invalid-packet-report-boundary
+  - name: absent-static-tool-boundary
     prompt: >-
-      For a package readiness report, try the supplied changed.json evidence packet against
-      sample.nupkg. Keep the report partial if a binding fails. Do not repair input hashes or
-      replace an invalid packet with a claimed notice-coverage positive.
+      I have sample.nupkg and changed.json for a package readiness report, but the optional
+      static package-checking tool is not installed in this staging. Start what can be done
+      locally and explain the evidence limit. Do not fetch a tool, invent its JSON output,
+      repair packet hashes or classify unperformed notice checks as a product defect.
     environment:
       files:
         - src: ../blazor-package-readiness-resolver/fixtures
@@ -47,51 +74,32 @@ stimuli:
       commands:
         - python setup.py
     graders:
-      - type: output-matches
-        config:
-          pattern: "(?i)(invalid|mismatch|binding|digest)"
       - type: prompt
     rubric:
-      - Records the supplied packet's actual binding failure without manufacturing report evidence.
-      - Does not classify the package as defective solely because the packet is unbound.
-  - name: offline-report-does-not-execute
+      - States that static replay is unavailable and leaves its deciding conclusions unresolved.
+      - Continues supported local report preparation without fabricating a replay or treating missing tooling as a package gap.
+  - name: offline-draft-does-not-execute
     prompt: >-
-      Start an offline package readiness report for sample.nupkg in this approved directory.
-      Save static row facts to result.json. Neither the local build targets nor packaged
-      targets may execute; no downloads, dependency restore or runtime probes are authorized.
+      Begin an offline package readiness draft for the local sample.nupkg in this approved
+      directory. Save its confirmed input as confirmed.json and incomplete draft as
+      assessment.json. Source correspondence is unresolved. Do not run local build targets,
+      package code, downloads, dependency restore or runtime probes.
     environment:
       files:
         - src: ../blazor-package-readiness-resolver/fixtures
           dest: .
-      commands:
-        - python setup.py
-    graders:
-      - type: run-command
-        config:
-          command: python setup.py result.json all
-      - type: prompt
-    rubric:
-      - Retains actual static package results without running assessed build customizations.
-      - Marks unperformed runtime checks not tested and preserves the report's other unresolved requirements.
-  - name: packet-result-preservation
-    prompt: >-
-      Reuse request.json as the static evidence step of my package readiness report and save
-      its result.json. Preserve the complete qualified row result and checked digests;
-      do not convert an escalated decision into a gap or treat it as a complete report.
-    environment:
-      files:
-        - src: ../blazor-package-readiness-resolver/fixtures
+        - src: fixtures
           dest: .
       commands:
         - python setup.py
     graders:
       - type: run-command
         config:
-          command: python setup.py result.json
+          command: python check_report.py assessment.json package
       - type: prompt
     rubric:
-      - Preserves the full qualified static result rather than copying only its branch label.
-      - Requires the ordinary confirmed-input evidence workflow before incorporating facts into a validated report.
+      - Produces a byte-bound incomplete draft using only trusted tooling and static local inputs.
+      - Reports the unperformed checks honestly and never runs assessed build customizations.
   - name: separate-report-scopes
     prompt: >-
       I need both a package readiness report and a separate report for its Grid component.

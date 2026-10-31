@@ -66,7 +66,7 @@ set -euo pipefail
 UNIT="<absolute-unit-directory>"
 PLUGIN="$UNIT/tooling/plugins/<plugin-name>"
 CONTRACT="$UNIT/launch.env"
-"$PLUGIN/skills/blazor-component-readiness/scripts/prepare-worker-launch.sh" \
+bash "$PLUGIN/skills/blazor-component-readiness/scripts/prepare-worker-launch.sh" \
   --unit "$UNIT" --plugin-dir "$PLUGIN" --prompt-file "$UNIT/worker-prompt-base.txt" \
   --output "$CONTRACT"
 . "$CONTRACT"

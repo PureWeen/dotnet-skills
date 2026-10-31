@@ -389,6 +389,118 @@ function Test-RepositoryClaudeManifests {
         "The dotnet Claude manifest must reference Claude Code's LSP configuration."
 }
 
+function New-ReadinessRepository {
+    param([string] $Name)
+    $repo = New-TestRepository $Name
+    $plugin = Join-Path $repo 'plugins/sample'
+    $component = Join-Path $plugin 'skills/blazor-component-readiness'
+    $data = Join-Path $plugin 'skills/blazor-package-readiness-resolver/scripts/resolver/data'
+    [void](New-Item -ItemType Directory -Path $component, $data -Force)
+    [IO.File]::WriteAllText((Join-Path $component 'SKILL.md'), 'Test consumer.')
+    [IO.File]::WriteAllText((Join-Path $data 'rubric.json'), "{`"rows`":112}`r`n")
+    [IO.File]::WriteAllText((Join-Path $data 'requirement-basis.json'), "{`"basis`":1}`n")
+    $versionPath = Join-Path $plugin 'version.json'
+    $version = Get-Content $versionPath -Raw | ConvertFrom-Json
+    $version.pathFilters += @(
+        ':!skills/blazor-component-readiness/plugin-manifest.json',
+        ':!skills/blazor-component-readiness/references/rubric.json',
+        ':!skills/blazor-component-readiness/references/requirement-basis.json')
+    [IO.File]::WriteAllText($versionPath, ($version | ConvertTo-Json -Depth 5))
+    [void](Invoke-Git $repo add plugins)
+    [void](Invoke-Git $repo commit -m 'Add consumer and canonical data')
+    $report = @(Invoke-Sync $repo -Write)
+    Assert-Equal '0.1.5' $report[0].computed 'Adding consumer content advances exactly once.'
+    [void](Invoke-Git $repo add plugins)
+    [void](Invoke-Git $repo commit -m 'Publish generated consumer assets')
+    return $repo
+}
+
+function Assert-GeneratedFiles {
+    param([string] $Repository)
+    $plugin = Join-Path $Repository 'plugins/sample'
+    $pairs = @{
+        'skills/blazor-component-readiness/plugin-manifest.json' = 'plugin.json'
+        'skills/blazor-component-readiness/references/rubric.json' = 'skills/blazor-package-readiness-resolver/scripts/resolver/data/rubric.json'
+        'skills/blazor-component-readiness/references/requirement-basis.json' = 'skills/blazor-package-readiness-resolver/scripts/resolver/data/requirement-basis.json'
+    }
+    foreach ($target in $pairs.Keys) {
+        Assert-Equal ([Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $plugin $pairs[$target])))) `
+            ([Convert]::ToHexString([IO.File]::ReadAllBytes((Join-Path $plugin $target)))) `
+            "Generated '$target' must be byte-identical to its authority."
+    }
+}
+
+function Test-GeneratedAssetsAreRepairedWithoutReleasing {
+    $repo = New-ReadinessRepository 'generated-assets'
+    Assert-GeneratedFiles $repo
+    Assert-Equal 0 @(Invoke-Sync $repo).Count 'Generated assets must not cause recursive releases.'
+    $base = Invoke-Git $repo rev-parse HEAD
+    $component = Join-Path $repo 'plugins/sample/skills/blazor-component-readiness'
+    [IO.File]::WriteAllText((Join-Path $component 'plugin-manifest.json'), '{"version":"9.9.9"}')
+    [IO.File]::WriteAllText((Join-Path $component 'references/rubric.json'), '{}')
+    Remove-Item -LiteralPath (Join-Path $component 'references/requirement-basis.json')
+    [void](Invoke-Git $repo add plugins)
+    [void](Invoke-Git $repo commit -m 'Introduce output-only drift')
+    $head = Invoke-Git $repo rev-parse HEAD
+    $report = @(Invoke-Sync $repo -BaseCommit $base -HeadCommit $head -PredictMerge)
+    Assert-Equal 1 $report.Count 'Head-scoped sync must select output-only drift.'
+    Assert-Equal '0.1.5' $report[0].computed 'Generated-only drift is release-neutral.'
+    Assert-Equal $false (Test-Path (Join-Path $component 'references/requirement-basis.json')) `
+        'Read-only sync must not write missing outputs.'
+    [void](Invoke-Sync $repo -BaseCommit $base -HeadCommit $head -PredictMerge -Write)
+    Assert-GeneratedFiles $repo
+    [void](Invoke-Git $repo add plugins)
+    [void](Invoke-Git $repo commit -m 'Repair generated outputs')
+    Assert-Equal 0 @(Invoke-Sync $repo).Count 'Committed output repairs must not advance content height.'
+    Assert-Equal $true ([string]::IsNullOrWhiteSpace((Invoke-Git $repo status --porcelain))) `
+        'Generated repairs must be idempotent.'
+}
+
+function Test-GeneratedAssetsFollowTheirAuthorities {
+    $repo = New-ReadinessRepository 'generated-authorities'
+    $base = Invoke-Git $repo rev-parse HEAD
+    $manifest = Join-Path $repo 'plugins/sample/plugin.json'
+    [IO.File]::WriteAllText($manifest,
+        ([IO.File]::ReadAllText($manifest).Replace('Test plugin.', 'Updated description.')) + "`r`n")
+    [void](Invoke-Git $repo add plugins/sample/plugin.json)
+    [void](Invoke-Git $repo commit -m 'Update authoritative metadata only')
+    $head = Invoke-Git $repo rev-parse HEAD
+    $report = @(Invoke-Sync $repo -BaseCommit $base -HeadCommit $head -PredictMerge -Write)
+    Assert-Equal 1 $report.Count 'A root-only metadata change must synchronize its bundled snapshot.'
+    Assert-Equal '0.1.5' $report[0].computed 'A root-only metadata change must remain release-neutral.'
+    Assert-GeneratedFiles $repo
+    [void](Invoke-Git $repo add plugins)
+    [void](Invoke-Git $repo commit -m 'Update manifest description')
+    Assert-Equal 0 @(Invoke-Sync $repo).Count 'Manifest-only metadata and its snapshot are release-neutral.'
+    Add-PluginContent $repo 'skills/blazor-package-readiness-resolver/scripts/resolver/data/rubric.json' `
+        '{"rows":113}' 'Change canonical rubric'
+    $report = @(Invoke-Sync $repo -Write)
+    Assert-Equal '0.1.6' $report[0].computed 'Changing an authority must advance content exactly once.'
+    Assert-GeneratedFiles $repo
+    [void](Invoke-Git $repo add plugins)
+    [void](Invoke-Git $repo commit -m 'Publish changed canonical data')
+    Assert-Equal 0 @(Invoke-Sync $repo).Count 'Regenerated data must not cause a second release.'
+}
+
+function Test-GeneratedSnapshotUsesCurrentMainPrediction {
+    $repo = New-ReadinessRepository 'generated-stale-base'
+    [void](Invoke-Git $repo switch -c feature)
+    Add-PluginContent $repo 'skills/example/SKILL.md' 'feature' 'Feature content'
+    $head = Invoke-Git $repo rev-parse HEAD
+    [void](Invoke-Git $repo switch main)
+    Add-PluginContent $repo 'skills/main/SKILL.md' 'main' 'Main content'
+    [void](Invoke-Sync $repo -Write)
+    [void](Invoke-Git $repo add plugins)
+    [void](Invoke-Git $repo commit -m 'Publish current main')
+    $main = Invoke-Git $repo rev-parse HEAD
+    [void](Invoke-Git $repo switch feature)
+    $report = @(Invoke-Sync $repo -BaseCommit $main -HeadCommit $head -PredictMerge -Write)
+    Assert-Equal '0.1.7' $report[0].computed 'A stale consumer must predict from newer current main.'
+    Assert-GeneratedFiles $repo
+    Assert-Equal 0 @(Invoke-Sync $repo -BaseCommit $main -HeadCommit $head -PredictMerge).Count `
+        'Current-main prediction must be read-only and idempotent after synchronization.'
+}
+
 [void](New-Item -ItemType Directory -Path $testRoot)
 try {
     Test-BatchedChangesAdvanceOnce
@@ -406,6 +518,9 @@ try {
     Test-LegacyHistoryRemainsTrusted
     Test-MissingClaudeManifestIsRejected
     Test-ClaudeManifestHostFieldsArePreserved
+    Test-GeneratedAssetsAreRepairedWithoutReleasing
+    Test-GeneratedAssetsFollowTheirAuthorities
+    Test-GeneratedSnapshotUsesCurrentMainPrediction
     Test-RepositoryClaudeManifests
     Write-Host "Passed $script:assertions plugin-version assertions."
 }

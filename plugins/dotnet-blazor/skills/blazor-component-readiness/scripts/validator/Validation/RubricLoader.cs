@@ -157,16 +157,9 @@ public static class RubricLoader
             throw new DeterministicValidationException("READINESS_SKILL_ROOT does not contain SKILL.md.");
         }
 
-        var resolverRoot = Path.GetFullPath(Path.Combine(
-            fullRoot, "..", "blazor-package-readiness-resolver"));
-        if (!File.Exists(Path.Combine(resolverRoot, "SKILL.md")))
-        {
-            throw new DeterministicValidationException(
-                "The installed plugin is missing its bundled package resolver.");
-        }
         return SafePath.ResolveUnderRoot(
-            resolverRoot,
-            $"scripts/resolver/data/{filename}",
+            fullRoot,
+            $"references/{filename}",
             requireExisting: true,
             requireFile: true);
     }

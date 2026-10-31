@@ -27,10 +27,12 @@ public static class ContractVersions
             }
 
             var snapshot = ReadManifest(Path.Combine(skillRoot, "plugin-manifest.json"), "bundled plugin manifest");
-            if (string.Equals(Path.GetFileName(Path.GetDirectoryName(skillRoot)), "skills", comparison))
+            var installedManifest = Path.Combine(skillRoot, "..", "..", "plugin.json");
+            var siblingSkill = Path.Combine(skillRoot, "..", "blazor-package-readiness-resolver", "SKILL.md");
+            if (string.Equals(Path.GetFileName(Path.GetDirectoryName(skillRoot)), "skills", comparison) &&
+                (File.Exists(installedManifest) || File.Exists(siblingSkill)))
             {
-                var installed = ReadManifest(
-                    Path.Combine(skillRoot, "..", "..", "plugin.json"), "installed plugin manifest");
+                var installed = ReadManifest(installedManifest, "installed plugin manifest");
                 if (!installed.Bytes.AsSpan().SequenceEqual(snapshot.Bytes))
                 {
                     throw new DeterministicValidationException(

@@ -23,7 +23,9 @@ if [[ "$(filesystem_name "$(basename -- "$skill_root")")" != blazor-component-re
   environment_failure 'the readiness skill requires SKILL.md and its bundled plugin-manifest.json.'
 fi
 plugin_root="$skill_root"
-if [[ "$(filesystem_name "$(basename -- "$(dirname -- "$skill_root")")")" == skills ]]; then
+if [[ "$(filesystem_name "$(basename -- "$(dirname -- "$skill_root")")")" == skills &&
+      ( -f "$skill_root/../../plugin.json" ||
+        -f "$skill_root/../blazor-package-readiness-resolver/SKILL.md" ) ]]; then
   plugin_root="$(cd -- "$skill_root/../.." && pwd -P)" ||
     environment_failure 'could not resolve the readiness plugin directory.'
   [[ -f "$plugin_root/plugin.json" ]] ||
