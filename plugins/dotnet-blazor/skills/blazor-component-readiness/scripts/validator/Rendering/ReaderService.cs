@@ -136,8 +136,11 @@ public static class ReaderService
             $"**Ownership:** {Text(assessment.AssessmentKind)}. " +
                 (profile is not null ? "**Check accounting:** " : "**Completion:** ") +
                 $"{Text(assessment.CompletionState)}.",
-            $"**Source:** {Text(input.Source.Availability)}; {Text(input.Source.RepositoryUri)}; {Text(input.Source.Commit)}.", "",
-            $"**Source mapping:** {Text(input.Source.Mapping)}; confidence: {Text(input.Source.Confidence)}.", "",
+            $"**Source:** {Text(input.Source.Availability)}; repository: " +
+                $"{Text(input.Source.RepositoryUri ?? "not supplied")}; commit: " +
+                $"{Text(input.Source.Commit ?? "not supplied")}.", "",
+            $"**Source mapping:** {Text(input.Source.Mapping ?? "not supplied")}; confidence: " +
+                $"{Text(input.Source.Confidence ?? "not supplied")}.", "",
             "PARTNER PREVIEW: a deterministic projection of retained assessment facts, not a new execution, certification or promotion decision. " +
                 "Qualifications are preserved; source/configuration, owner records and untested behavior remain distinct.",
             "",
