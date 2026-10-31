@@ -77,15 +77,6 @@ if ([string]::Equals([IO.Path]::GetFileName([IO.Path]::GetDirectoryName($skillRo
 $project = Join-Path $scriptDir 'BlazorComponentReadiness.Validator.csproj'
 $restoreConfig = Join-Path $scriptDir 'restore-offline.config'
 
-$sdkVersion = (& dotnet --version 2>$null)
-if ($LASTEXITCODE -ne 0 -or $sdkVersion -notmatch '^11\.') {
-    $active = if ([string]::IsNullOrWhiteSpace($sdkVersion)) { 'unavailable' } else { $sdkVersion }
-    [Console]::Error.WriteLine(
-        "error: the readiness validator requires the repository-selected .NET 11 SDK; active SDK is $active")
-    [Console]::Error.WriteLine('Select an installed .NET 11 SDK before running this launcher.')
-    exit 3
-}
-
 $cleanup = $false
 if ([string]::IsNullOrWhiteSpace($env:READINESS_TEMP)) {
     $tempParent = [IO.Path]::GetTempPath()
@@ -151,7 +142,8 @@ if (($readinessTemp + [IO.Path]::DirectorySeparatorChar).StartsWith(
 [IO.Directory]::CreateDirectory((Join-Path $readinessTemp 'packages')) | Out-Null
 [IO.Directory]::CreateDirectory((Join-Path $readinessTemp 'bin')) | Out-Null
 [IO.Directory]::CreateDirectory((Join-Path $readinessTemp 'obj')) | Out-Null
-foreach ($artifactDirectory in @('packages', 'bin', 'obj')) {
+[IO.Directory]::CreateDirectory((Join-Path $readinessTemp 'cli-home')) | Out-Null
+foreach ($artifactDirectory in @('packages', 'bin', 'obj', 'cli-home')) {
     $artifactPath = Join-Path $readinessTemp $artifactDirectory
     if (([IO.File]::GetAttributes($artifactPath) -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
         [Console]::Error.WriteLine(
@@ -160,7 +152,23 @@ foreach ($artifactDirectory in @('packages', 'bin', 'obj')) {
     }
 }
 
+$previousCliHome = [Environment]::GetEnvironmentVariable('DOTNET_CLI_HOME', 'Process')
+$previousSkipFirstTime = [Environment]::GetEnvironmentVariable('DOTNET_SKIP_FIRST_TIME_EXPERIENCE', 'Process')
+$previousGenerateCertificate = [Environment]::GetEnvironmentVariable('DOTNET_GENERATE_ASPNET_CERTIFICATE', 'Process')
 try {
+    $env:DOTNET_CLI_HOME = Join-Path $readinessTemp 'cli-home'
+    $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
+    $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
+
+    $sdkVersion = (& dotnet --version 2>$null)
+    if ($LASTEXITCODE -ne 0 -or $sdkVersion -notmatch '^11\.') {
+        $active = if ([string]::IsNullOrWhiteSpace($sdkVersion)) { 'unavailable' } else { $sdkVersion }
+        [Console]::Error.WriteLine(
+            "error: the readiness validator requires the repository-selected .NET 11 SDK; active SDK is $active")
+        [Console]::Error.WriteLine('Select an installed .NET 11 SDK before running this launcher.')
+        exit 3
+    }
+
     $common = @(
         '-noAutoResponse'
         '-property:Configuration=Release'
@@ -213,6 +221,9 @@ try {
     exit 3
 }
 finally {
+    [Environment]::SetEnvironmentVariable('DOTNET_CLI_HOME', $previousCliHome, 'Process')
+    [Environment]::SetEnvironmentVariable('DOTNET_SKIP_FIRST_TIME_EXPERIENCE', $previousSkipFirstTime, 'Process')
+    [Environment]::SetEnvironmentVariable('DOTNET_GENERATE_ASPNET_CERTIFICATE', $previousGenerateCertificate, 'Process')
     if ($cleanup -and [IO.Directory]::Exists($readinessTemp)) {
         [IO.Directory]::Delete($readinessTemp, $true)
     }

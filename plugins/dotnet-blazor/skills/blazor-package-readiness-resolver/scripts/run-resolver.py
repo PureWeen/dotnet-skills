@@ -56,6 +56,7 @@ def main():
         env = os.environ.copy()
         env.update(DOTNET_CLI_TELEMETRY_OPTOUT="1", DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1",
                    DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE="true",
+                   DOTNET_GENERATE_ASPNET_CERTIFICATE="false",
                    DOTNET_CLI_HOME=str(scratch / "home"), DOTNET_EnableDiagnostics="0",
                    MSBuildEnableWorkloadResolver="false")
         # SDK bootstrap hooks are code, not assessment data.

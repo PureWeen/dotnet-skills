@@ -34,14 +34,6 @@ fi
 project="$script_dir/BlazorComponentReadiness.Validator.csproj"
 restore_config="$script_dir/restore-offline.config"
 
-sdk_version="$(dotnet --version 2>/dev/null || true)"
-if [[ ! "$sdk_version" =~ ^11\. ]]; then
-  printf 'error: the readiness validator requires the repository-selected .NET 11 SDK; active SDK is %s\n' \
-    "${sdk_version:-unavailable}" >&2
-  printf 'Select an installed .NET 11 SDK before running this launcher.\n' >&2
-  exit 3
-fi
-
 cleanup=false
 if [[ -n "${READINESS_TEMP:-}" ]]; then
   readiness_parent="$(dirname -- "$READINESS_TEMP")"
@@ -101,10 +93,11 @@ if is_inside_plugin "$readiness_temp"; then
     exit 3
 fi
 
-if ! mkdir -p -- "$readiness_temp/packages" "$readiness_temp/bin" "$readiness_temp/obj"; then
+if ! mkdir -p -- "$readiness_temp/packages" "$readiness_temp/bin" "$readiness_temp/obj" \
+     "$readiness_temp/cli-home"; then
   environment_failure 'could not create external artifact directories.'
 fi
-for artifact_directory in packages bin obj; do
+for artifact_directory in packages bin obj cli-home; do
   if [[ -L "$readiness_temp/$artifact_directory" ]]; then
     printf 'error: external artifact directories cannot be symbolic links: %s\n' \
       "$readiness_temp/$artifact_directory" >&2
@@ -114,6 +107,18 @@ done
 
 if [[ "$cleanup" == true ]]; then
   trap 'rm -rf -- "$readiness_temp"' EXIT
+fi
+
+export DOTNET_CLI_HOME="$readiness_temp/cli-home"
+export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
+export DOTNET_GENERATE_ASPNET_CERTIFICATE=false
+
+sdk_version="$(dotnet --version 2>/dev/null || true)"
+if [[ ! "$sdk_version" =~ ^11\. ]]; then
+  printf 'error: the readiness validator requires the repository-selected .NET 11 SDK; active SDK is %s\n' \
+    "${sdk_version:-unavailable}" >&2
+  printf 'Select an installed .NET 11 SDK before running this launcher.\n' >&2
+  exit 3
 fi
 
 common=(

@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import runpy
 import shutil
 import subprocess
@@ -29,6 +30,163 @@ def report_command(consumer):
     launcher = consumer / "scripts/validator" / ("run-validator.ps1" if os.name == "nt" else "run-validator.sh")
     return ([shell, "-NoProfile", "-File", str(launcher)] if os.name == "nt"
             else [shell, str(launcher)])
+
+
+def certificate_launcher_checks(plugin, work):
+    consumer = plugin / "skills/blazor-component-readiness"
+    bash = shutil.which("bash")
+    pwsh = shutil.which("pwsh")
+    if not bash or (os.name == "nt" and not pwsh):
+        raise ValueError("Bash (and PowerShell on Windows) are required for launcher checks.")
+    launchers = [("bash", bash, consumer / "scripts/validator/run-validator.sh")]
+    if pwsh:
+        launchers.append(("pwsh", pwsh, consumer / "scripts/validator/run-validator.ps1"))
+
+    shim_dir = work / "dotnet shim"
+    shim_dir.mkdir()
+    bash_shim = shim_dir / "dotnet"
+    bash_shim.write_text(
+        '#!/usr/bin/env bash\n'
+        'if [[ ! -e shim-record ]]; then\n'
+        '  printf "args=%s\\ncert=%s\\nskip=%s\\nhome=%s\\n" "$*" '
+        '"${DOTNET_GENERATE_ASPNET_CERTIFICATE-<unset>}" '
+        '"${DOTNET_SKIP_FIRST_TIME_EXPERIENCE-<unset>}" '
+        '"${DOTNET_CLI_HOME-<unset>}" > shim-record\n'
+        'fi\n'
+        'cat shim-record\n'
+        'exit 47\n', encoding="utf-8", newline="\n")
+    if os.name != "nt":
+        bash_shim.chmod(0o755)
+    cmd_shim = shim_dir / "dotnet.cmd"
+    cmd_shim.write_text(
+        '@echo off\r\n'
+        'if not exist shim-record (\r\n'
+        '  > shim-record echo args=%*\r\n'
+        '  >> shim-record echo cert=%DOTNET_GENERATE_ASPNET_CERTIFICATE%\r\n'
+        '  >> shim-record echo skip=%DOTNET_SKIP_FIRST_TIME_EXPERIENCE%\r\n'
+        '  >> shim-record echo home=%DOTNET_CLI_HOME%\r\n'
+        ')\r\n'
+        'type shim-record\r\n'
+        'exit /b 47\r\n', encoding="utf-8", newline="")
+
+    clean_env = os.environ.copy()
+    for key in ("DOTNET_GENERATE_ASPNET_CERTIFICATE", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE",
+                "DOTNET_CLI_HOME", "READINESS_TEMP"):
+        clean_env.pop(key, None)
+    for name, shell, launcher in launchers:
+        probe = work / ("cert-shim-" + name)
+        probe.mkdir()
+        build = work / ("cert-build-" + name)
+        env = clean_env.copy()
+        env["PATH"] = str(shim_dir) + os.pathsep + env["PATH"]
+        env["READINESS_TEMP"] = str(build)
+
+        if name == "bash":
+            resolution = run([shell, "-c", "command -v dotnet"], probe, env).decode().strip()
+            if os.name == "nt":
+                resolution = run([shell, "-c", 'cygpath -w -- "$(command -v dotnet)"'],
+                                 probe, env).decode().strip()
+            expected_shim = bash_shim
+            command = [shell, str(launcher), "help"]
+        else:
+            resolution = run([shell, "-NoProfile", "-Command", "(Get-Command dotnet).Source"],
+                             probe, env).decode().strip()
+            expected_shim = cmd_shim if os.name == "nt" else bash_shim
+            command = [shell, "-NoProfile", "-File", str(launcher), "help"]
+        if not resolution or not Path(resolution).is_file() or not os.path.samefile(resolution, expected_shim):
+            raise ValueError(f"{name} resolved dotnet to {resolution!r}, not {expected_shim}.")
+        if build.exists():
+            raise ValueError(f"{name} launcher build directory was not fresh.")
+        result = subprocess.run(command, cwd=probe, env=env, capture_output=True,
+                                timeout=30, check=False)
+        record = probe / "shim-record"
+        if result.returncode != 3 or not record.is_file():
+            raise ValueError(f"{name} did not reach the intercepted SDK check: "
+                             f"exit={result.returncode}, stderr={result.stderr!r}")
+        values = dict(line.split("=", 1) for line in record.read_text(encoding="utf-8").splitlines())
+        if values.get("args") != "--version" or values.get("cert") != "false" or values.get("skip") != "1":
+            raise ValueError(f"{name} first dotnet call lacked launcher-owned bootstrap settings: {values}")
+        home = values.get("home", "")
+        if name == "bash" and os.name == "nt":
+            home = run([shell, "-c", 'cygpath -w -- "$1"', "_", home],
+                       probe, env).decode().strip()
+        if not home or not Path(home).is_dir() or Path(home).resolve().parent != build.resolve():
+            raise ValueError(f"{name} did not create an isolated launcher-owned CLI home: {home!r}")
+
+        cleanup_probe = work / ("cert-cleanup-" + name)
+        cleanup_probe.mkdir()
+        cleanup_env = env.copy()
+        cleanup_env.pop("READINESS_TEMP")
+        for key in ("TMPDIR", "TEMP", "TMP"):
+            cleanup_env[key] = str(work)
+        result = subprocess.run(command, cwd=cleanup_probe, env=cleanup_env, capture_output=True,
+                                timeout=30, check=False)
+        cleanup_record = cleanup_probe / "shim-record"
+        if result.returncode != 3 or not cleanup_record.is_file():
+            raise ValueError(f"{name} did not reach the intercepted SDK failure in cleanup mode: "
+                             f"exit={result.returncode}, stderr={result.stderr!r}")
+        cleanup_values = dict(line.split("=", 1) for line in
+                              cleanup_record.read_text(encoding="utf-8").splitlines())
+        cleanup_home = cleanup_values.get("home", "")
+        if name == "bash" and os.name == "nt":
+            cleanup_home = run([shell, "-c", 'cygpath -w -- "$1"', "_", cleanup_home],
+                               cleanup_probe, cleanup_env).decode().strip()
+        cleanup_path = Path(cleanup_home)
+        if (cleanup_values.get("args") != "--version" or
+                not cleanup_home or
+                not cleanup_path.parent.name.startswith("blazor-readiness-validator-") or
+                cleanup_path.parent.parent.resolve() != work.resolve() or
+                cleanup_path.exists() or cleanup_path.parent.exists()):
+            raise ValueError(f"{name} did not clean up its isolated CLI home on SDK failure: "
+                             f"{cleanup_values}")
+
+        real_env = clean_env.copy()
+        real_build = work / ("cert-real-build-" + name)
+        real_env["READINESS_TEMP"] = str(real_build)
+        if real_build.exists():
+            raise ValueError(f"{name} real validator CLI home was not fresh.")
+        result = subprocess.run(command, cwd=probe, env=real_env, capture_output=True,
+                                timeout=240, check=False)
+        if result.returncode != 0:
+            raise ValueError(f"{name} real first validator help failed: "
+                             f"exit={result.returncode}, stderr={result.stderr.decode(errors='replace')}")
+        if not (real_build / "cli-home").is_dir():
+            raise ValueError(f"{name} real first validator help did not create its isolated CLI home.")
+        output = (result.stdout + result.stderr).decode(errors="replace")
+        if re.search(r"ASP\.NET Core HTTPS development certificate|dotnet dev-certs https --trust|"
+                     r"development certificate.{0,60}(?:install|trust)", output, re.IGNORECASE):
+            raise ValueError(f"{name} first validator help emitted a development-certificate banner: {output}")
+
+    resolver_probe = work / "cert-shim-resolver"
+    resolver_probe.mkdir()
+    resolver_env = clean_env.copy()
+    resolver_env["PATH"] = str(shim_dir) + os.pathsep + resolver_env["PATH"]
+    for key in ("TMPDIR", "TEMP", "TMP"):
+        resolver_env[key] = str(work)
+    resolution = run([sys.executable, "-c", "import shutil; print(shutil.which('dotnet'))"],
+                     resolver_probe, resolver_env).decode().strip()
+    expected_shim = cmd_shim if os.name == "nt" else bash_shim
+    if not resolution or not Path(resolution).is_file() or not os.path.samefile(resolution, expected_shim):
+        raise ValueError(f"Resolver resolved dotnet to {resolution!r}, not {expected_shim}.")
+    helper = plugin / "skills/blazor-package-readiness-resolver/scripts/run-resolver.py"
+    result = subprocess.run([sys.executable, str(helper), "coverage"], cwd=resolver_probe,
+                            env=resolver_env, capture_output=True, timeout=30, check=False)
+    if result.returncode != 3 or b"args=--list-sdks" not in result.stderr:
+        raise ValueError(f"Resolver did not reach the intercepted SDK enumeration: "
+                         f"exit={result.returncode}, stderr={result.stderr!r}")
+    values = dict(line.split("=", 1) for line in result.stderr.decode(errors="replace").splitlines()
+                  if line.startswith(("args=", "cert=", "skip=", "home=")))
+    home = Path(values.get("home", ""))
+    if (values.get("args") != "--list-sdks" or values.get("cert") != "false" or
+            values.get("skip") != "1" or home.name != "home" or
+            not home.parent.name.startswith("blazor-resolver-") or
+            home.parent.parent != work):
+        raise ValueError(f"Resolver first dotnet call lacked isolated launcher-owned settings: {values}")
+    print("Bash and available PowerShell launchers: first intercepted dotnet --version received "
+          "launcher-owned certificate/first-time settings and isolated CLI home; SDK failure "
+          "cleaned up automatic scratch; real first "
+          "validator help emitted no development-certificate installation/trust banner. "
+          "Resolver first --list-sdks received the same isolated settings.")
 
 
 def sdk_checks(helper, work):
@@ -224,13 +382,16 @@ def isolated_checks(plugin, work, setup):
 
 
 def main():
-    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"]):
-        raise ValueError("Supported options: --isolated, --launcher")
+    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"]):
+        raise ValueError("Supported options: --isolated, --launcher, --cert")
     with tempfile.TemporaryDirectory(prefix="resolver-installed-") as work:
         work = Path(work)
         plugin = work / "plugin"
         shutil.copytree(REPO / "plugins/dotnet-blazor", plugin,
                         ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
+        if sys.argv[1:] == ["--cert"]:
+            certificate_launcher_checks(plugin, work)
+            return
         helper = plugin / "skills/blazor-package-readiness-resolver/scripts/run-resolver.py"
         sdk_checks(helper, work)
         assessment = work / "assessment"
@@ -276,6 +437,7 @@ def main():
         consumer = plugin / "skills/blazor-component-readiness"
         # Build/launch only the trusted report validator; assessed build targets remain inert.
         command = report_command(consumer)
+        certificate_launcher_checks(plugin, work)
         env = os.environ.copy()
         env["READINESS_TEMP"] = str(work / "report-build")
         # The report validator intentionally requires the caller's active .NET 11 SDK.
