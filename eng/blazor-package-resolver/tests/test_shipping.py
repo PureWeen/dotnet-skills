@@ -3,10 +3,12 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import runpy
 import shutil
 import subprocess
 import sys
 import tempfile
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -27,6 +29,41 @@ def report_command(consumer):
     launcher = consumer / "scripts/validator" / ("run-validator.ps1" if os.name == "nt" else "run-validator.sh")
     return ([shell, "-NoProfile", "-File", str(launcher)] if os.name == "nt"
             else [shell, str(launcher)])
+
+
+def sdk_checks(helper, work):
+    pin_sdk = runpy.run_path(str(helper))["pin_sdk"]
+    scratch = work / "sdk-selection"
+    scratch.mkdir()
+    inventory = ("11.0.100-preview.3 [installed sdk]\n10.0.99 [installed sdk]\n"
+                 "10.0.403 [installed sdk]\n10.0.404-preview.1 [installed sdk]\n")
+    response = subprocess.CompletedProcess([], 0, inventory.encode())
+    with mock.patch("subprocess.run", return_value=response):
+        if not pin_sdk("dotnet", scratch, os.environ.copy()):
+            raise ValueError("Installed stable net10 SDK was not admitted.")
+    expected = {"sdk": {"version": "10.0.403", "rollForward": "disable", "allowPrerelease": False}}
+    if json.loads((scratch / "global.json").read_bytes()) != expected:
+        raise ValueError("The exact newest stable net10 SDK was not pinned.")
+    (scratch / "global.json").unlink()
+    for code, output in ((0, b"11.0.100-preview.3 [installed sdk]\n"),
+                         (0, b"10.0.403-preview.1 [installed sdk]\n"), (1, b"sdk query failed")):
+        with mock.patch("subprocess.run", return_value=subprocess.CompletedProcess([], code, output)), \
+                mock.patch("sys.stderr"):
+            if pin_sdk("dotnet", scratch, os.environ.copy()) or (scratch / "global.json").exists():
+                raise ValueError("Unavailable SDK selection did not fail closed.")
+    dotnet = shutil.which("dotnet")
+    if dotnet is None:
+        raise ValueError("SDK selection check requires installed dotnet.")
+    before = run([dotnet, "--version"], work)
+    if not pin_sdk(dotnet, scratch, os.environ.copy()):
+        raise ValueError("No stable .NET 10 SDK is installed for offline shipping checks.")
+    selected = run([dotnet, "--version"], scratch).decode().strip()
+    if selected != json.loads((scratch / "global.json").read_bytes())["sdk"]["version"]:
+        raise ValueError("Dotnet did not select the pinned SDK.")
+    if before != run([dotnet, "--version"], work):
+        raise ValueError("Tool SDK selection changed the caller's active SDK.")
+    print("Offline SDK selection: exact newest stable net10 pin, three fail-closed controls, "
+          "real SDK selection and unchanged caller SDK passed.")
 
 
 def worker_command(plugin, work):
@@ -144,18 +181,19 @@ def isolated_checks(plugin, work, setup):
 
 
 def main():
-    if sys.argv[1:] not in ([], ["--isolated"]):
-        raise ValueError("Supported option: --isolated")
+    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"]):
+        raise ValueError("Supported options: --isolated, --launcher")
     with tempfile.TemporaryDirectory(prefix="resolver-installed-") as work:
         work = Path(work)
         plugin = work / "plugin"
         shutil.copytree(REPO / "plugins/dotnet-blazor", plugin,
                         ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
         helper = plugin / "skills/blazor-package-readiness-resolver/scripts/run-resolver.py"
+        sdk_checks(helper, work)
         assessment = work / "assessment"
         assessment.mkdir()
         setup = REPO / "tests/dotnet-blazor/blazor-package-readiness-resolver/fixtures/setup.py"
-        if sys.argv[1:]:
+        if sys.argv[1:] == ["--isolated"]:
             isolated_checks(plugin, work, setup)
             return
         shutil.copyfile(setup, assessment / "setup.py")
@@ -167,6 +205,10 @@ def main():
         coverage = run([*invocation, "coverage"], assessment)
         if hashlib.sha256(coverage).hexdigest() != "0f3e74952684b87eee5aa2cc29d27d05ba2472d32ec449344f5a9cd8a6efb763":
             raise ValueError("Installed coverage changed.")
+        if sys.argv[1:] == ["--launcher"]:
+            print("Exact installed coverage invocation passed with hostile caller global.json, "
+                  "fresh isolated packages, empty feeds and no assessed-code execution.")
+            return
         result = run([*invocation, "package", "sample.nupkg"], assessment)
         (assessment / "result.json").write_bytes(result)
         run([sys.executable, "setup.py", "result.json", "all"], assessment)

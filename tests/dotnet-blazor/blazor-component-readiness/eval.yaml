@@ -139,8 +139,8 @@ stimuli:
       capability: authoring-routing-boundary
       risk: unsolicited-assessment
       journey: author-component
+      expect_activation: "false"
     prompt: Show a simple Razor parameter and callback example for a counter component; no release or readiness review is requested.
-    expect_activation: false
     graders:
       - type: prompt
     rubric:
@@ -150,8 +150,8 @@ stimuli:
       capability: static-only-routing-boundary
       risk: unsolicited-full-report
       journey: inspect-package-json
+      expect_activation: "false"
     prompt: Run only deterministic offline package evidence checks on my local nupkg and return their JSON; do not create a full readiness report.
-    expect_activation: false
     graders:
       - type: prompt
     rubric:

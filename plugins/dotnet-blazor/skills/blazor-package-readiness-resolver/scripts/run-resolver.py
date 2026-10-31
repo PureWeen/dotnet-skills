@@ -1,12 +1,39 @@
 #!/usr/bin/env python3
 """Build only the trusted bundled resolver, without feeds; never build assessed inputs."""
 import argparse
+import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+
+
+def pin_sdk(dotnet, scratch, env):
+    result = subprocess.run([dotnet, "--list-sdks"], cwd=scratch, env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            timeout=30, check=False)
+    if result.returncode:
+        sys.stderr.buffer.write(result.stdout)
+        print("Resolver environment failure: could not enumerate installed .NET SDKs.",
+              file=sys.stderr)
+        return False
+    versions = []
+    for line in result.stdout.decode("utf-8").splitlines():
+        match = re.fullmatch(r"(10\.0\.(\d+)) \[.+\]", line.strip())
+        if match:
+            versions.append((int(match[2]), match[1]))
+    if not versions:
+        print("Resolver environment failure: an installed stable .NET 10 SDK is required; "
+              "no SDK or packs were downloaded.", file=sys.stderr)
+        return False
+    # Newer SDKs can request older net10 packs absent from their side-by-side installation.
+    (scratch / "global.json").write_text(json.dumps({
+        "sdk": {"version": max(versions)[1], "rollForward": "disable", "allowPrerelease": False}
+    }) + "\n", encoding="utf-8")
+    return True
 
 
 def main():
@@ -18,7 +45,7 @@ def main():
         parser.error("coverage takes no input; all other commands require one input path")
     dotnet = shutil.which("dotnet")
     if dotnet is None:
-        print("Resolver environment failure: an installed .NET SDK and net10.0 packs are required.",
+        print("Resolver environment failure: an installed .NET 10 SDK and packs are required.",
               file=sys.stderr)
         return 3
     runtime = Path(__file__).resolve().parent / "resolver"
@@ -40,12 +67,14 @@ def main():
                 env.pop(key)
         env["MSBuildEnableWorkloadResolver"] = "false"
         env["NUGET_PACKAGES"] = str(scratch / "packages")
+        if not pin_sdk(dotnet, scratch, env):
+            return 3
         properties = ["-p:ImportDirectoryBuildProps=false", "-p:ImportDirectoryBuildTargets=false",
                       "-p:ImportDirectoryPackagesProps=false", "-p:EnableResolverTestHooks=false",
                       "-p:DefineConstants=TRACE", "-noAutoResponse",
                       "-p:NuGetAudit=false", "-p:RestoreIgnoreFailedSources=false",
                       "-p:RestoreSources=", "-p:RestoreAdditionalProjectSources=",
-                      "-p:RestoreFallbackFolders=",
+                      "-p:RestoreFallbackFolders=", "-p:UseAppHost=false",
                       "-p:CustomBeforeMicrosoftCommonProps=", "-p:CustomAfterMicrosoftCommonProps=",
                       "-p:CustomBeforeMicrosoftCommonTargets=", "-p:CustomAfterMicrosoftCommonTargets=",
                       "-p:BaseIntermediateOutputPath=" + str(scratch / "obj") + os.sep,

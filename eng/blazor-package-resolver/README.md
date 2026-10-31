@@ -7,6 +7,12 @@ and data now ship in
 The local project imports that source directly; there is no second production copy.
 The installed cross-platform launcher builds only the trusted tool with empty feeds and
 external temporary outputs; it never restores or executes assessed code.
+It pins the newest installed stable .NET 10 SDK in that temporary directory, using the
+SDK's matching installed packs rather than an ambient newer SDK's net10 pack defaults.
+It runs the managed DLL without a native apphost, with fresh isolated package storage and
+empty feeds. A missing SDK/pack is an environment failure, never an online restore or an
+assessment result. Caller SDK selection and the report validator's active-.NET-11
+prerequisite are unchanged.
 
 The [compact corpus contract](tests/CORPUS.md) explains byte-locked generation, automatic
 temporary-root replay, exact parent comparison and the **narrowed PI-01 independence claim**.

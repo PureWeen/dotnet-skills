@@ -6,7 +6,7 @@ description: >-
   results, license/notice/provenance checks without network or executing package code.
   DO NOT USE FOR: full component or library readiness reports (use blazor-component-readiness),
   ordinary NuGet restore troubleshooting, running samples, or legal/certification decisions.
-compatibility: Requires Python 3.10+ and an installed .NET SDK with net10.0 reference/runtime packs. No downloads.
+compatibility: Requires Python 3.10+ and an installed stable .NET 10 SDK with its reference/runtime packs. No downloads.
 ---
 
 # Blazor Package Readiness Resolver
@@ -18,6 +18,9 @@ The installed tool is [scripts/run-resolver.py](scripts/run-resolver.py); no rep
 Git, `eng/` directory, network, package dependency restore or package-code execution is needed.
 It builds **only its own trusted bundled source** against installed framework packs with empty
 package feeds. This is not a sandbox and never authorizes executing assessed code.
+The launcher pins the newest installed stable .NET 10 SDK in its temporary build directory;
+it never changes the caller's `global.json` or SDK selection. No native apphost is built.
+The separate full-report validator still requires the caller's active .NET 11 SDK.
 
 This skill owns deterministic package/evidence checks, not a complete readiness report.
 For a full package/component/library report load the sibling skill

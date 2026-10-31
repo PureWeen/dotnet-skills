@@ -148,8 +148,8 @@ stimuli:
       capability: restore-help-routing-boundary
       risk: unsolicited-readiness-assessment
       journey: diagnose-feed-restore
+      expect_activation: "false"
     prompt: My ordinary ASP.NET app gets NU1301 while restoring. How do I diagnose its feed and proxy configuration?
-    expect_activation: false
     graders:
       - type: prompt
     rubric:
@@ -159,8 +159,8 @@ stimuli:
       capability: runtime-help-routing-boundary
       risk: unsolicited-package-assessment
       journey: start-development-server
+      expect_activation: "false"
     prompt: How do I start a local Blazor development server and choose its port? I do not need a package assessment.
-    expect_activation: false
     graders:
       - type: prompt
     rubric:
