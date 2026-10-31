@@ -1,0 +1,158 @@
+name: blazor-component-readiness
+description: Self-contained report drafts and truthful optional static-evidence handoff.
+type: capability
+defaults:
+  timeout: 8m
+  runs: 1
+stimuli:
+  - name: package-draft-with-unresolved-source
+    tags:
+      capability: package-draft-initialization
+      risk: unbound-or-overclaimed-report
+      journey: prepare-package-review
+    prompt: >-
+      Start a package-only release-readiness draft for the supplied sample.nupkg in this
+      approved output directory. It was obtained locally; source correspondence remains
+      unresolved. Confirm the local input record as confirmed.json and save assessment.json.
+      Do not execute package code or claim a completed or validated readiness report.
+    environment:
+      files:
+        - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python check_report.py assessment.json package
+      - type: prompt
+    rubric:
+      - Produces a separate incomplete package draft bound to the exact confirmed local bytes.
+      - Preserves unresolved source and untested requirements without inventing static resolver results.
+  - name: isolated-component-draft
+    tags:
+      capability: component-draft-initialization
+      risk: package-scope-coupling
+      journey: prepare-component-review
+    prompt: >-
+      Initialize only a release-readiness draft for my selected DateField component, ID
+      date-field, in sample.nupkg. I confirm its interactive-server mode and that dynamic
+      children are not applicable because this test control has no dynamic children.
+      The package is a local file; source correspondence is unresolved. Use this approved
+      directory, save confirmed.json and assessment.json, and do not require a separate
+      package assessment or execute the component.
+    environment:
+      files:
+        - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python check_report.py assessment.json component
+      - type: prompt
+    rubric:
+      - Produces the distinct incomplete component draft without demanding a package assessment.
+      - Treats the supplied component declarations as input facts, not runtime verification.
+  - name: missing-release-inputs
+    tags:
+      capability: input-prerequisite-discovery
+      risk: fabricated-runtime-evidence
+      journey: scope-adoption-review
+    prompt: >-
+      Assess only the selected Blazor DateField component for adoption, not its package or
+      sibling controls. I have not supplied its exact release identity or runtime captures.
+      Explain the required inputs and what can be assessed without executing it.
+    graders:
+      - type: prompt
+    rubric:
+      - Keeps component scope separate and does not require a package assessment as a prerequisite.
+      - Requests exact missing deciding inputs without inventing evidence or runtime results.
+  - name: absent-static-tool-boundary
+    tags:
+      capability: optional-tool-boundary
+      risk: fabricated-static-results
+      journey: stage-offline-review
+    prompt: >-
+      I have sample.nupkg and changed.json for a package readiness report, but the optional
+      static package-checking tool is not installed in this staging. Start what can be done
+      locally and explain the evidence limit. Do not fetch a tool, invent its JSON output,
+      repair packet hashes or classify unperformed notice checks as a product defect.
+    environment:
+      files:
+        - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: prompt
+    rubric:
+      - States that static replay is unavailable and leaves its deciding conclusions unresolved.
+      - Continues supported local report preparation without fabricating a replay or treating missing tooling as a package gap.
+  - name: offline-draft-does-not-execute
+    tags:
+      capability: static-report-initialization
+      risk: untrusted-code-execution
+      journey: prepare-offline-review
+    prompt: >-
+      Begin an offline package readiness draft for the local sample.nupkg in this approved
+      directory. Save its confirmed input as confirmed.json and incomplete draft as
+      assessment.json. Source correspondence is unresolved. Do not run local build targets,
+      package code, downloads, dependency restore or runtime probes.
+    environment:
+      files:
+        - src: ../blazor-package-readiness-resolver/fixtures
+          dest: .
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python check_report.py assessment.json package
+      - type: prompt
+    rubric:
+      - Produces a byte-bound incomplete draft using only trusted tooling and static local inputs.
+      - Reports the unperformed checks honestly and never runs assessed build customizations.
+  - name: separate-report-scopes
+    tags:
+      capability: evidence-scope-separation
+      risk: package-to-component-overclaim
+      journey: plan-separate-reports
+    prompt: >-
+      I need both a package readiness report and a separate report for its Grid component.
+      Can static package license findings stand in for the component's rendering,
+      accessibility and lifecycle evidence? Explain the artifact and evidence boundaries.
+    graders:
+      - type: prompt
+    rubric:
+      - Keeps package and component reports separate and rejects static package facts as component behavior evidence.
+      - Does not invent a combined score or run unauthorized component probes.
+  - name: ordinary-component-authoring-dormancy
+    tags:
+      capability: authoring-routing-boundary
+      risk: unsolicited-assessment
+      journey: author-component
+      expect_activation: "false"
+    prompt: Show a simple Razor parameter and callback example for a counter component; no release or readiness review is requested.
+    graders:
+      - type: prompt
+    rubric:
+      - Recognizes readiness reporting is out of scope and gives component-authoring guidance without starting an unsolicited assessment.
+  - name: json-only-resolver-dormancy
+    tags:
+      capability: static-only-routing-boundary
+      risk: unsolicited-full-report
+      journey: inspect-package-json
+      expect_activation: "false"
+    prompt: Run only deterministic offline package evidence checks on my local nupkg and return their JSON; do not create a full readiness report.
+    graders:
+      - type: prompt
+    rubric:
+      - Recognizes full-report generation is out of scope and returns only the requested package results without an unsolicited readiness report.

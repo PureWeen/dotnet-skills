@@ -105,6 +105,15 @@ manifest metadata (anything other than a deliberate base bump in `version.json`)
 the patch number and is **not** picked up by `/version-bump` or the weekly sync. Touch a skill or
 other plugin content to bump the version.
 
+The component readiness consumer also carries generated `plugin-manifest.json`,
+`references/rubric.json`, and `references/requirement-basis.json` snapshots for single-skill
+staging. `eng/version/Sync-PluginVersions.ps1` copies these byte-for-byte from the plugin
+manifest and the package resolver's canonical data. Its plugin-specific `pathFilters`
+exclude these outputs, not their data sources: repairing snapshot-only drift never
+advances the patch. Both version workflows stage the generated copies along with manifests.
+For a stale PR branch, use `-BaseCommit <current-main> -HeadCommit <head> -PredictMerge`
+to reconcile against current main rather than hand-editing or lowering the version.
+
 What this means when you contribute:
 
 - **Every plugin carries its own `plugins/<plugin>/version.json`.** It declares the plugin's version

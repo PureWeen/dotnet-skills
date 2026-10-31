@@ -1,6 +1,6 @@
 {
   "name": "dotnet-blazor",
-  "version": "0.1.2",
-  "description": "Skills for Blazor development: component authoring, interactivity, and web application patterns.",
+  "version": "0.1.4",
+  "description": "Skills for Blazor development, full component readiness reports, and deterministic offline package evidence checks.",
   "skills": ["./skills/"]
 }

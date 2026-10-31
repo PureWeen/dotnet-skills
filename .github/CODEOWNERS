@@ -92,6 +92,10 @@
 # dotnet-blazor (Blazor component and app development)
 /plugins/dotnet-blazor/ @dotnet/aspnet
 /tests/dotnet-blazor/ @dotnet/aspnet
+/plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/ @dotnet/aspnet
+/tests/dotnet-blazor/blazor-package-readiness-resolver/ @dotnet/aspnet
+/plugins/dotnet-blazor/skills/blazor-component-readiness/ @dotnet/aspnet
+/tests/dotnet-blazor/blazor-component-readiness/ @dotnet/aspnet
 
 # dotnet-winforms (Windows Forms development)
 /plugins/dotnet-winforms/ @KlausLoeffelmann @AbhitejJohn

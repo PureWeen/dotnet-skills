@@ -91,7 +91,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$SYNC_BRANCH"
-          git add plugins/*/plugin.json plugins/*/.codex-plugin/plugin.json plugins/*/.claude-plugin/plugin.json
+          git add -- plugins
           git commit -m "Weekly plugin version sync"
           git push --force origin "$SYNC_BRANCH"
 

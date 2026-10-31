@@ -14,11 +14,15 @@ dot.net
 json.schemastore.org
 microsoft.com
 modelcontextprotocol.io
+slsa.dev
+spdx.dev
+spdx.org
 
 # Tools
 aka.ms/dotnet-trace
 aka.ms/perfcollect
 api.nuget.org
+www.nuget.org/api/v2/package
 download.sysinternals.com
 libimobiledevice.org
 msdl.microsoft.com
@@ -49,6 +53,7 @@ github.com/microsoft/cswinrt
 github.com/microsoft/openapi.net
 github.com/microsoft/openjdk
 github.com/microsoft/perfview
+github.com/microsoft/sbom-tool
 github.com/microsoftdocs/visualstudio-docs
 github.com/NuGet/docs.microsoft.com-nuget
 
@@ -60,6 +65,10 @@ github.com/open-telemetry/semantic-conventions
 # Example paths used in skill documentation
 github.com/yourusername
 github.com/username
+example.test
+
+# Supply-chain documentation
+docs.github.com/actions/how-tos/secure-your-work/use-artifact-attestations
 
 # Test smell research
 testsmells.org
