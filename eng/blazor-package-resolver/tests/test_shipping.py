@@ -88,11 +88,12 @@ def worker_command(plugin, work):
     end = document.index('\n. "$CONTRACT"', start) + len('\n. "$CONTRACT"')
     script = work / "documented-worker-command.sh"
     script.write_text(
-        'set -euo pipefail\nUNIT="$PWD/worker unit"\nPLUGIN="$UNIT/plugin"\n'
+        'set -euo pipefail\nUNIT="$PWD/worker unit"\nPLUGIN="$UNIT/plugin/../plugin"\n'
         'CONTRACT="$UNIT/launch.env"\n' + document[start:end] +
-        '\n[[ "$PLUGIN_ROOT" = "$PLUGIN" && "$CLI_PLUGIN_DIR" = "$PLUGIN" ]]\n'
+        '\nEXPECTED_PLUGIN="$(cd -- "$PLUGIN" && pwd -P)"\n'
+        '[[ "$PLUGIN_ROOT" = "$EXPECTED_PLUGIN" && "$CLI_PLUGIN_DIR" = "$EXPECTED_PLUGIN" ]]\n'
         '[[ -f "$WORKER_PROMPT_FILE" ]]\n'
-        'grep -Fq "Explicit trusted plugin root: $PLUGIN" "$WORKER_PROMPT_FILE"\n',
+        'grep -Fq "Explicit trusted plugin root: $EXPECTED_PLUGIN" "$WORKER_PROMPT_FILE"\n',
         newline="\n")
     run([str(bash), script.name], work)
 
