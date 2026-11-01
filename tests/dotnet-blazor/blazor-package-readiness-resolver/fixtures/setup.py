@@ -30,7 +30,8 @@ if len(sys.argv) > 1:
         require(set(row) == {"row_id", "resolver_id", "resolver_version", "branch_id", "decision",
                              "applicability", "finding", "missing_fact", "required_input",
                              "next_category", "evidence_contract", "evidence_references", "inputs"})
-        require(row["row_id"] in rows and row["resolver_version"] == "1.0.0")
+        require(row["row_id"] in rows and
+                row["resolver_version"] == ("1.1.0" if row["row_id"] in ("LP-02", "LP-03") else "1.0.0"))
         require(re.fullmatch(r"[a-z][a-z0-9-]*", row["resolver_id"]) is not None and
                 re.fullmatch(r"[a-z][a-z0-9-]*", row["branch_id"]) is not None)
         require(row["inputs"] == [{"role": "package", "path": "sample.nupkg", "sha256": digest}])

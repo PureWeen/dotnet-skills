@@ -72,14 +72,16 @@ representation or create a new mandatory evidence format.
 Use `verified` only when the applicable distributed surface is sufficiently represented. Preserve
 supported positive dependency matches even when another embedded component is missing.
 
-For `LP-03`, `verified` requires a complete, version-bound direct/transitive dependency inventory
-and applicable license evidence establishing OSI-approved, non-copyleft licensing for every dependency.
-An inventory or `PackageLicenseExpression` alone is insufficient. A demonstrated incompatible
-license supports `gap`. Missing or ambiguous license evidence is unresolved, not automatically
-`verified` or `gap`: use `not tested` when the evidence is independently reproducible/acquirable but
-not completed, and `owner evidence required` only when the missing fact genuinely must come from an
-owner. Passing `LP-03` is not organizational legal approval or a comprehensive license-compliance
-opinion.
+For `LP-03`, `verified` requires an admitted version-bound release-wide SBOM inventory
+and each exact inventoried nupkg's own supported OSI-approved, non-copyleft nuspec expression,
+classified by the same pinned LP-01 policy. The deterministic profile relies explicitly on the
+caller's raw-digest/root-bound authoritative release-wide inventory designation; structural parsing
+does not independently prove completeness or publication. Ordinary grant files, reviewer packets
+and owner approval are not prerequisites. Missing/ambiguous/unsupported inventory, designation,
+bytes or declarations (including NOASSERTION and file-only/URL-only licenses) stay `not tested`,
+with evidence-acquisition follow-up; only a demonstrated incompatible declaration supports `gap`.
+Build tooling in the SBOM counts. See [eleven-row intake](eleven-row-autofill.md); PI-06/PI-07
+publication/enumeration outputs remain separate and unassigned. Passing LP-03 is not legal approval.
 
 ### Verified-boundary protocols
 

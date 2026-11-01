@@ -17,6 +17,14 @@ the two existing positive findings gain declaration-only association wording;
 `wrong-project-identity` and `missing-implementation` become qualified positives;
 the remaining missing selected-file case gets a supplemental-binding explanation.
 Only those two case rationales and the LP-02 README contract also change.
+The subsequent named `lp03-sbom-declarations-1.1.0` delta changes **only** the
+43 synthetic and two retained expected LP-03 results to resolver 1.1.0 and the
+disclosed caller-designation contract: 42 legacy schema-1 packets are explicitly
+`input-invalid`/not tested, one missing-package case stays missing, and both retained
+root-only packets stay scope-missing/not tested. No fixture input, archive, grant,
+review, recipe, raw bank, seed, case ID/order/rationale/pointer or historical
+LP-03 oracle changes. The old 66/77 guard/witness inventory is historical, not
+current positive coverage. New current-profile tests are separate from this store.
 Current lengths/digests are pinned in `lock.json`.
 
 The compact store has 33 genuine/raw seeds and one shared SPDX catalog; all generated
@@ -34,6 +42,10 @@ It admits only the named row deltas: exact approved-result field replacements in
 `lp01/cases.json` and `lp01/acceptance.json`, and the separately pinned before/after
 `lp01/README.md` bytes, plus exact LP-02 version/finding/branch/rationale replacements
 in `lp02/cases.json` and `lp02/acceptance.json` and pinned LP-02 README bytes.
+The LP-03 allowance first verifies the exact historical before-document digests,
+then admits only the specified version/contract/branch/escalation replacements
+in `lp03/cases.json` and `lp03/acceptance.json`. Its rationales/references/input
+pins are not rewritten to hide the deliberately refused legacy protocol.
 Every other byte must equal the accepted parent. Rejection tests cover unrelated
 result/input changes, changed branches/versions, extra cases and unreviewed README edits.
 Ordinary replay needs neither Git nor the parent commit.
@@ -87,7 +99,10 @@ python eng/blazor-package-resolver/tests/test_shipping.py
 The eleven legacy Python entrypoints are thin launchers. They materialize a new temporary root,
 copy the historical sources from `oracles/` (LP-01 includes the reviewed declaration
 correction; LP-02 includes the public-availability correction; all other oracles
-are unchanged), run the selected source there and
+are unchanged). LP-03 instead selects `lp03_sbom_expectations.py`, the independent
+current-profile stdlib parser/package/LP-01-oracle specification; the original
+`oracles/lp03_expectations.py` remains byte-identical historical evidence, not a
+current positive test. They run the selected source there and
 clean the temporary root on exit. Sibling paths, construction facts,
 normal/optimized behavior and all arguments remain intact. The launchers never call production.
 

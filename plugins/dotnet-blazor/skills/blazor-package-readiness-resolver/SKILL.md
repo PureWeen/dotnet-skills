@@ -34,6 +34,7 @@ outputs without turning them into component evidence or certification.
 | An exact local `.nupkg` | `package` checks all 11 implemented rows with package bytes only. Missing checked evidence stays unresolved. |
 | A local `request.json` plus relative input files | `resolve` admits pinned roles/paths/SHA-256 and dispatches without expected answers. |
 | An `inputs.json` pinning a package and retained source/dependencies | `inspect` preserves broader literal observations and exact source matches without inventing complete/admitted row evidence. |
+| An `inputs.json` pinning a root, schema-2 assessment and raw SPDX SBOM | `admit-sbom` separates structural admission from the bound caller authoritative release-wide inventory designation; it does not prove completeness or publication. |
 | A frozen `cases.json` and its checked inputs | `replay` additionally requires exact complete expected results and evidence pointers. |
 | No assessment inputs | `coverage` lists 60 package rows: 11 implemented, 49 TBD. It is not an assessment. |
 
@@ -54,6 +55,7 @@ Acquisition and evidence admission are separate from offline classification.
    python "<SKILL_DIR>/scripts/run-resolver.py" package "<supplied.nupkg>"
    python "<SKILL_DIR>/scripts/run-resolver.py" resolve "<request.json>"
    python "<SKILL_DIR>/scripts/run-resolver.py" inspect "<inputs.json>"
+   python "<SKILL_DIR>/scripts/run-resolver.py" admit-sbom "<inputs.json>"
    python "<SKILL_DIR>/scripts/run-resolver.py" replay "<cases.json>"
    ```
 
@@ -102,6 +104,14 @@ matches. `inspect` does not relax the `resolve` contracts or assign statuses.
 Implemented handlers are LP-01 through LP-10 and PI-01, at their frozen versions. Other rows
 remain TBD. Coverage never establishes package compliance. The resolver preserves per-row
 precedence and qualified claims; do not broaden them into a full report.
+
+LP-03 `lp03-dependency-licenses/1.1.0` uses the caller-designated release-wide SBOM
+and exact inventoried nupkgs' own declarations through the actual LP-01 classifier.
+See [SBOM admission](references/sbom-inventory.md) for schema 2, the narrow retained
+SPDX 2.2 JSON profile and bounds. An admitted structure alone is not authoritative:
+the exact raw digest/root-bound caller designation is a separate trust boundary.
+Ordinary grants, reviews and owner approval are not prerequisites; missing or unsupported
+evidence stays `not tested`. PI-06/PI-07 remain unimplemented and unassigned.
 
 For LP-04, complete dependency and asset inventories, whole-subject obligation reviews, and
 exhaustive notice mappings must be admitted and digest-bound to the exact root and scope.

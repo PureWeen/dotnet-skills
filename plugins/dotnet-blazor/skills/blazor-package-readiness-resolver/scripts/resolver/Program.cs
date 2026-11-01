@@ -11,6 +11,7 @@ try
         ["replay", var manifest] => Replay.Run(manifest, registry),
         ["resolve", var request] => Requests.Run(request, registry),
         ["inspect", var request] => Requests.Inspect(request),
+        ["admit-sbom", var request] => Requests.AdmitSbom(request),
         ["package", var package] => Requests.Package(package, registry),
         ["acquire-lp02", var package, var destination, var project, var implementation, var rationale] =>
             await Lp02SourceAcquisition.CaptureAsync(package, destination, project, implementation, rationale),
@@ -43,7 +44,7 @@ catch (UnauthorizedAccessException)
 }
 catch (CliUsageException)
 {
-    Console.Error.WriteLine("Usage: blazor-package-resolver [coverage | resolve <request.json> | inspect <inputs.json> | package <nupkg> | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]");
+    Console.Error.WriteLine("Usage: blazor-package-resolver [coverage | resolve <request.json> | inspect <inputs.json> | admit-sbom <inputs.json> | package <nupkg> | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]");
     Environment.ExitCode = 2;
 }
 

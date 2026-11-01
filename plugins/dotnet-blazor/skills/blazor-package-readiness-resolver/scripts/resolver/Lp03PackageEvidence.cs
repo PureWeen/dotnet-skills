@@ -45,8 +45,8 @@ internal sealed record Lp03PackageEvidence(string Id, string Version, string? Ex
             if (id is null || id.Any(ch => ch > 127) || version is null)
                 return null;
             id = string.Concat(id.Select(ch => ch is >= 'A' and <= 'Z' ? (char)(ch + 32) : ch));
-            if (!Lp03DependencyLicensesResolver.ValidId(id) ||
-                !Lp03DependencyLicensesResolver.ValidVersion(version))
+            if (!NuGetPackageIdentity.ValidId(id) ||
+                !NuGetPackageIdentity.ValidVersion(version))
                 return null;
             var licenses = metadata.Elements().Where(e => e.Name.LocalName == "license").ToArray();
             if (licenses.Length > 1 || licenses.Any(e => e.HasElements || e.Name.Namespace != metadata.Name.Namespace))

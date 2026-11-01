@@ -56,8 +56,29 @@ public static class Requests
         return PackageEvidenceInspection.Run(request.Inputs, inputs);
     }
 
+    public static byte[] AdmitSbom(string manifestPath)
+    {
+        var full = FullPath(manifestPath);
+        using var document = JsonDocument.Parse(Read(full, 1024 * 1024), new() { MaxDepth = 16 });
+        Unique(document.RootElement);
+        var request = document.Deserialize<InspectionRequest>(Options);
+        if (request is not { SchemaVersion: 1, Inputs.Count: > 0 and <= 3 } ||
+            request.Inputs.Any(pin => pin.Role is not ("package" or "assessment" or "sbom")))
+            throw new InvalidDataException("Unsupported SBOM admission request.");
+        long total = 0;
+        var inputs = CheckInputs(Path.GetDirectoryName(full)!, request.Inputs, ref total, inventory: true);
+        var admission = Spdx22InventoryAdmission.Admit(inputs);
+        var result = JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            schema_version = 1, producer = "sbom-inventory/1.0.0", inputs = request.Inputs,
+            admission
+        }, Options);
+        if (result.Length > 256 * 1024) throw new InvalidDataException("SBOM admission output cap.");
+        return [.. result, (byte)'\n'];
+    }
+
     private static Dictionary<string, CheckedInput> CheckInputs(
-        string root, List<PinnedInput> pins, ref long total)
+        string root, List<PinnedInput> pins, ref long total, bool inventory = false)
     {
         var inputs = new Dictionary<string, CheckedInput>(StringComparer.Ordinal);
         foreach (var pin in pins)
@@ -73,7 +94,14 @@ public static class Requests
                 if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
                     throw new InvalidDataException("Linked inputs are unsupported.");
             }
-            var bytes = Read(path, (int)Math.Min(FileLimit, TotalLimit - total));
+            var limit = inventory ? pin.Role switch
+            {
+                "package" => 8 * 1024 * 1024,
+                "assessment" => 65536,
+                "sbom" => Spdx22InventoryAdmission.SbomLimit,
+                _ => throw new InvalidDataException("Unsupported inventory role.")
+            } : FileLimit;
+            var bytes = Read(path, (int)Math.Min(limit, TotalLimit - total));
             total += bytes.Length;
             if (Catalog.Digest(bytes) != pin.Sha256)
                 throw new InvalidDataException("Input digest mismatch.");

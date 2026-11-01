@@ -19,10 +19,10 @@ internal static class Lp03Checks
         ["README.md"] = "6412d0e2693cea90222bf7fe099541d5ca37bf4826201b69f2b75a033ca9be42",
         ["acceptance-manifest.json"] = "907b2c7d114d56e745b63eced1176a460d50d24d6bd02cde812d54326d4b21d8",
         ["discrimination.json"] = "ab28a984d9757dc62096b3a91082134b69ab23da7cdbde6a4b8a7aa3ede41371",
-        ["cases.json"] = "935bc6e80fcaf7d1a5ad1526b2ee5a2409d6041fdbccfd6fb1b47e272b1f744b",
+        ["cases.json"] = "b6986f6247a4148648e9da3385e03baae14719dd16da990508ef5c932c6c334a",
         ["input-manifest.json"] = "04f3d542ee4ff5d544270982f21c7e9e87e73ad591d2763eeef57cfc7cf72de5",
         ["rejected-inputs.json"] = "ae7cd3af1fa9050cbd2e222d2e7efc2d455aa2f3e429dd478ec2465b71bdeadb",
-        ["acceptance.json"] = "5f6a5a58c73939e7cb3f28f740acfcf26e2cfd883f0ebfb0f99d63ad1e50e255",
+        ["acceptance.json"] = "497a05f8d1aa988f561a5d83f0b4c58a1046b9895d1c48026d84009efa57e3c8",
         ["retained-inputs.json"] = "8bd89262559999a2589267815761af820992965f336a1b4a0e9f1a5aff3e9bb6"
     };
 
@@ -37,57 +37,15 @@ internal static class Lp03Checks
         Require(output.SequenceEqual(Replay.Run(fixture, registry)), "Exact canonical replay determinism");
         var retainedSuite = JsonSerializer.Deserialize<CaseSuite>(
             File.ReadAllBytes(Path.Combine(directory, "acceptance.json")), Options)!;
-        var templates = suite.Cases.Concat(retainedSuite.Cases).Select(c => c.Expected)
-            .GroupBy(c => c.BranchId).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
         var byId = suite.Cases.ToDictionary(c => c.CaseId, StringComparer.Ordinal);
-        var spec = JsonNode.Parse(File.ReadAllBytes(Path.Combine(directory, "discrimination.json")))!;
-        var witnesses = spec["witnesses"]!.AsArray();
-        var executed = new HashSet<string>(StringComparer.Ordinal);
-        var recipes = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var witness in witnesses)
-        {
-            var packet = Packet.Load(byId[Text(witness!, "case_id")], directory);
-            if (Text(witness!, "kind") == "fixed-in-memory")
-            {
-                var recipe = Text(witness!, "recipe");
-                Require(recipes.Add(recipe), "Fixed recipe registered once");
-                Mutate(packet, recipe);
-            }
-            var branch = Text(witness!, "normal_branch");
-            Require(branch != Text(witness!, "wrong_branch"), "Witness distinguishes an incorrect branch");
-            Match(registry, packet, templates[branch], Text(witness!, "witness_id"));
-            Require(executed.Add(Text(witness!, "witness_id")), "Witness executed once");
-        }
-        var critical = spec["critical_guard_ids"]!.AsArray().Select(n => n!.GetValue<string>()).ToHashSet(StringComparer.Ordinal);
-        bool InventoryValid(JsonNode candidate)
-        {
-            var inventory = candidate["guard_inventory"]!.AsArray();
-            return inventory.Count == critical.Count &&
-                inventory.Select(g => Text(g!, "guard_id")).ToHashSet(StringComparer.Ordinal).SetEquals(critical) &&
-                inventory.All(g => g!["witness_ids"]!.AsArray() is { Count: > 0 } ids &&
-                    ids.All(id => executed.Contains(id!.GetValue<string>())));
-        }
-        Require(critical.Count == 66 && executed.Count == 77 && recipes.Count == 33 &&
-            InventoryValid(spec), "All 66 frozen guard families have executed production witnesses");
-        var meta = 0;
-        foreach (var guard in critical)
-        {
-            foreach (var remove in new[] { true, false })
-            {
-                var changed = spec.DeepClone();
-                var inventory = changed["guard_inventory"]!.AsArray();
-                var item = inventory.Single(n => Text(n!, "guard_id") == guard)!;
-                if (remove) inventory.Remove(item);
-                else item["witness_ids"] = new JsonArray();
-                Require(!InventoryValid(changed), "Missing registration/witness is rejected");
-                meta++;
-            }
-        }
+        Require(suite.Cases.Count(c => c.Expected.BranchId == "input-invalid") == 42 &&
+            suite.Cases.Single(c => c.Expected.BranchId != "input-invalid").Expected.BranchId == "missing-package",
+            "Legacy schema is explicitly refused, not silently migrated");
         Loaders(registry, catalog, directory, byId["lp03-multi-tfm-versions"]);
-        Boundaries(registry, directory, byId["lp03-multi-tfm-versions"], templates);
         Retained(registry, directory, retainedSuite);
-        Console.WriteLine($"LP-03: 43 exact replays, SHA-256 {Catalog.Digest(output)}; " +
-            $"66 guard families, {executed.Count} witnesses ({recipes.Count} native fixed recipes), {meta} omission meta-checks.");
+        Lp03SbomChecks.Run(registry);
+        Console.WriteLine($"LP-03: 43 exact legacy refusal replays, SHA-256 {Catalog.Digest(output)}; " +
+            "two retained root-only refusals; historical 66/77 inventory preserved, not current-profile coverage.");
     }
 
     private sealed class Packet

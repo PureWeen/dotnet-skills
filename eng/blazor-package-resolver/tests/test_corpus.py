@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import shutil
 import struct
+import subprocess
 import tempfile
 
 import corpus
@@ -94,6 +95,30 @@ def main():
         else:
             raise ValueError("LP-02 parent preservation accepted " + label)
     print("Named LP-02 public-availability allowance accepted; six unrelated changes rejected.")
+    for name in corpus.LP03_LEGACY_PINS:
+        before_lp03 = subprocess.check_output(["git", "show",
+            corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/" + name])
+        current_lp03 = json.loads((fixtures / name).read_bytes())
+        corpus.check_parent_file(name, before_lp03, encoded(current_lp03))
+        for label, change in (
+            ("input pin", lambda suite: suite["cases"][0]["inputs"][0].update(sha256="0" * 64)),
+            ("rationale", lambda suite: suite["cases"][0].update(rationale="unreviewed")),
+            ("evidence reference", lambda suite: suite["cases"][0]["expected"].update(evidence_references=[])),
+            ("branch", lambda suite: suite["cases"][0]["expected"].update(branch_id="dependencies-policy-satisfied")),
+            ("version", lambda suite: suite["cases"][0]["expected"].update(resolver_version="1.0.0")),
+            ("result text", lambda suite: suite["cases"][0]["expected"].update(missing_fact="unreviewed")),
+            ("case identity", lambda suite: suite["cases"][0].update(case_id="unreviewed")),
+            ("extra case", lambda suite: suite["cases"].append(copy.deepcopy(suite["cases"][0]))),
+        ):
+            changed = copy.deepcopy(current_lp03)
+            change(changed)
+            try:
+                corpus.check_parent_file(name, before_lp03, encoded(changed))
+            except ValueError:
+                pass
+            else:
+                raise ValueError("LP-03 parent preservation accepted " + label)
+    print("Named lp03-sbom-declarations-1.1.0 allowance accepted; 16 unrelated changes rejected; all legacy inputs unchanged.")
     key = (fixtures / "pi01/template/public.snk").read_bytes()
     corpus.check(len(key) == 276 and key[:4] == b"\x06\x02\x00\x00" and key[8:12] == b"RSA1" and
                  struct.unpack_from("<I", key, 12)[0] == 2048, "Control key is not public-only")

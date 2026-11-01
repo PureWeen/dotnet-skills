@@ -19,7 +19,10 @@ python "<SKILL_DIR>/scripts/autofill-eleven.py" run --root "<output>" --nupkg "<
 ```
 
 `--source-archive` and `--dependency-directory` are optional; repeat `--dependency <file.nupkg>`
-for individual exact dependency files. Directory enumeration is immediate `.nupkg` files only,
+for individual exact dependency files. Add `--release-sbom "<raw-release.spdx.json>"` only to
+**explicitly designate those exact bytes/root as the caller's authoritative release-wide inventory**.
+This is a caller scope/completeness trust boundary, not independent publication/completeness proof,
+an owner attestation or a fabricated capture receipt. Directory enumeration is immediate `.nupkg` files only,
 not a host-cache search. Omitted acquisition mode defaults to offline. Files are copied to a
 new immutable capture subtree; source and package contents are read only as ZIP/XML data.
 Unsafe or unsupported optional content is retained with an explicit invalid-content record,
@@ -54,6 +57,8 @@ a product `gap`, closed-source inference or success-shaped fallback.
 
 Collection supports at most 64 distinct dependency versions, 8 MiB per nupkg, 64 MiB source
 and 256 MiB checked bytes, including retained invalid/partial outcomes and supplied row packets.
+Raw local SBOM intake is capped at 1 MiB and consumes the same retrieval-record/byte budgets;
+native admission request/result/scope bytes are counted too. LP-03 has a stricter 64 MiB row cap.
 Each download has a 60-second hard deadline including DNS/TLS;
 socket operations also have a 10-second timeout. Collection has a 15-minute aggregate deadline.
 ZIPs are bounded to 4,096 entries and 64 MiB expanded bytes, with safe paths and no links.
@@ -61,7 +66,7 @@ Existing validator limits also apply: 64 retrieval records and 32 supplemental f
 **combined with existing owner/evidence inputs**. Three document registrations and their bounded
 byte budget are reserved before fetching. Budget exhaustion is explicit bounded incompleteness.
 
-Dependency selection is intentionally not NuGet resolution: `[v]` is exact; bare numeric `v`
+Without `--release-sbom`, dependency selection is intentionally not NuGet resolution: `[v]` is exact; bare numeric `v`
 selects bytes at its literal minimum and is labelled a sample. Traverse exact matching root-TFM
 groups, otherwise ungrouped declarations; record unsupported groups, ranges and version forms.
 Preserve all literal declarations, including unfollowed groups, in the inspection packet.
@@ -78,6 +83,30 @@ traversal, leading/trailing spaces, links and platform syntax still reject.
 No restored graph, grant/review, notice map, owner approval or
 compiled-build correspondence is fabricated. Frozen LP-01 policy 1.0.0/SPDX 3.27.0 are bundled
 byte-exact reference assets, not owner approval or new license policy.
+
+With `--release-sbom`, the helper first retains raw bytes/digest and calls the shared native
+`admit-sbom`, never a second Python SPDX parser. Supported SPDX-2.2 structure and the caller's
+separate bound designation must both admit. Every root nuspec dependency group is screened,
+including malformed identities in an otherwise nonempty inventory. No per-TFM gate is imposed.
+All inventoried exact NuGet versions, including SourceLink/ILLink tooling, count.
+The helper selects only admitted members for LP-03, preserving sorted role indices/holes;
+extra supplied samples remain available to inspection but are not LP-03 members.
+When acquisition is authorized, only missing exact SBOM-listed versions are fetched anonymously
+from nuget.org's flat container: no minimum sampling, index lookup, retries, range solving,
+alternate-version or feed fallback. Explicit `dotnet-public` selection therefore leaves missing
+SBOM members unresolved with a diagnostic; it does not secretly switch feeds.
+Native admission failures do not trigger dependency acquisition. Local SBOM/source/nupkg imports
+never fabricate anonymous observations. Missing bytes stay `not tested`; synthetic mocked successes
+are not real package acquisition claims.
+
+LP-03 `lp03-dependency-licenses/1.1.0` classifies exact members' own nuspec expressions through
+the actual pinned LP-01 classifier. All allowed AND/OR alternatives pass without ordinary grants,
+reviews or owner approval. Missing/ambiguous/file-only/URL-only/NOASSERTION declarations stay
+`not tested`; positive copyleft/non-OSI declarations support `gap` only after complete evidence
+gates. The former owner-only branch is retired. Positive findings disclose caller designation.
+Raw checksum mismatches remain separate diagnostics, not a PI-10 result. PI-06/PI-07 remain
+unassigned. The complete shipped schema/bounds are in the sibling resolver's
+`references/sbom-inventory.md`.
 
 Optional `--row-packets <resolve-request.json>` consumes explicitly supplied checked evidence
 for these same rows. It rechecks/copies exact pins and the root digest; no expected-answer
@@ -98,7 +127,7 @@ bundle, emits `decisions.json`, applies it and canonicalizes. Raw archives remai
 pinned; registering three documents does not pretend 50 dependency archives are individually
 confirmed source artifacts.
 
-`scripts/eleven_rows.py` owns the explicit 179 `(row, branch)` mappings. Bundled resolver source
+`scripts/eleven_rows.py` owns the explicit 178 `(row, branch)` mappings. Bundled resolver source
 and data fingerprints are checked before collection; a changed file inventory, unknown branch,
 version, decision, applicability or input binding fails closed pending mapping review.
 `verified`, `gap` and `not applicable` require the appropriate direct deterministic branch;
@@ -112,8 +141,8 @@ release-scoped grant is required for this branch. Its observation retains declar
 named candidates and exact source-byte matches without an owner-authority missing-fact
 sentence. File-only and missing-license branches still require owner evidence; the separate
 `owner-evidence-accepted` branch and all other branch statuses are unchanged.
-LP-02 accepts only resolver version `1.1.0`; other rows retain `1.0.0`.
-Handoff producer `eleven-row-handoff/1.1.0` rejects older saved states rather than
+LP-02 and LP-03 accept only resolver version `1.1.0`; other rows retain `1.0.0`.
+Handoff producer `eleven-row-handoff/1.2.0` rejects older saved states rather than
 silently reinterpreting their row decisions. Preserve old captures; make a fresh run
 or explicitly supply already checked acquisition packets to evaluate the new contract.
 Observations preserve literal small license texts/headings and repository declarations,

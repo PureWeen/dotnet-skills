@@ -33,7 +33,7 @@ source version and all core scopes. Only the 60 `repository-wide` core rows
 enter the registry; the 52 component rows and the separate TA-08 extension
 are excluded. LP-01 through LP-10 have deterministic checked-byte
 handlers: `lp01-license-policy/1.0.0`, `lp02-public-source/1.1.0`,
-`lp03-dependency-licenses/1.0.0`,
+`lp03-dependency-licenses/1.1.0`,
 `lp04-notice-coverage/1.0.0`,
 `lp05-license-expression/1.0.0`, `lp06-repository-url/1.0.0`,
 `lp07-repository-commit/1.0.0`, `lp08-authors/1.0.0`,
@@ -57,68 +57,58 @@ Coverage is eleven implemented and 49 TBD.
 Run `python eng\blazor-package-resolver\tests\lp01_expectations.py`
 to check the frozen oracle and policy bytes independently of production.
 
-LP-03's **offline production handler** implements the accepted Phase A contract
-at [the retained LP-03 contract](tests/corpus/seeds/lp03__README.md), frozen at
-`a8824050de091f44d90848847c33f499d0db834c`. That historical Phase A ledger,
-oracle and all its checked bytes remain unchanged, including its pre-production
-status statements. Production consumes checked buffers only; it never consults
-that ledger, fixture names, case IDs, expected results or the Python oracle.
-The 43 exact replays, five loader rejections, two retained expectations and
-214 checked inputs remain the same 50 named expectations.
+LP-03's offline handler now uses approved option B-prime: a checked raw SPDX-2.2
+release inventory plus a **separate bound caller designation** of that exact
+SBOM/root as the caller's authoritative release-wide inventory. Structural parsing
+does not independently prove completeness or publication. The shared native
+`admit-sbom` operation exposes these separate states and is reusable without
+assigning PI-06/PI-07 (both remain TBD). Every malformed/ambiguous dependency identity
+across every root nuspec group blocks positive admission, including nonempty inventories.
+Known direct IDs must be represented; no TFM/range solving or assessed restore occurs.
 
-The handler requires an explicit, nonempty root/TFM assessment, a complete
-already-resolved `resolved-target-graph/1` export and
-`lp03-resolved-target-capture/1.0.0` receipt, exact dependency archives and
-retained packaged grants, caller-prevalidated whole-version applicability
-reviews, and the unchanged LP-01 policy 1.0.0 / SPDX 3.27.0 pins. It unions
-all selected TFMs, retains different versions across TFMs, rejects competing
-versions within one TFM, and assigns dependency/grant indices by ordinal
-distinct-version key. All bindings are checked before missing bytes/licensing;
-unresolved licensing precedes owner evidence, which precedes a supported gap.
-Only a current single catalog ID in the finite allowlist can qualify; custom,
-deprecated, compound and unclassified OSI IDs remain unresolved. Inventory
-and package declarations alone never create a positive.
+Every inventoried exact NuGet dependency, including build tooling, needs retained
+matching nupkg bytes and its **own nuspec expression** classified by the actual
+shared LP-01 policy/classifier (policy 1.0.0 / SPDX 3.27.0). All allowed AND/OR
+alternatives pass. No ordinary grant file, reviewer packet or owner approval.
+The former owner-only LP-03 branch is retired; custom LicenseRefs are unresolved.
+All present identity conflicts precede missing bytes; missing/unsupported license
+evidence precedes an incompatible declaration gap. Unsupported or incomplete
+evidence is `not tested`, never promoted from a sampled/partial graph.
 
-Reuse is deliberately low-level: `CheckedInput`, registry digest admission,
-`CaseResult` and canonical replay are unchanged. The byte-pinned LP-01 policy
-loader and grant-whitespace predicate are shared through visibility-only
-changes, not its compound-expression evaluator or owner semantics. ZIP
-directory, raw entry identity/alias/range/CRC validation, strict XML encoding
-and the DTD-disabled nuspec reader are reused. LP-02's canonical safe-path
-predicate is reused, but not its source-specific inspections or archive
-materializer. LP-03 retains only observed identities/declarations and the
-selected packaged grant digest; no extraction or scan of license prose occurs.
-A safe selected packaged path such as `licenses/COPYING.txt` is supported;
-there is no special `LICENSE.txt` filename rule.
+The complete schema, strict field profile, branch table, exact-member role ordering
+and limits ship in the resolver's
+[SBOM reference](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/sbom-inventory.md).
+Bounds include 1 MiB raw SBOM, 64 KiB scope, depth 16/8, 32,768 JSON values/properties,
+66 packages, 64 dependency versions, 512 relationships, 64 files, 8 MiB/nupkg and
+64 MiB checked row bytes. Duplicate identities/properties, wrong root/version,
+external/dangling references and unsupported shapes reject. Published file-checksum
+differences are separate disclosed observations, not an LP-03 final-file-equality
+gate or PI-10 result. There is no independent completeness/publication/build proof.
 
-Limits remain: 8 MiB per root/dependency archive, 64 MiB total checked bytes,
-64 KiB normalized JSON with root-depth-zero maximum 8, four TFMs, 64 distinct
-versions/per-target nodes, 64 direct/individual adjacency edges and 128 total
-edges per target, and 1-16384 strict UTF-8 grant bytes. Existing archive safety
-also bounds entries to 4096, nuspecs to 1 MiB and streamed decompression to
-64 MiB per archive; it does not materialize every expanded entry. There is no
-additional whole-packet decompression budget: at most 65 archives are inspected
-sequentially within those finite per-archive limits. Unsupported/malformed
-inputs fail closed, not through parser/solver/scanner emulation.
+The helper's explicit `--release-sbom` intake retains the raw bytes and designation,
+calls native admission, and, only when authorized, retrieves missing exact members
+anonymously from nuget.org's flat container within the existing record/deadline/byte
+budgets. It neither samples minima in this mode nor silently switches a selected
+mirror. Local/offline imports never invent acquisition observations.
 
-Acquisition completeness and review authority/grant sufficiency are explicit
-caller admission trust boundaries, not authenticated by producer strings,
-references or hashes. No acquisition adapter is added. There is no network,
-restore, credential use, solving, code execution or input-path reopening in
-LP-03; no legal approval, notice compliance (LP-04), source correspondence
-(LP-02/LP-10), vulnerability/support finding or proof of metadata truth.
+The historical [Phase A contract](tests/corpus/seeds/lp03__README.md), original
+oracle, recipes, input/grant/review bytes and 66/77 guard/witness ledger remain
+unchanged as history, **not current positive coverage**. Named
+`lp03-sbom-declarations-1.1.0` changes only the 45 expected LP-03 results:
+42 schema-1 refusals, one missing-package refusal and two retained root-only
+scope refusals; input pins, rationales and pointers are preserved. `--parent`
+admits exactly this named delta, not arbitrary LP-03 changes.
 
-`python eng\blazor-package-resolver\tests\lp03_expectations.py` (also `-O`)
-checks the unchanged oracle: 49 fixed weakened-rule variants / 61 executions
-(original 24/28 preserved), 66 guards / 77 witnesses, and 132 omission
-meta-checks. `ResolverChecks -- lp03` independently materializes all 33 fixed
-in-memory recipes in C#, executes every registered witness against production,
-compares full canonical results, checks the five loaders before dispatch and
-tests parser/resource/checked-buffer/culture boundaries. Python constructs locked fixture
-bytes only; classification and counterfactual execution remain native.
-The full suite also runs these checks. Optional actual retained runs require
-both `LP03_SYNCFUSION_NUPKG` and `LP03_INFRAGISTICS_NUPKG`; exact lengths,
-digests and actual nuspec identities are verified from the same buffers.
+`python -B eng\blazor-package-resolver\tests\lp03_expectations.py` (also `-O`)
+selects the new independent stdlib/LP-01-oracle specification. Native
+`ResolverChecks -- lp03` runs prescribed current-profile specimens and additional
+hostile native mutations, the real reusable admission API, all 43 legacy refusals,
+original pre-dispatch loaders and retained binding negatives. The unchanged historical
+oracle is retained but no longer claimed as current-profile conformance.
+`test_shipping.py --lp03` exercises a copied installed helper end-to-end with the
+real native resolver/report validator, offline/mock transport, exact selection,
+state/rebind pins and untouched PI rows. Its test-only launcher adapter uses prebuilt
+trusted DLLs (build with `--no-restore` first); it does not re-test unchanged bootstrap restores.
 Both roots still return `scope-missing` / `not tested`, with no positive or gap.
 Absent/partial/misspelled/missing-file/wrong-size/wrong-digest bindings are
 separately rejected. Supply the corresponding `LP01_*` and `LP02_*` pairs to
@@ -226,7 +216,7 @@ Unicode/encoding boundaries and opt-in retained replays run in ResolverChecks.
 The consumer's optional `autofill-eleven.py` orchestrates acquisition and the existing typed
 report producers. The resolver remains offline; apart from the reviewed LP-01 approved
 declaration correction and the LP-04 standard-packaging fix described below, its row
-classifiers are unchanged. Its fixed 179-branch report
+classifiers are unchanged except for the explicit LP-03 B-prime change above. Its fixed 178-branch report
 mapping is tested against every frozen result, including deterministic/escalated boundaries.
 Run `python eng\blazor-package-resolver\tests\test_autofill.py` for offline collector/mapping
 tests and `python eng\blazor-package-resolver\tests\test_shipping.py --autofill` for the
@@ -293,7 +283,7 @@ root-bound archive, without a project/MSBuild relevance gate. The declaration su
 the association; independent source relevance, binary correspondence and branch/tag
 membership are not established. The eleven-row helper creates the observation from its
 existing single successful anonymous download, never from a local import alone.
-LP-03/04/10 admission/attribution boundaries are unchanged.
+LP-04/10 admission/attribution boundaries are unchanged; LP-03 uses the separate B-prime inventory/declaration protocol above.
 
 `dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj -- breadth`
 runs the unchanged LP-04 frozen matrix plus ordinary NuGet OPC/directory regressions and checked

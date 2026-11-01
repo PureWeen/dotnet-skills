@@ -54,8 +54,9 @@ def frozen_results():
         built.append(store["strings"][value] if kind == "s" else
                      {store["strings"][key]: built[item] for key, item in value} if kind == "o" else
                      [built[item] for item in value] if kind == "a" else value)
-    return [case["expected"] for kind, index in store["files"].values() if kind in ("j", "u")
-            for case in built[index].get("cases", []) if "expected" in case]
+    from oracles.lp03_sbom_expectations import mapping_results
+    return ([case["expected"] for kind, index in store["files"].values() if kind in ("j", "u")
+             for case in built[index].get("cases", []) if "expected" in case] + mapping_results())
 
 
 def empty_observations():
@@ -65,12 +66,97 @@ def empty_observations():
             "exact_source_matches": [], "assembly_candidates": [], "diagnostics": []}
 
 
+class SbomCollectionTests(unittest.TestCase):
+    def test_exact_native_inventory_roles_holes_and_no_minimum_sampling(self):
+        from oracles.lp03_sbom_expectations import sbom, encoded
+        with tempfile.TemporaryDirectory(prefix="sbom-helper-") as directory:
+            root = Path(directory)
+            capture = root / "capture"
+            capture.mkdir()
+            main = capture / "package.nupkg"
+            main.write_bytes(package(dependencies='<dependencies><dependency id="Example.Dependency" version="0.5.0"/></dependencies>'))
+            raw = root / "release.spdx.json"
+            raw.write_bytes(encoded(sbom(("example.dependency", "z.dependency"))))
+            supplied = root / "supplied.nupkg"
+            supplied.write_bytes(package("z.dependency"))
+            components = [{"id": name, "version": "1.0.0", "key": name + "/1.0.0"}
+                          for name in ("example.dependency", "z.dependency")]
+            def admit(request, output):
+                pins = tool.load(request)["inputs"]
+                self.assertEqual({p["role"] for p in pins}, {"package", "assessment", "sbom"})
+                assessment = tool.load(capture / "lp-03-scope.json")
+                self.assertEqual(assessment["designation"]["sbom_sha256"], tool.sha(raw.read_bytes()))
+                self.assertEqual(assessment["designation"]["basis"], "caller-authoritative-release-inventory/1")
+                tool.dump(output, {"schema_version": 1, "producer": "sbom-inventory/1.0.0", "inputs": pins,
+                                  "admission": {"disposition": "admitted", "structural_admission": "admitted",
+                                    "designation_admission": "designated", "inventory": {
+                                        "profile": "spdx22-release-nuget-union/1.0.0", "dependencies": components}}})
+            collector = tool.Collector(root, capture, 64, False, admit=admit)
+            collector.collect(main, tool.package_metadata(main.read_bytes()), None, [supplied], release_sbom=raw)
+            _, request = tool.requests(root, capture, main, tool.package_metadata(main.read_bytes()), collector, None)
+            lp03 = next(c for c in request["cases"] if c["row_id"] == "LP-03")
+            self.assertEqual([p["role"] for p in lp03["inputs"] if p["role"].startswith("dependency-")], ["dependency-001"])
+            self.assertEqual([r["subject"] for r in collector.records], ["package", "documentation"])
+            self.assertTrue(all(not r["request_sent"] and r["method"] == "local-file" for r in collector.records))
+            self.assertEqual(collector.edges, [])
+
+    def test_sbom_import_and_exact_download_share_retrieval_and_byte_budgets(self):
+        from oracles.lp03_sbom_expectations import encoded, sbom
+        for budget, feed, expected in ((1, "nuget.org", 0), (2, "nuget.org", 1), (64, "dotnet-public", 0)):
+            with self.subTest(budget=budget, feed=feed), tempfile.TemporaryDirectory(prefix="sbom-budget-") as directory:
+                root = Path(directory)
+                capture = root / "capture"
+                capture.mkdir()
+                main = capture / "package.nupkg"
+                main.write_bytes(package())
+                raw = root / "sbom.json"
+                raw.write_bytes(encoded(sbom(("microsoft.sourcelink.github", "z.tool"))))
+                calls = []
+                def admit(request, output):
+                    tool.dump(output, {"schema_version": 1, "producer": "sbom-inventory/1.0.0",
+                        "inputs": tool.load(request)["inputs"], "admission": {
+                            "disposition": "admitted", "structural_admission": "admitted", "designation_admission": "designated",
+                            "inventory": {"profile": "spdx22-release-nuget-union/1.0.0",
+                              "dependencies": [{"id": name, "version": "1.0.0"} for name in ("microsoft.sourcelink.github", "z.tool")]}}})
+                def transport(url, destination, maximum, seconds):
+                    calls.append(url)
+                    destination.write_bytes(b"partial")
+                    return {"result": "unavailable", "detail_code": "http-status", "http_status": 404}
+                collector = tool.Collector(root, capture, budget, True, transport, nuget_feed=feed, admit=admit)
+                collector.collect(main, tool.package_metadata(main.read_bytes()), None, [], source_allowed=False, release_sbom=raw)
+                self.assertEqual(len(calls), expected)
+                self.assertEqual(len(collector.records), expected + 1)
+                self.assertEqual(collector.total, sum(p.stat().st_size for p in capture.iterdir() if p.is_file()))
+                self.assertEqual(collector.dependencies, {})
+                if calls:
+                    self.assertIn("/microsoft.sourcelink.github/1.0.0/", calls[0])
+
+    def test_unsupported_inventory_never_triggers_transport(self):
+        with tempfile.TemporaryDirectory(prefix="sbom-unsupported-") as directory:
+            root = Path(directory)
+            capture = root / "capture"
+            capture.mkdir()
+            main, raw = capture / "package.nupkg", root / "unsupported.json"
+            main.write_bytes(package())
+            raw.write_bytes(b'{"spdxVersion":"SPDX-2.3"}')
+            def admit(request, output):
+                tool.dump(output, {"schema_version": 1, "producer": "sbom-inventory/1.0.0",
+                    "inputs": tool.load(request)["inputs"], "admission": {
+                        "disposition": "unsupported", "detail": "Unsupported format.", "inventory": None}})
+            transport = mock.Mock(side_effect=AssertionError("Unsupported SBOM must not fetch."))
+            collector = tool.Collector(root, capture, 64, True, transport, admit=admit)
+            collector.collect(main, tool.package_metadata(main.read_bytes()), None, [], source_allowed=False, release_sbom=raw)
+            transport.assert_not_called()
+            self.assertEqual(collector.records[0]["method"], "local-file")
+            self.assertFalse(collector.records[0]["request_sent"])
+
+
 class MappingTests(unittest.TestCase):
-    def test_all_179_branches_and_frozen_decision_boundaries(self):
+    def test_all_178_branches_and_frozen_decision_boundaries(self):
         results = frozen_results()
         observed = {(r["row_id"], r["branch_id"]) for r in results}
         self.assertEqual(set(rows.MAPPING), observed)
-        self.assertEqual(len(observed), 179)
+        self.assertEqual(len(observed), 178)
         self.assertGreaterEqual(len(results), 870)
         def display_safe(text):
             return (len(text.encode("utf-8")) <= 4096 and unicodedata.normalize("NFC", text) == text and
@@ -122,9 +208,9 @@ class MappingTests(unittest.TestCase):
     def test_lp02_version_is_admitted_only_for_its_reviewed_contract(self):
         for row in rows.ROWS:
             original = next(value for value in frozen_results() if value["row_id"] == row)
-            self.assertEqual(original["resolver_version"], "1.1.0" if row == "LP-02" else "1.0.0")
+            self.assertEqual(original["resolver_version"], "1.1.0" if row in ("LP-02", "LP-03") else "1.0.0")
             value = copy.deepcopy(original)
-            value["resolver_version"] = "1.0.0" if row == "LP-02" else "1.1.0"
+            value["resolver_version"] = "1.0.0" if row in ("LP-02", "LP-03") else "1.1.0"
             with self.subTest(row=row), self.assertRaisesRegex(ValueError, "version"):
                 rows.checked_result(value, original["inputs"])
 
@@ -395,8 +481,10 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(observation["retrieval_attempt"]["url"], calls[0])
         self.assertEqual(observation["source_inventory"], [])
         # Isolate retained-byte accounting from the separate repeated-input occurrence cap.
-        extra_retained = (len(rows.ROWS) - 1) * self.package.stat().st_size
-        reserved = collector.total + extra_retained + sum((tool.DATA / name).stat().st_size for name in tool.POLICIES)
+        extra_retained = ((len(rows.ROWS) - 1) * self.package.stat().st_size
+                          + sum((tool.DATA / name).stat().st_size for name in tool.POLICIES))
+        reserved = (collector.total + extra_retained + sum((tool.DATA / name).stat().st_size for name in tool.POLICIES)
+                    + (self.capture / "lp-03-scope.json").stat().st_size)
         observation_size = (self.capture / "source-observation.json").stat().st_size
         for adjustment in (-1, 0):
             other = self.root / f"budget-capture{adjustment}"

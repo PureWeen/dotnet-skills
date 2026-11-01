@@ -3,7 +3,7 @@ import json
 import re
 import unicodedata
 
-VERSION = "eleven-row-handoff/1.1.0"
+VERSION = "eleven-row-handoff/1.2.0"
 ROWS = tuple(f"LP-{number:02}" for number in range(1, 11)) + ("PI-01",)
 RESOLVERS = dict(zip(ROWS, (
     "lp01-license-policy", "lp02-public-source", "lp03-dependency-licenses",
@@ -13,7 +13,7 @@ RESOLVERS = dict(zip(ROWS, (
 )))
 STATUSES = {"V": "verified", "G": "gap", "N": "not tested",
             "O": "owner evidence required", "A": "not applicable"}
-RESOLVER_VERSIONS = {row: "1.1.0" if row == "LP-02" else "1.0.0" for row in ROWS}
+RESOLVER_VERSIONS = {row: "1.1.0" if row in ("LP-02", "LP-03") else "1.0.0" for row in ROWS}
 
 # Each entry is (explicit branches, status, smallest next action). Unknown keys are errors.
 GROUPS = {
@@ -50,15 +50,14 @@ GROUPS = {
     ),
     "LP-03": (
         ("dependencies-policy-satisfied", "V", ""),
-        ("incompatible-dependency-license", "G", "Correct the reviewed incompatible applicable dependency grant or version."),
-        ("owner-evidence-required", "O", "Supply the unpublished owner-issued grant identified by the applicability review."),
-        ("missing-package scope-missing", "N", "Obtain the exact root and explicit supported target-framework scope."),
+        ("incompatible-dependency-license", "G", "Correct the incompatible exact dependency declaration or version."),
+        ("missing-package scope-missing", "N", "Obtain the exact root and supported release-wide SBOM assessment binding."),
         ("input-invalid binding-conflict", "N", "Repair admission and identity bindings using actual retained evidence."),
         ("policy-unavailable", "N", "Restore the exact frozen policy and catalog."),
         ("evidence-missing closure-unresolved", "N",
-         "Obtain an admitted resolved graph and acquisition capture covering the requested target union."),
+         "Obtain a supported raw release SBOM with a bound caller authoritative release-wide designation."),
         ("dependency-bytes-missing", "N", "Obtain the exact inventoried dependency package."),
-        ("license-evidence-unresolved", "N", "Obtain complete applicable grants and supported whole-version reviews."),
+        ("license-evidence-unresolved", "N", "Obtain unambiguous supported exact-package license declaration evidence."),
     ),
     "LP-04": (
         ("notice-coverage-satisfied", "V", ""),
@@ -137,8 +136,8 @@ def mapping():
                 if key in result:
                     raise ValueError(f"Duplicate mapping: {key}")
                 result[key] = (status, action)
-    if len(result) != 179:
-        raise ValueError("The reviewed mapping must contain exactly 179 row/branch pairs.")
+    if len(result) != 178:
+        raise ValueError("The reviewed mapping must contain exactly 178 row/branch pairs.")
     return result
 
 
@@ -230,10 +229,23 @@ def partial_facts(row, facts, acquisition, branch=None):
         groups = [{"license_declarations": json.loads(key), "count": len(versions),
                    "versions": excerpt(versions, "observations#/supplied_dependencies", 1450)}
                   for key, versions in sorted(grouped.items())]
+        admitted = acquisition.get("sbom_admission")
+        inventory = admitted["admission"]["inventory"] if admitted else None
+        summary = "No helper-admitted caller-designated inventory in acquisition; declaration samples alone do not establish completeness."
+        if inventory is not None:
+            retained = {p["id"].lower() + "/" + p["version"] for p in facts["supplied_dependencies"]}
+            keys = {p["key"] for p in inventory["dependencies"]}
+            summary = (f"Caller-designated authoritative release-wide SBOM SHA-256 {inventory['sbom_sha256']}; "
+                       f"{len(keys)} inventoried exact NuGet versions, {len(keys & retained)} retained matches; "
+                       f"missing {excerpt(sorted(keys - retained), 'acquisition#/sbom_admission', 650)}; "
+                       f"extra samples {excerpt(sorted(retained - keys), 'observations#/supplied_dependencies', 250)}. "
+                       "Structure does not independently prove completeness or publication. "
+                       f"SBOM file-checksum diagnostics (separate from PI-10): "
+                       f"{excerpt(inventory['diagnostics'], 'acquisition#/sbom_admission/admission/inventory/diagnostics', 400)}.")
         return (f"{len(licenses)} supplied exact dependency versions; license declarations by group "
                 f"{excerpt(groups, 'observations#/supplied_dependencies', 2100)}. "
                 f"Root grouped ranges {excerpt(root['declared_dependencies'], 'observations#/package/declared_dependencies', 650)}. "
-                "These are declaration samples, not resolved closure, complete applicable grants or whole-version reviews.")
+                + summary)
     if row in ("LP-04", "LP-10"):
         matches = [item["package_entry"] for item in facts["exact_source_matches"]]
         common = (f"{len(facts['package_entries'])} package files; {len(matches)} exact packaged/source match sets "

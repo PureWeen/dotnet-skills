@@ -60,7 +60,7 @@ using (var doc = JsonDocument.Parse(coverage))
                            row.GetProperty("resolver_version").GetString() == "1.1.0",
                 "LP-03" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp03-dependency-licenses" &&
-                           row.GetProperty("resolver_version").GetString() == "1.0.0",
+                           row.GetProperty("resolver_version").GetString() == "1.1.0",
                 "LP-04" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp04-notice-coverage" &&
                            row.GetProperty("resolver_version").GetString() == "1.0.0",
@@ -710,7 +710,8 @@ try
     File.WriteAllText(path, """{"schema_version":2,"inputs":[]}""");
     CliReject("Invalid resolver catalog or input contract: Unsupported or oversized inspection request.",
         "inspect", path);
-    CliReject("Usage: blazor-package-resolver [coverage | resolve <request.json> | inspect <inputs.json> | package <nupkg> | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]", "replay");
+    CliReject("Invalid resolver catalog or replay contract.", "admit-sbom", path);
+    CliReject("Usage: blazor-package-resolver [coverage | resolve <request.json> | inspect <inputs.json> | admit-sbom <inputs.json> | package <nupkg> | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]", "replay");
 }
 finally
 {
@@ -729,7 +730,8 @@ var allowed = new HashSet<string>(StringComparer.Ordinal)
       "Lp05LicenseExpressionResolver.cs",
       "Lp06RepositoryUrlResolver.cs", "Lp07RepositoryCommitResolver.cs",
       "Lp08AuthorsResolver.cs", "Lp09ProjectUrlResolver.cs",
-      "Lp10BinaryAttributionResolver.cs", "NuGetNuspecReader.cs",
+      "Lp10BinaryAttributionResolver.cs", "NuGetNuspecReader.cs", "NuGetPackageIdentity.cs",
+      "Spdx22InventoryAdmission.cs",
       "Pi01StrongNameResolver.cs", "Pi01PeInspector.cs" };
 var allowedFiles = allowed.Concat(["BlazorPackageResolver.csproj", "Resolver.props", "restore-offline.config",
     "data/provenance.json", "data/rubric.json", "data/requirement-basis.json",

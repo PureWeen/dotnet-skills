@@ -13,9 +13,151 @@ import sys
 import tempfile
 import zipfile
 from unittest import mock
+from argparse import Namespace
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
+
+
+def lp03_installed_checks(plugin, work):
+    """Run the installed helper, replacing only build launchers with prebuilt trusted DLLs."""
+    from oracles.lp03_sbom_expectations import sbom, package, encoded
+    script = plugin / "skills/blazor-component-readiness/scripts/autofill-eleven.py"
+    loaded = runpy.run_path(str(script), run_name="lp03_installed_test")
+    tool = loaded["run_command"].__globals__
+    resolver = REPO / "eng/blazor-package-resolver/bin/Debug/net10.0/BlazorPackageResolver.dll"
+    validator = REPO / "plugins/dotnet-blazor/skills/blazor-component-readiness/scripts/validator/bin/Debug/net11.0/BlazorComponentReadiness.Validator.dll"
+    if not resolver.is_file() or not validator.is_file():
+        raise ValueError("Build the trusted resolver and validator with --no-restore before --lp03.")
+    original_tools, original_collector = tool["Tools"], tool["Collector"]
+    calls = []
+    selected_bytes = package("example.dependency")
+
+    def transport(url, destination, maximum, seconds):
+        expected = "https://api.nuget.org/v3-flatcontainer/example.dependency/1.0.0/example.dependency.1.0.0.nupkg"
+        if url != expected or maximum != tool["PACKAGE_LIMIT"] or not 0 < seconds <= 60:
+            raise ValueError("A non-inventory/minimum/mirror request escaped exact acquisition.")
+        calls.append(url)
+        destination.write_bytes(selected_bytes)
+        return {"result": "succeeded", "detail_code": "http-200", "http_status": 200,
+                "http_requests": [{"host": "api.nuget.org", "attempted_at_utc": "2026-10-30T12:00:00Z", "http_status": 200}]}
+
+    class PrebuiltTools(original_tools):
+        def command(self, args, output=None):
+            if len(args) > 2 and args[0] == sys.executable and str(self.resolver) in args:
+                args = ["dotnet", str(resolver), *args[-2:]]
+            elif any(str(a).endswith(("run-validator.ps1", "run-validator.sh")) for a in args):
+                destination = self.work / "validator-build/bin/Release/net11.0"
+                destination.mkdir(parents=True)
+                for path in validator.parent.iterdir():
+                    if path.is_file():
+                        shutil.copyfile(path, destination / path.name)
+                args = ["dotnet", str(destination / validator.name), "help"]
+            return super().command(args, output)
+
+    class MockCollector(original_collector):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs, transport=transport)
+
+    env = os.environ.copy()
+    env["READINESS_SKILL_ROOT"] = str(plugin / "skills/blazor-component-readiness")
+    def v(*args):
+        return run(["dotnet", str(validator), *map(str, args)], work, env)
+
+    for label, status, expression, online, designated, supplied, feed in (
+        ("offline-exact-plus-extra", "verified", "MIT", False, True, True, "nuget.org"),
+        ("mocked-exact-only", "verified", "MIT", True, True, False, "nuget.org"),
+        ("offline-missing", "not tested", "MIT", False, True, False, "nuget.org"),
+        ("no-designation", "not tested", "MIT", False, False, True, "nuget.org"),
+        ("mocked-copyleft", "gap", "GPL-3.0-only", True, True, False, "nuget.org"),
+        ("mocked-noassertion", "not tested", "NOASSERTION", True, True, False, "nuget.org"),
+        ("mocked-file-only", "not tested", "FILE", True, True, False, "nuget.org"),
+        ("explicit-mirror-no-hidden-fallback", "not tested", "MIT", True, True, False, "dotnet-public"),
+    ):
+        calls.clear()
+        selected_bytes = (package("example.dependency", license_xml='<license type="file">LICENSE.txt</license>')
+                          if expression == "FILE" else package("example.dependency", expression=expression))
+        root = work / label
+        root.mkdir()
+        nupkg = root / "sample.nupkg"
+        # A minimum declaration is not used to select the SBOM member's exact version.
+        nupkg.write_bytes(package("example.controls", dependencies='<dependencies><dependency id="example.dependency" version="0.5.0"/></dependencies>'))
+        document = root / "release.spdx.json"
+        document.write_bytes(encoded(sbom()))
+        candidates0, candidates = root / "candidates0.json", root / "candidates.json"
+        draft, confirmed = root / "input.draft.json", root / "input.confirmed.json"
+        v("inputs", "candidates", "init", "--acquisition", "published", "--package-locator", "sample.nupkg",
+          "--package-method", "local-file", "--source-availability", "closed-source", "--output", candidates0)
+        v("inputs", "candidates", "add-retrieval", "--input", candidates0, "--subject", "package",
+          "--locator", "sample.nupkg", "--method", "local-file", "--result", "succeeded", "--output", candidates)
+        v("inputs", "discover", "--root", root, "--nupkg", nupkg, "--candidates", candidates, "--output", draft)
+        v("inputs", "confirm", "--root", root, "--draft", draft, "--output", confirmed)
+        dependencies = []
+        if supplied:
+            for name, content in (("dependency.nupkg", selected_bytes), ("extra.nupkg", package("extra"))):
+                path = root / name
+                path.write_bytes(content)
+                dependencies.append(str(path))
+        args = Namespace(confirmed=str(confirmed), candidates=str(candidates), nupkg=str(nupkg),
+                         dependency=dependencies, dependency_directory=None, source_archive=None,
+                         allow_network=online, nuget_feed=feed, release_sbom=str(document) if designated else None,
+                         row_packets=None)
+        with mock.patch.dict(tool, Tools=PrebuiltTools, Collector=MockCollector):
+            receipt = tool["run_command"](args, root)
+            assessment = json.loads(Path(receipt["assessment"]).read_bytes())
+            states = {row["id"]: row for row in assessment["rows"]}
+            lp03 = states["LP-03"]
+            if (lp03["status"] != status or lp03["owner_action"] is not None or
+                    any(states[row]["status"] is not None for row in ("PI-06", "PI-07", "PI-10"))):
+                raise ValueError(label + ": incorrect row projection/scope.")
+            if status == "verified" and ("caller" not in lp03["observation"].lower() or "publication" not in lp03["observation"]):
+                raise ValueError("Positive omitted caller-designation trust boundary.")
+            state = tool["load"](receipt["state"])
+            paths = {key: root / relative for key, relative in state["paths"].items()}
+            acquisition = tool["load"](paths["acquisition"])
+            request = tool["load"](paths["resolve_request"])
+            lp03_request = next(case for case in request["cases"] if case["row_id"] == "LP-03")
+            if any(p["role"] == "source-observation" for case in request["cases"] for p in case["inputs"]):
+                raise ValueError("A local import invented anonymous source capture.")
+            if designated:
+                sbom_attempt = next(a for a in acquisition["attempts"] if a["subject"] == "documentation")
+                if sbom_attempt["method"] != "local-file" or sbom_attempt["request_sent"]:
+                    raise ValueError("SBOM import fabricated transport provenance.")
+            expected_calls = 1 if online and designated and feed == "nuget.org" and not supplied else 0
+            if len(calls) != expected_calls:
+                raise ValueError(label + ": unexpected transport count.")
+            if label == "offline-exact-plus-extra":
+                if len([p for p in lp03_request["inputs"] if p["role"].startswith("dependency-")]) != 1:
+                    raise ValueError("Extra supplied archive leaked into authoritative inventory.")
+                check = Namespace(command="check", confirmed=receipt["manifest"], state=receipt["state"],
+                                  assessment=receipt["assessment"])
+                tool["continue_command"](check, root)
+                rebound = tool["continue_command"](Namespace(command="rebind", confirmed=receipt["manifest"],
+                    state=receipt["state"], unrelated_evidence=[]), root)
+                if tool["load"](rebound["state"])["captured_at"] != state["captured_at"]:
+                    raise ValueError("Rebind fabricated a capture timestamp.")
+                check.state, check.assessment = rebound["state"], rebound["assessment"]
+                tool["continue_command"](check, root)
+                legacy = dict(state)
+                legacy["producer"] = "eleven-row-handoff/1.1.0"
+                old = root / "legacy-state.json"
+                old.write_bytes(encoded(legacy))
+                try:
+                    tool["open_state"](root, old)
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError("Older handoff state was accepted.")
+                raw = next(p for p in lp03_request["inputs"] if p["role"] == "sbom")
+                retained = paths["resolve_request"].parent / raw["path"]
+                retained.write_bytes(retained.read_bytes() + b" ")
+                try:
+                    tool["open_state"](root, Path(receipt["state"]))
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError("Changed raw SBOM was accepted by saved state.")
+            print(f"Installed LP-03 {label}: {status}; {len(calls)} mocked requests; real native/validator; PI rows untouched.")
 
 
 def run(command, cwd, env=None, code=0):
@@ -596,13 +738,16 @@ def isolated_checks(plugin, work, setup):
 
 
 def main():
-    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"], ["--autofill"]):
-        raise ValueError("Supported options: --isolated, --launcher, --cert, --autofill")
+    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"], ["--autofill"], ["--lp03"]):
+        raise ValueError("Supported options: --isolated, --launcher, --cert, --autofill, --lp03")
     with tempfile.TemporaryDirectory(prefix="resolver-installed-") as work:
         work = Path(work)
         plugin = work / "plugin"
         shutil.copytree(REPO / "plugins/dotnet-blazor", plugin,
                         ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
+        if sys.argv[1:] == ["--lp03"]:
+            lp03_installed_checks(plugin, work)
+            return
         if sys.argv[1:] == ["--cert"]:
             certificate_launcher_checks(plugin, work)
             return
@@ -624,7 +769,7 @@ def main():
                   for p in plugin.rglob("*") if p.is_file()}
         invocation = [sys.executable, str(helper)]
         coverage = run([*invocation, "coverage"], assessment)
-        if hashlib.sha256(coverage).hexdigest() != "0f3e74952684b87eee5aa2cc29d27d05ba2472d32ec449344f5a9cd8a6efb763":
+        if hashlib.sha256(coverage).hexdigest() != "1183c972c00b8b4249c2b8de66861a2afc04b7b9848debaff924e156f389a60d":
             raise ValueError("Installed coverage changed.")
         if sys.argv[1:] == ["--launcher"]:
             print("Exact installed coverage invocation passed with hostile caller global.json, "

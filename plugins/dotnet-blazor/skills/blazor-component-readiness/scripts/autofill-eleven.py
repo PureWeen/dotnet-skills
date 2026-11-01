@@ -28,6 +28,7 @@ from eleven_rows import VERSION, ROWS, checked_result, decisions
 
 MIB = 1024 * 1024
 PACKAGE_LIMIT = 8 * MIB
+SBOM_LIMIT = MIB
 SOURCE_LIMIT = 64 * MIB
 TOTAL_LIMIT = 256 * MIB
 NUGET_FEEDS = {
@@ -337,8 +338,16 @@ def fetch(url, destination, maximum, seconds):
     return receipt
 
 
+def release_scope(package, metadata, sbom=None):
+    root = {"id": metadata["id"], "version": metadata["version"], "sha256": sha(read(package, PACKAGE_LIMIT))}
+    digest = sha(read(sbom, SBOM_LIMIT)) if sbom else None
+    return {"schema_version": 2, "root": root, "inventory_scope": "release-wide", "sbom_sha256": digest,
+            "designation": {"basis": "caller-authoritative-release-inventory/1", "scope": "release-wide",
+                            "root": root, "sbom_sha256": digest} if sbom else None}
+
+
 class Collector:
-    def __init__(self, root, capture, remaining_attempts, online, transport=fetch, nuget_feed="nuget.org"):
+    def __init__(self, root, capture, remaining_attempts, online, transport=fetch, nuget_feed="nuget.org", admit=None):
         self.root, self.capture = root, capture
         self.remaining = remaining_attempts
         self.online, self.transport = online, transport
@@ -349,8 +358,10 @@ class Collector:
         self.total = 0
         self.dependencies, self.attempted_dependencies = {}, set()
         self.source = None
+        self.sbom, self.sbom_admission, self.admit = None, None, admit
+        self.admission_paths = {}
 
-    def obtain(self, subject, name, maximum, url=None, local=None, identity=None):
+    def obtain(self, subject, name, maximum, url=None, local=None, identity=None, kind=None):
         if self.remaining == 0:
             self.diagnostics.append(f"Retrieval-record budget exhausted before {name}; no request sent.")
             return None
@@ -382,7 +393,9 @@ class Collector:
             if record["result"] != "succeeded":
                 return None
             data = read(path, maximum)
-            if subject == "source":
+            if kind == "sbom":
+                metadata = None
+            elif subject == "source":
                 archive_inventory(data, source=True)
                 metadata = None
             else:
@@ -399,7 +412,7 @@ class Collector:
         finally:
             self.records.append(record)
 
-    def collect(self, package, metadata, source, supplied, source_allowed=True):
+    def collect(self, package, metadata, source, supplied, source_allowed=True, release_sbom=None):
         require(len(supplied) <= 64, "At most 64 explicitly supplied dependency files.")
         self.total = package.stat().st_size
         if not source_allowed:
@@ -424,6 +437,51 @@ class Collector:
                 require(key != (metadata["id"], metadata["version"]) and key not in self.dependencies,
                         "Supplied dependencies must be distinct and exclude the root.")
                 self.dependencies[key] = item
+        if release_sbom is not None:
+            if self.total + SBOM_LIMIT + 324 * 1024 > TOTAL_LIMIT:
+                self.diagnostics.append("Checked-byte budget cannot reserve raw SBOM plus bounded native admission packet; no import/request sent.")
+                return self.report()
+            retained = self.obtain("documentation", "release.spdx.json", SBOM_LIMIT, local=release_sbom, kind="sbom")
+            self.sbom = retained[0] if retained else None
+            if self.sbom:
+                require(self.admit is not None, "SBOM collection requires the bundled native admission component.")
+                scope = self.capture / "lp-03-scope.json"
+                dump(scope, release_scope(package, metadata, self.sbom))
+                request = self.capture / "sbom-admission-request.json"
+                pins = [pin(self.capture, path, role) for path, role in
+                        ((package, "package"), (scope, "assessment"), (self.sbom, "sbom"))]
+                dump(request, {"schema_version": 1, "inputs": pins})
+                result = self.capture / "sbom-admission.json"
+                self.admit(request, result)
+                self.sbom_admission = load(result, 256 * 1024)
+                require(self.sbom_admission["schema_version"] == 1 and
+                        self.sbom_admission["producer"] == "sbom-inventory/1.0.0" and
+                        self.sbom_admission["inputs"] == pins, "Native SBOM admission bindings differ.")
+                self.admission_paths = {"sbom_admission_request": request, "sbom_admission": result}
+                self.total += sum(path.stat().st_size for path in (scope, request, result))
+                require(self.total <= TOTAL_LIMIT, "Native inventory packet exceeds the checked-byte budget.")
+                admission = self.sbom_admission["admission"]
+                if admission["disposition"] == "admitted":
+                    require(admission["structural_admission"] == "admitted" and
+                            admission["designation_admission"] == "designated" and
+                            admission["inventory"]["profile"] == "spdx22-release-nuget-union/1.0.0",
+                            "Unexpected native inventory profile/designation.")
+                    for component in admission["inventory"]["dependencies"]:
+                        identity = component["id"], component["version"]
+                        require(ID.fullmatch(identity[0]) and VER.fullmatch(identity[1]), "Invalid native component key.")
+                        if identity in self.dependencies or not self.online:
+                            continue
+                        if self.nuget_feed != "nuget.org" or len(self.dependencies) >= 64:
+                            self.diagnostics.append(f"No SBOM-member request for {identity[0]}/{identity[1]}: nuget.org-only feed or dependency cap.")
+                            continue
+                        package_id, version = identity
+                        url = f"{NUGET_FEEDS['nuget.org']}/{package_id}/{version}/{package_id}.{version}.nupkg"
+                        item = self.obtain("package", f"sbom-{len(self.records):03}.nupkg", PACKAGE_LIMIT, url=url, identity=identity)
+                        if item:
+                            self.dependencies[identity] = item
+                else:
+                    self.diagnostics.append("SBOM not admitted: " + admission["detail"])
+            return self.report()
         queue = deque((metadata, framework) for framework in (metadata["groups"] or [None]))
         visited = set()
         while queue:
@@ -468,11 +526,17 @@ class Collector:
                     queue.append((item[1], framework))
                 else:
                     edge["limitation"] = "Exact candidate not retained; see attempt records or offline boundary."
+        return self.report()
+
+    def report(self):
         return {"schema_version": 1, "producer": VERSION, "mode": "network" if self.online else "offline",
                 "nuget_feed": self.nuget_feed,
+                "sbom_admission": self.sbom_admission,
                 "attempts": self.records, "declaration_sample_edges": self.edges,
                 "diagnostics": self.diagnostics,
-                "limitations": ["Literal minimum candidates and exact-TFM or ungrouped traversal are a bounded declaration sample, not a resolved closure.",
+                "limitations": [("Caller designation supplies authoritative release-wide inventory scope; structural admission does not independently prove completeness or publication."
+                                 if self.sbom is not None else
+                                 "Literal minimum candidates and exact-TFM or ungrouped traversal are a bounded declaration sample, not a resolved closure."),
                                 "Only a successful direct anonymous source capture produces an LP-02 observation; local imports do not.",
                                 "Downloads and local imports do not produce owner, grant, review, notice or build-mapping packets."]}
 
@@ -608,9 +672,13 @@ def requests(root, capture, package, metadata, collector, supplied_request):
         write(path, read(DATA / name))
         policy_pins.append(pin(capture, path, "policy" if name == "policy.json" else "corpus"))
     scopes = {}
+    lp03_scope = capture / "lp-03-scope.json"
+    if not lp03_scope.exists():
+        dump(lp03_scope, release_scope(package, metadata, collector.sbom))
+    scopes["LP-03"] = pin(capture, lp03_scope, "assessment")
     frameworks = metadata["groups"]
     if 0 < len(frameworks) <= 4 and all(ID.fullmatch(framework) for framework in frameworks):
-        for row in ("LP-03", "LP-04"):
+        for row in ("LP-04",):
             scope = {"schema_version": 1, "root": {"id": metadata["id"], "version": metadata["version"],
                                                 "sha256": package_pin["sha256"]},
                      "target_frameworks": frameworks}
@@ -637,6 +705,14 @@ def requests(root, capture, package, metadata, collector, supplied_request):
             inputs += [scopes[row]]
             if row == "LP-03":
                 inputs += policy_pins
+                if collector.sbom:
+                    inputs.append(pin(capture, collector.sbom, "sbom"))
+                admission = collector.sbom_admission
+                if admission and admission["admission"]["disposition"] == "admitted":
+                    for number, component in enumerate(admission["admission"]["inventory"]["dependencies"]):
+                        item = collector.dependencies.get((component["id"], component["version"]))
+                        if item:
+                            inputs.append(pin(capture, item[0], f"dependency-{number:03}"))
         cases[row] = {"case_id": "eleven-" + row.lower(), "row_id": row, "inputs": inputs}
     if supplied_request:
         supplied_request = regular(supplied_request)
@@ -808,14 +884,17 @@ def run_command(args, root):
         supplied += sorted(path for path in directory.iterdir() if path.suffix.lower() == ".nupkg")
     require(len(set(supplied)) == len(supplied), "Duplicate supplied dependency paths.")
     collector = Collector(root, capture, 64 - len(confirmed["retrieval_attempts"]), args.allow_network,
-                          nuget_feed=args.nuget_feed)
+                          nuget_feed=args.nuget_feed,
+                          admit=lambda request, result: tools.r("admit-sbom", request, result))
     acquisition = collector.collect(package_copy, metadata, args.source_archive, supplied,
-                                    source_allowed=confirmed["source"]["availability"] != "closed-source")
+                                    source_allowed=confirmed["source"]["availability"] != "closed-source",
+                                    release_sbom=args.release_sbom)
     names = {key: root / f"{work.name}-{name}.json" for key, name in
              (("results", "resolver-results"), ("observations", "observations"), ("acquisition", "acquisition"))}
     dump(names["acquisition"], acquisition)
     requests(root, capture, package_copy, metadata, collector, args.row_packets)
     names.update(resolve_request=capture / "resolve-request.json", inspection_request=capture / "inspection-request.json")
+    names.update(collector.admission_paths)
     tools.r("inspect", names["inspection_request"], names["observations"])
     tools.r("resolve", names["resolve_request"], names["results"])
     results_from(load(names["resolve_request"], MIB), names["results"])
@@ -861,7 +940,8 @@ def continue_command(args, root):
                 "Declare each added unrelated evidence basename explicitly; relevant evidence requires a fresh run.")
         work = new_work(root)
         tools = Tools(root, work)
-        outputs = {key: paths[key] for key in ("results", "observations", "acquisition", "resolve_request", "inspection_request")}
+        outputs = {key: paths[key] for key in ("results", "observations", "acquisition", "resolve_request",
+                   "inspection_request", "sbom_admission_request", "sbom_admission") if key in paths}
         bound, captured = bind(tools, root, work, manifest, paths["package"], outputs, state["captured_at"])
         result = save_state(root, work, outputs, bound, captured)
         return {"state": str(result), "assessment": str(bound["assessment"]), "completion_state": "incomplete"}
@@ -904,6 +984,7 @@ def main():
     run.add_argument("--dependency-directory")
     run.add_argument("--dependency", action="append", default=[])
     run.add_argument("--row-packets")
+    run.add_argument("--release-sbom", help="Designate these exact raw SBOM bytes for this root as the caller's authoritative release-wide inventory. Structural checks do not prove completeness or publication; no owner attestation or capture is invented.")
     run.add_argument("--nuget-feed", choices=tuple(NUGET_FEEDS), default="nuget.org")
     for command in ("check", "rebind"):
         child = commands.add_parser(command)

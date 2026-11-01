@@ -46,7 +46,7 @@ public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
     internal sealed record Policy(
         IReadOnlyDictionary<string, (bool Osi, bool Deprecated)> Licenses,
         HashSet<string> Allowed, HashSet<string> Strong, HashSet<string> Weak);
-    private sealed record PackageState(string Branch, XElement? Metadata = null,
+    internal sealed record PackageState(string Branch, XElement? Metadata = null,
         Lp01SpdxExpression? Expression = null, string? LicenseFilePath = null);
 
     public string RowId => "LP-01";
@@ -131,7 +131,7 @@ public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
         catch (InvalidOperationException) { return null; }
     }
 
-    private static PackageState InspectPackage(ReadOnlyMemory<byte> content, Policy policy)
+    internal static PackageState InspectPackage(ReadOnlyMemory<byte> content, Policy policy)
     {
         if (!NuGetNuspecReader.HasBoundedDirectory(content.Span, out var count))
             return new("unsafe-package");

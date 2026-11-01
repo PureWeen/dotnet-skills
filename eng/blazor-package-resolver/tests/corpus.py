@@ -39,6 +39,35 @@ LP01_APPROVED_VERIFIED = {
     "required_input": None,
     "next_category": None,
 }
+LP03_LEGACY_PINS = {
+    "lp03/cases.json": "935bc6e80fcaf7d1a5ad1526b2ee5a2409d6041fdbccfd6fb1b47e272b1f744b",
+    "lp03/acceptance.json": "5f6a5a58c73939e7cb3f28f740acfcf26e2cfd883f0ebfb0f99d63ad1e50e255",
+}
+
+
+def lp03_declaration_delta(suite):
+    """Named lp03-sbom-declarations-1.1.0: no fixture input or metadata changes."""
+    for case in suite["cases"]:
+        result = case["expected"]
+        check(result["row_id"] == case["row_id"] == "LP-03" and
+              result["resolver_id"] == "lp03-dependency-licenses" and result["resolver_version"] == "1.0.0",
+              "Unexpected historical LP-03 identity")
+        result["resolver_version"] = "1.1.0"
+        result["evidence_contract"] = (
+            "The caller designates the bound raw SBOM as the authoritative release-wide inventory; "
+            "structural checks do not independently establish completeness or publication. "
+            "Each included NuGet dependency is classified from its exact checked nupkg declaration "
+            "using LP-01 policy 1.0.0 and SPDX 3.27.0. No ordinary grant, reviewer or owner approval "
+            "is required. No legal sufficiency, notice compliance or build correspondence is established.")
+        if case["case_id"] == "lp03-missing-package":
+            continue
+        branch, missing, required, next_category = (
+            ("scope-missing", "The exact root and release-wide SBOM assessment binding is missing.", "assessment", "assessment-scope")
+            if result["branch_id"] == "scope-missing" else
+            ("input-invalid", "The supplied LP-03 assessment uses legacy schema 1; re-admit a schema-2 release-wide SBOM packet.",
+             "supported-release-sbom-packet", "evidence-repair"))
+        result.update(branch_id=branch, decision="escalated", applicability="unknown", finding=None,
+                      missing_fact=missing, required_input=required, next_category=next_category)
 
 
 def check(condition, message):
@@ -51,8 +80,15 @@ def sha(data):
 
 
 def check_parent_file(name, before, after):
-    """Admit only the named LP-01 declaration and LP-02 public-availability deltas."""
+    """Admit only named LP-01, LP-02 and LP-03 expected-output deltas."""
     if before == after:
+        return
+    if name in LP03_LEGACY_PINS:
+        check(sha(before) == LP03_LEGACY_PINS[name], "Unexpected historical LP-03 bytes")
+        expected = json.loads(before)
+        lp03_declaration_delta(expected)
+        reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
+        check(after == reviewed, "Unreviewed LP-03 change outside lp03-sbom-declarations-1.1.0: " + name)
         return
     if name in ("lp01/cases.json", "lp01/acceptance.json"):
         expected = json.loads(before)
@@ -305,7 +341,7 @@ def main():
                 check_parent_file(name, old, (fixtures / name).read_bytes())
         print("Corpus verified:", len(lock["files"]), "exact paths;",
               sum(pin[1] for pin in lock["files"]), "bytes; locked canonical outputs verified"
-              " (only the named LP-01 declaration and LP-02 public-availability deltas are allowed against parent).")
+              " (only named LP-01 declaration, LP-02 public-availability and lp03-sbom-declarations-1.1.0 deltas are allowed against parent).")
     else:
         manifest = fixtures / ("cases.json" if args.row == "foundation" else args.row + "/cases.json")
         subprocess.run(["dotnet", "run", "--no-restore", "--project",
