@@ -1,13 +1,16 @@
-# LP-02 minimum v1 contract
+# LP-02 public-availability v1.1 contract
 
 ## Purpose and stage boundary
 
-`lp02-public-source/1.0.0` establishes a **qualified public-source-availability
+`lp02-public-source/1.1.0` establishes a **qualified public-source-availability
 fact for the exact checked package**. Only `public-source-observed` is
 positive. Its finding states the package-declared repository, exact commit
-and capture time, the anonymous retrieval and bounded library-source mapping,
-and explicitly says that this does **not** establish that the published
-binaries were built from that revision.
+and capture time, the anonymous retrieval and checked nonempty archive root.
+The package declaration supplies the release association; source relevance is
+not independently established. The finding explicitly says that this does
+**not** establish that the published binaries were built from that revision.
+Clause 1.2 requires public source for shipped versions, not a particular SDK,
+literal project PackageId, or MSBuild evaluation. Project facts are supplemental.
 
 GitHub codeload can serve fork-network commit objects through the declared
 repository URL. Successful retrieval therefore does **not** prove that the
@@ -31,7 +34,10 @@ invoke `gh`, evaluate MSBuild or access the network.
 
 - Ordinary, bounded NuGet ZIPs: at most 64 MiB compressed and 64 MiB total
   uncompressed, 4096 entries, 8 MiB central directory, and safe ASCII relative
-  entry paths of at most 256 characters. Reject dot/dot-dot segments,
+  entry paths of at most 256 characters. Source archives additionally admit
+  interior ASCII spaces in path segments, reusing the existing safe inspection
+  predicate; leading/trailing spaces remain unsupported. Package paths retain
+  the stricter profile. Reject dot/dot-dot segments,
   backslashes, absolute paths, case aliases, symlinks, encryption, Zip64,
   unsupported flags/methods, inconsistent headers/lengths/CRCs and unsupported
   archive framing. ZIP storage and normal Deflate use the existing bounded
@@ -52,37 +58,36 @@ invoke `gh`, evaluate MSBuild or access the network.
   a full nonzero 40-hex SHA-1, normalized to lowercase. Other object formats
   and environments are unresolved, not evidence of closed source.
 - Retain the complete bounded codeload ZIP. All files must be under the
-  `{repo}-{commit}/` root (case-insensitive root comparison). Select exactly
-  one `.csproj` project marker and one `.cs` implementation, each at most
-  1 MiB, with exact archive paths and SHA-256 digests. Source ZIPs may have
+  `{repo}-{commit}/` root (case-insensitive root comparison), and at least one
+  file must exist. Empty and directory-only archives reject. Optional selected
+  supplemental files have exact archive paths and SHA-256 digests, but project
+  or implementation selection is not required. Source ZIPs may have
   GitHub's 40-byte exact-commit archive comment (or no comment); arbitrary
   comments are unsupported. Package ZIPs remain comment-free, preserving
   LP-01's existing validator behavior.
-- The project must be strict UTF-8 XML (optional single UTF-8 BOM) with unqualified `Project`,
-  `Sdk="Microsoft.NET.Sdk"`, and one unconditional literal
-  direct top-level `PropertyGroup/PackageId` matching the package ID
-  case-insensitively. Compare guarded MSBuild element/attribute/property
-  names case-insensitively. Reject `Choose`, `Target`, any conditional
-  attribute, nested/noncanonical or competing `PackageId` declarations,
-  explicit compile/import/SDK-import nodes, disabled default compile/items,
-  and any `DefaultItemExcludes` declaration. Also reject when
-  `Directory.Build.props` or `Directory.Build.targets` exists in any selected
-  project ancestor directory inside the retained archive, including the
-  project's own directory and archive root (case-insensitive path comparison).
-  Do not evaluate those files or MSBuild expressions.
-  The implementation must be nonblank strict UTF-8 under that project's
-  directory, outside `obj`/`bin`. A nonblank ASCII rationale of at most
-  1000 characters explains the mapping. This is bounded file/marker evidence,
-  **not** C# compilation, full inclusion analysis or recursive import closure.
+- Razor or other SDKs, conditional declarations, imports, targets and inherited
+  build files do not gate public availability. No project XML or implementation
+  bytes are evaluated for relevance. Selected supplemental files, if supplied,
+  must still exist and match their exact digests within archive limits.
+  The schema retains a nonblank ASCII `mapping_rationale` of at most 1000
+  characters for compatibility; it describes the declaration/acquisition
+  association, not an independently proven library-source mapping.
 
-Outside-profile content escalates conservatively. Source trees that need
-inferred package IDs, other project languages, conditional properties or
-arbitrary build evaluation are intentionally unsupported in v1.
+Outside-profile archives or acquisition evidence escalate conservatively.
+Project language, package-ID inference and arbitrary build evaluation are not
+part of this availability check.
 
 ## Acquisition procedure
 
-Run the separate acquisition command from the repository root. Supply exact
-archive paths, including the commit root, and a short mapping rationale:
+The installed eleven-row helper produces an observation from its own single
+successful anonymous codeload download, using the original request timestamp,
+exact package ID spelling, and retained archive digest. It supplies an empty
+supplemental inventory. Local imports, offline mode, unsuccessful downloads and
+budget skips never generate public-retrieval observations. Explicitly supplied
+checked observation/archive packets remain replayable offline.
+
+The separate repository-only acquisition command remains compatible. If using it,
+supply exact supplemental paths, including the commit root, and a short rationale:
 
 ```powershell
 dotnet run --project eng\blazor-package-resolver\BlazorPackageResolver.csproj -- acquire-lp02 package.nupkg capture-new repo-COMMIT/src/Library/Library.csproj repo-COMMIT/src/Library/Widget.cs "The literal PackageId identifies this library; Widget.cs is adjacent library implementation."
@@ -108,10 +113,10 @@ The destination must not already exist. Filesystem failures are CLI errors,
 not successful captures. Preserve the generated receipt and archive together;
 do not hand-author an access assertion.
 
-The command hashes source files found at the supplied paths; it does not
-force them to be relevant. Missing/unsupported source selections cannot
-produce a resolver positive. Retaining a successful HTTP response alone is
-insufficient.
+The command hashes source files at the explicitly supplied paths; it does not
+force them to be relevant. Missing explicit selections are acquisition errors,
+not silently omitted inventory entries. The helper does not invoke this command
+after downloading: that would perform a second GET outside the collector's budget.
 
 ## Observation schema and checked bindings
 
@@ -140,11 +145,8 @@ failures produce `observation-invalid`, never an unhandled exception.
     "role": "source-archive",
     "sha256": "<64 lowercase hex>"
   },
-  "source_inventory": [
-    {"kind": "project", "path": "repo-COMMIT/src/Library.csproj", "sha256": "<64 lowercase hex>"},
-    {"kind": "implementation", "path": "repo-COMMIT/src/Widget.cs", "sha256": "<64 lowercase hex>"}
-  ],
-  "mapping_rationale": "Short bounded source mapping explanation."
+  "source_inventory": [],
+  "mapping_rationale": "The package declares this repository and revision; anonymous retrieval retained this archive."
 }
 ```
 
@@ -152,7 +154,8 @@ Use checked roles `package`, `source-observation`, `source-archive` in the
 existing schema-version-1 replay suite; pin each file's path and SHA-256.
 The receipt binds exact package ID/version/digest, normalized repository,
 commit and codeload URL; the capture digest binds the retained archive;
-the inventory binds unique selected paths/kinds and their actual bytes.
+the optional inventory binds up to two unique selected paths/kinds
+(`project`, `implementation`) and their actual bytes without semantic mapping.
 An unresolved attempt instead has `capture_receipt: null` and an empty
 inventory; the status must match its result. A transport failure has
 `http_status: null`. UTC times must use `yyyy-MM-ddTHH:mm:ssZ`.
@@ -175,23 +178,24 @@ assertion or a repository-embedded `.lp02-source.json`.
 | `observation-missing` | Required checked observation or successful attempt's archive absent |
 | `observation-invalid` | Unsupported/malformed receipt, inventory or source archive |
 | `observation-binding-conflict` | Exact package/revision/archive/selected-byte bindings disagree |
-| `source-relevance-unestablished` | Selected files/marker/rationale do not establish the bounded mapping |
+| `source-relevance-unestablished` | A supplied supplemental selected file is missing (legacy branch name) |
 | `public-source-observed` | The sole qualified positive |
 
 Validation order follows package -> declaration/profile -> observation shape
 -> package/retrieval binding -> attempt state -> archive binding/profile ->
-selected file bindings -> relevance. Every nonpositive result is an
+optional selected-file bindings. Every nonpositive result is an
 escalation with unknown applicability and no factual finding: unresolved /
 `not tested`, **not** closed-source or a gap.
 
 ## Focused validation and retained replay
 
-There are **48 named synthetic cases**: 33 frozen oracle/replay cases and
-15 runtime cases covering generated anonymous observations, unresolved HTTP
-states, network failure, header/stream caps, receipt/file/archive resource
-boundaries, path/root safety, mapping, duplicate inventory, checked-buffer/
-culture determinism, unsupported case-insensitive MSBuild/identity/import/
-exclusion shapes, malformed receipt Unicode and the project UTF-8 BOM.
+There are **51 named synthetic cases**: 33 oracle/replay cases and
+18 runtime cases covering generated anonymous observations, unresolved HTTP
+states, network failure, header/stream caps, receipt/archive resource
+boundaries, path/root safety, optional inventory and missing explicit selections,
+checked-buffer/culture determinism, non-gating Razor/MSBuild/encoding variants,
+malformed receipt Unicode, empty/directory-only archive rejection, and interior
+space admission with traversal/edge-space/platform-path rejection.
 Runtime cases group related boundary/status assertions;
 they are not an exhaustive cross-runtime differential matrix. The independent
 Python oracle specifies expected branches and bytes without importing or
@@ -213,5 +217,5 @@ identities. Supply both `LP02_SYNCFUSION_NUPKG` and
 their exact byte counts/digests, stages only those supplied bytes, and replays
 the frozen expectations. The binaries remain outside Git. Both expected
 outcomes are `observation-missing`, qualified **declared-source-unverified**,
-until real checked anonymous acquisition evidence and relevance are supplied.
+until real checked anonymous acquisition evidence and the bound archive are supplied.
 Do not infer a positive from their repository declarations.

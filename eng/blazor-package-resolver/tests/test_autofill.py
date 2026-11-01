@@ -119,6 +119,15 @@ class MappingTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 rows.checked_result(value, original["inputs"])
 
+    def test_lp02_version_is_admitted_only_for_its_reviewed_contract(self):
+        for row in rows.ROWS:
+            original = next(value for value in frozen_results() if value["row_id"] == row)
+            self.assertEqual(original["resolver_version"], "1.1.0" if row == "LP-02" else "1.0.0")
+            value = copy.deepcopy(original)
+            value["resolver_version"] = "1.0.0" if row == "LP-02" else "1.1.0"
+            with self.subTest(row=row), self.assertRaisesRegex(ValueError, "version"):
+                rows.checked_result(value, original["inputs"])
+
     def test_partial_observations_preserve_notices_stylesheets_and_each_assembly(self):
         facts = empty_observations()
         license_file = {"path": "LICENSE.txt", "size_bytes": 100, "sha256": "a" * 64,
@@ -196,12 +205,13 @@ class MappingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="eleven-old-projection-") as directory:
             root = Path(directory)
             path = root / "state.json"
-            original = json.dumps({"schema_version": 1, "producer": "eleven-row-handoff/1.0.0",
-                                   "captured_at": "2026-01-01T00:00:00Z", "paths": {}, "files": {}}).encode()
-            path.write_bytes(original)
-            with self.assertRaisesRegex(ValueError, "Unknown eleven-row state"):
-                tool.open_state(root, path)
-            self.assertEqual(path.read_bytes(), original)
+            for version in ("1.0.0", "1.0.1"):
+                original = json.dumps({"schema_version": 1, "producer": "eleven-row-handoff/" + version,
+                                       "captured_at": "2026-01-01T00:00:00Z", "paths": {}, "files": {}}).encode()
+                path.write_bytes(original)
+                with self.subTest(version=version), self.assertRaisesRegex(ValueError, "Unknown eleven-row state"):
+                    tool.open_state(root, path)
+                self.assertEqual(path.read_bytes(), original)
 
     def test_fingerprints_and_policy_bytes(self):
         sibling = SCRIPTS.parent.parent / "blazor-package-readiness-resolver/scripts"
@@ -352,6 +362,112 @@ class AcquisitionTests(unittest.TestCase):
         self.assertEqual(len(collector.dependencies), 1)
         self.assertEqual(output["attempts"][0]["method"], "local-file")
         self.assertFalse(output["attempts"][0]["request_sent"])
+
+    def test_single_public_fetch_produces_a_bound_lp02_observation(self):
+        calls = []
+        source = archive({"controls-" + "1" * 40 + "/src/Controls.csproj": (
+            b'<Project Sdk="Microsoft.NET.Sdk.Razor"><PropertyGroup Condition="true">'
+            b"<PackageId>Example.Controls</PackageId></PropertyGroup></Project>")})
+        observed_at = "2026-10-30T12:00:00Z"
+
+        def transport(url, destination, *args):
+            calls.append(url)
+            destination.write_bytes(source)
+            return {"result": "succeeded", "detail_code": "http-200", "http_status": 200,
+                    "http_requests": [{"host": "codeload.github.com", "attempted_at_utc": observed_at,
+                                       "http_status": 200}]}
+
+        collector = self.collector(transport=transport)
+        metadata = tool.package_metadata(self.package.read_bytes())
+        collector.collect(self.package, metadata, None, [])
+        copied = self.capture / "package.nupkg"
+        copied.write_bytes(self.package.read_bytes())
+        _, request = tool.requests(self.root, self.capture, copied, metadata, collector, None)
+        case = next(case for case in request["cases"] if case["row_id"] == "LP-02")
+        self.assertEqual(len(calls), 1)
+        pins = {item["role"]: item for item in case["inputs"]}
+        self.assertEqual(set(pins), {"package", "source-archive", "source-observation"})
+        observation = tool.load(tool.beneath(self.capture, pins["source-observation"]["path"]))
+        self.assertEqual(observation["package_id"], "Example.Controls")
+        self.assertEqual(observation["package_sha256"], pins["package"]["sha256"])
+        self.assertEqual(observation["capture_receipt"]["sha256"], pins["source-archive"]["sha256"])
+        self.assertEqual(observation["retrieval_attempt"]["observed_at_utc"], observed_at)
+        self.assertEqual(observation["retrieval_attempt"]["url"], calls[0])
+        self.assertEqual(observation["source_inventory"], [])
+        # Isolate retained-byte accounting from the separate repeated-input occurrence cap.
+        extra_retained = (len(rows.ROWS) - 1) * self.package.stat().st_size
+        reserved = collector.total + extra_retained + sum((tool.DATA / name).stat().st_size for name in tool.POLICIES)
+        observation_size = (self.capture / "source-observation.json").stat().st_size
+        for adjustment in (-1, 0):
+            other = self.root / f"budget-capture{adjustment}"
+            other.mkdir()
+            other_package = other / "package.nupkg"
+            other_package.write_bytes(self.package.read_bytes())
+            bounded = tool.Collector(self.root, other, 64, True, transport)
+            bounded.collect(other_package, metadata, None, [])
+            bounded.total += extra_retained
+            with self.subTest(budget_adjustment=adjustment), mock.patch.object(
+                    tool, "TOTAL_LIMIT", reserved + observation_size + adjustment):
+                if adjustment < 0:
+                    with self.assertRaisesRegex(ValueError, "Combined checked input bytes"):
+                        tool.requests(self.root, other, other_package, metadata, bounded, None)
+                else:
+                    tool.requests(self.root, other, other_package, metadata, bounded, None)
+
+    def test_local_missing_failed_and_skipped_source_never_becomes_public_capture(self):
+        source = self.root / "source.zip"
+        source.write_bytes(archive({"controls-" + "1" * 40 + "/README.md": b"retained"}))
+        metadata = tool.package_metadata(self.package.read_bytes())
+        for label in ("local-online", "local-offline", "missing-offline", "failed", "budget", "closed"):
+            with self.subTest(label=label):
+                capture = self.root / label
+                capture.mkdir()
+                calls = []
+
+                def transport(url, *args):
+                    calls.append(url)
+                    return {"result": "not-found", "detail_code": "http-status", "http_status": 404}
+
+                collector = tool.Collector(self.root, capture, 0 if label == "budget" else 64,
+                                           "offline" not in label, transport)
+                collector.collect(self.package, metadata, source if label.startswith("local") else None, [],
+                                  source_allowed=label != "closed")
+                copied = capture / "package.nupkg"
+                copied.write_bytes(self.package.read_bytes())
+                _, request = tool.requests(self.root, capture, copied, metadata, collector, None)
+                case = next(case for case in request["cases"] if case["row_id"] == "LP-02")
+                self.assertNotIn("source-observation", {item["role"] for item in case["inputs"]})
+                self.assertFalse((capture / "source-observation.json").exists())
+                self.assertEqual(len(calls), 1 if label == "failed" else 0)
+
+    def test_source_observation_rejects_tampered_or_incomplete_capture_records(self):
+        source = archive({"controls-" + "1" * 40 + "/README.md": b"source"})
+
+        def transport(url, destination, *args):
+            destination.write_bytes(source)
+            return {"result": "succeeded", "detail_code": "http-200", "http_status": 200,
+                    "http_requests": [{"host": "codeload.github.com", "attempted_at_utc": "2026-10-30T12:00:00Z",
+                                       "http_status": 200}]}
+
+        collector = self.collector(transport=transport)
+        metadata = tool.package_metadata(self.package.read_bytes())
+        collector.collect(self.package, metadata, None, [])
+        original = copy.deepcopy(collector.records)
+        for field, value in (("sha256", "0" * 64), ("locator", tool.source_url(metadata) + "0"),
+                             ("http_status", 403), ("request_sent", False), ("result", "invalid-content"),
+                             ("http_requests", None), ("http_requests", []),
+                             ("http_requests", [{"host": "evil.test", "http_status": 200}]),
+                             ("http_requests", [{"host": "codeload.github.com", "http_status": 200,
+                                                  "attempted_at_utc": "2026-02-31T12:00:00Z"}])):
+            collector.records = copy.deepcopy(original)
+            collector.records[0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                tool.source_observation(self.root, self.capture, self.package, metadata, collector)
+            self.assertFalse((self.capture / "source-observation.json").exists())
+        collector.records = original
+        collector.source.write_bytes(source + b"changed")
+        with self.assertRaisesRegex(ValueError, "bound anonymous"):
+            tool.source_observation(self.root, self.capture, self.package, metadata, collector)
 
     def test_exact_and_minimum_walk_ranges_groups_cycles_and_dedup(self):
         dependencies = ('<dependencies><group targetFramework="net8.0">'

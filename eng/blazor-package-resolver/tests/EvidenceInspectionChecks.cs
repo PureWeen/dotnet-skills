@@ -48,7 +48,7 @@ internal static class EvidenceInspectionChecks
         }
         var output = PackageEvidenceInspection.Run(pins, inputs);
         Check(!Lp02PublicSourceResolver.TryArchive(source, out _, commit),
-            "Inspection admits interior filename spaces without changing the frozen LP-02 verdict profile");
+            "The shared default archive profile remains strict; source consumers explicitly admit interior spaces");
         using var document = JsonDocument.Parse(output);
         var result = document.RootElement;
         Check(result.GetProperty("producer").GetString() == "package-evidence-observations/1.0.0", "Bounded observation profile");

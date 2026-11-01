@@ -56,6 +56,44 @@ def main():
         else:
             raise ValueError("Parent preservation accepted unreviewed bytes: " + name)
     print("Named LP-01 parent allowance accepted; eight unreviewed result/input/contract changes rejected.")
+    current_lp02 = json.loads((fixtures / "lp02/cases.json").read_bytes())
+    historical_lp02 = copy.deepcopy(current_lp02)
+    old_missing = "Selected project and implementation files do not establish the bounded library-source mapping."
+    for case in historical_lp02["cases"]:
+        result = case["expected"]
+        result["resolver_version"] = "1.0.0"
+        if case["case_id"] in ("lp02-wrong-project-identity", "lp02-missing-implementation"):
+            result.update(branch_id="source-relevance-unestablished", decision="escalated",
+                          applicability="unknown", finding=None, missing_fact=old_missing,
+                          required_input="exact-package-and-anonymous-source-capture", next_category="source-acquisition")
+            case["rationale"] = case["rationale"].replace(
+                "must yield public-source-observed.", "must yield source-relevance-unestablished.")
+        elif result["branch_id"] == "public-source-observed":
+            result["finding"] = result["finding"].replace(
+                "and the retained nonempty archive matches the declared repository/revision root. ",
+                "and retained files support a bounded mapping to the package's library source. ").replace(
+                "The package declaration supplies that association; source relevance is not independently established. ", "")
+        elif result["branch_id"] == "source-relevance-unestablished":
+            result["missing_fact"] = old_missing
+    before_lp02 = encoded(historical_lp02)
+    corpus.check_parent_file("lp02/cases.json", before_lp02, encoded(current_lp02))
+    for label, change in (
+        ("input binding", lambda suite: suite["cases"][15]["inputs"][0].update(sha256="0" * 64)),
+        ("wrong branch", lambda suite: suite["cases"][0]["expected"].update(branch_id="public-source-observed")),
+        ("wrong version", lambda suite: suite["cases"][0]["expected"].update(resolver_version="1.0.0")),
+        ("invented finding", lambda suite: suite["cases"][15]["expected"].update(finding="unreviewed")),
+        ("evidence reference", lambda suite: suite["cases"][15]["expected"].update(evidence_references=[])),
+        ("extra case", lambda suite: suite["cases"].append(copy.deepcopy(suite["cases"][0]))),
+    ):
+        changed = copy.deepcopy(current_lp02)
+        change(changed)
+        try:
+            corpus.check_parent_file("lp02/cases.json", before_lp02, encoded(changed))
+        except ValueError:
+            pass
+        else:
+            raise ValueError("LP-02 parent preservation accepted " + label)
+    print("Named LP-02 public-availability allowance accepted; six unrelated changes rejected.")
     key = (fixtures / "pi01/template/public.snk").read_bytes()
     corpus.check(len(key) == 276 and key[:4] == b"\x06\x02\x00\x00" and key[8:12] == b"RSA1" and
                  struct.unpack_from("<I", key, 12)[0] == 2048, "Control key is not public-only")

@@ -151,7 +151,8 @@ def package_metadata(data):
                 f"Ambiguous package {name}.")
         return elements[0].text or ""
 
-    package_id, version = field("id").lower(), field("version")
+    declared_id, version = field("id"), field("version")
+    package_id = declared_id.lower()
     require(ID.fullmatch(package_id) and VER.fullmatch(version), "Unsupported package identity or version.")
     repositories = [child for child in metadata if child.tag == namespace + "repository"]
     repository = repositories[0].attrib if len(repositories) == 1 else {}
@@ -167,7 +168,7 @@ def package_metadata(data):
                     dependencies.append({"id": child.get("id"), "version": child.get("version"),
                                          "target_framework": framework})
     require(len(dependencies) <= 1024, "Dependency declaration count exceeds 1024.")
-    return {"id": package_id, "version": version, "repository": repository.get("url"),
+    return {"id": package_id, "declared_id": declared_id, "version": version, "repository": repository.get("url"),
             "commit": repository.get("commit"), "groups": sorted(groups), "dependencies": dependencies}
 
 
@@ -472,7 +473,47 @@ class Collector:
                 "attempts": self.records, "declaration_sample_edges": self.edges,
                 "diagnostics": self.diagnostics,
                 "limitations": ["Literal minimum candidates and exact-TFM or ungrouped traversal are a bounded declaration sample, not a resolved closure.",
-                                "Downloads and local imports do not produce admitted anonymous source, owner, grant, review, notice or build-mapping packets."]}
+                                "Only a successful direct anonymous source capture produces an LP-02 observation; local imports do not.",
+                                "Downloads and local imports do not produce owner, grant, review, notice or build-mapping packets."]}
+
+
+def source_observation(root, capture, package, metadata, collector):
+    if collector.source is None:
+        return None
+    relative = collector.source.relative_to(root).as_posix()
+    attempts = [item for item in collector.records if item["subject"] == "source" and item["retained_path"] == relative]
+    require(len(attempts) == 1, "Retained source lacks one matching acquisition record.")
+    attempt = attempts[0]
+    if attempt["method"] == "local-file":
+        return None
+    url = source_url(metadata)
+    hops = attempt.get("http_requests")
+    digest = sha(read(collector.source, SOURCE_LIMIT))
+    require(collector.online and url is not None and attempt["method"] == "direct-download" and
+            attempt["request_sent"] is True and attempt["locator"] == url and
+            attempt["result"] == "succeeded" and attempt["http_status"] == 200 and
+            attempt["sha256"] == digest and isinstance(hops, list) and len(hops) == 1 and
+            hops[0].get("host") == "codeload.github.com" and hops[0].get("http_status") == 200,
+            "Public source observation requires one successful bound anonymous codeload capture.")
+    observed_at = hops[0].get("attempted_at_utc")
+    require(isinstance(observed_at, str) and
+            re.fullmatch(r"[0-9]{4}(?:-[0-9]{2}){2}T[0-9]{2}(?::[0-9]{2}){2}Z", observed_at),
+            "Source capture lacks its actual UTC request time.")
+    datetime.strptime(observed_at, "%Y-%m-%dT%H:%M:%SZ")
+    owner, repo = urllib.parse.urlsplit(url).path.split("/")[1:3]
+    path = capture / "source-observation.json"
+    dump(path, {
+        "schema_version": 1, "producer": "lp02-anonymous-github/1.0.0",
+        "package_id": metadata["declared_id"], "package_version": metadata["version"],
+        "package_sha256": sha(read(package, PACKAGE_LIMIT)),
+        "repository_url": f"https://github.com/{owner}/{repo}", "commit": metadata["commit"],
+        "retrieval_attempt": {"url": url, "observed_at_utc": observed_at,
+                              "transport": "direct-https-no-credentials/1", "result": "retrieved", "http_status": 200},
+        "capture_receipt": {"role": "source-archive", "sha256": digest},
+        "source_inventory": [],
+        "mapping_rationale": "The exact package declares this repository and revision; one anonymous download retained this archive."
+    })
+    return pin(capture, path, "source-observation")
 
 
 class Tools:
@@ -560,6 +601,7 @@ def requests(root, capture, package, metadata, collector, supplied_request):
     inspection.extend(pin(capture, item[0], f"dependency-{number:03}")
                       for number, (_, item) in enumerate(sorted(collector.dependencies.items())))
     dump(capture / "inspection-request.json", {"schema_version": 1, "inputs": inspection})
+    observation_pin = source_observation(root, capture, package, metadata, collector)
     policy_pins = []
     for name in POLICIES:
         path = capture / name
@@ -577,6 +619,11 @@ def requests(root, capture, package, metadata, collector, supplied_request):
             path = capture / (row.lower() + "-scope.json")
             dump(path, scope)
             scopes[row] = pin(capture, path, "assessment")
+    retained_bytes = collector.total + sum(len(read(beneath(capture, item["path"]))) for item in policy_pins)
+    retained_bytes += sum(len(read(beneath(capture, item["path"]))) for item in scopes.values())
+    if observation_pin:
+        retained_bytes += len(read(beneath(capture, observation_pin["path"])))
+    require(retained_bytes <= TOTAL_LIMIT, "Combined checked input bytes exceed 256 MiB.")
     cases = {}
     for row in ROWS:
         inputs = [package_pin]
@@ -584,14 +631,14 @@ def requests(root, capture, package, metadata, collector, supplied_request):
             inputs += policy_pins
         elif row == "LP-02":
             inputs += [p for p in inspection if p["role"] == "source-archive"]
+            if observation_pin:
+                inputs.append(observation_pin)
         elif row in scopes:
             inputs += [scopes[row]]
             if row == "LP-03":
                 inputs += policy_pins
         cases[row] = {"case_id": "eleven-" + row.lower(), "row_id": row, "inputs": inputs}
     if supplied_request:
-        retained_bytes = collector.total + sum(len(read(beneath(capture, item["path"]))) for item in policy_pins)
-        retained_bytes += sum(len(read(beneath(capture, item["path"]))) for item in scopes.values())
         supplied_request = regular(supplied_request)
         supplied = load(supplied_request, MIB)
         require(set(supplied) == {"schema_version", "cases"} and supplied["schema_version"] == 1 and

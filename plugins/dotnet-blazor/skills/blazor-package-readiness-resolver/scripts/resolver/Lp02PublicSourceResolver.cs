@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
-using System.Xml;
 using System.Xml.Linq;
 
 namespace BlazorPackageResolver;
@@ -44,7 +43,7 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
 
     public string RowId => "LP-02";
     public string ResolverId => "lp02-public-source";
-    public string Version => "1.0.0";
+    public string Version => "1.1.0";
 
     public CaseResult Resolve(ResolverCase input)
     {
@@ -80,7 +79,7 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
             return Result("observation-missing");
         if (record.CaptureReceipt!.Sha256 != source.Identity.Sha256)
             return Result("observation-binding-conflict");
-        if (!TryArchive(source.Content, out var files, declaration.Commit))
+        if (!TryArchive(source.Content, out var files, declaration.Commit, allowSpaces: true) || files.Count == 0)
             return Result("observation-invalid");
         var root = repository.Split('/')[^1] + "-" + declaration.Commit;
         if (files.Keys.Any(path => !path.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase)))
@@ -92,13 +91,12 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
             if (Catalog.Digest(bytes) != selected.Sha256)
                 return Result("observation-binding-conflict");
         }
-        if (!Relevant(record, declaration, files))
-            return Result("source-relevance-unestablished");
         return Result("public-source-observed",
             $"The exact package declares repository {repository} and commit {declaration.Commit}. " +
             $"At time {record.RetrievalAttempt.ObservedAtUtc}, that revision was retrieved without application credentials, " +
-            "and retained files support a bounded mapping to the package's library source. " +
+            "and the retained nonempty archive matches the declared repository/revision root. " +
             "This establishes public source availability at the package-declared revision. " +
+            "The package declaration supplies that association; source relevance is not independently established. " +
             "It does not establish that the published binaries were built from that revision. " +
             "It also does not establish membership in the declared repository's branches or tags, " +
             "because codeload may serve fork-network commit objects.");
@@ -113,7 +111,7 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
         "observation-invalid" => "The acquisition observation or retained archive is outside the supported evidence profile.",
         "observation-binding-conflict" => "The observation, package, revision or retained source digests do not bind exactly.",
         "public-retrieval-unresolved" => "Anonymous public retrieval is unresolved or unsupported; public source availability is not tested.",
-        _ => "Selected project and implementation files do not establish the bounded library-source mapping."
+        _ => "A selected supplemental source file is absent from the checked archive."
     };
 
     public static (string State, Lp02Package? Package) InspectPackage(ReadOnlyMemory<byte> bytes)
@@ -263,68 +261,4 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
     private static bool ShortText(string? text, int limit) => !string.IsNullOrWhiteSpace(text) &&
         text.Length <= limit && text.All(c => c is >= ' ' and <= '~');
 
-    private static bool Relevant(Lp02Observation record, Lp02Package package,
-        Dictionary<string, byte[]> files)
-    {
-        var project = record.SourceInventory.SingleOrDefault(f => f.Kind == "project");
-        var implementation = record.SourceInventory.SingleOrDefault(f => f.Kind == "implementation");
-        if (project is null || implementation is null ||
-            files[project.Path].Length > MaxSelectedFileBytes ||
-            files[implementation.Path].Length > MaxSelectedFileBytes ||
-            !project.Path.EndsWith(".csproj", StringComparison.Ordinal) ||
-            !implementation.Path.EndsWith(".cs", StringComparison.Ordinal) ||
-            !implementation.Path.StartsWith(project.Path[..(project.Path.LastIndexOf('/') + 1)], StringComparison.Ordinal) ||
-            implementation.Path.Split('/').Any(p => p is "obj" or "bin"))
-            return false;
-        if (files.Keys.Any(path =>
-        {
-            var separator = path.LastIndexOf('/') + 1;
-            var name = path[separator..];
-            return (string.Equals(name, "Directory.Build.props", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(name, "Directory.Build.targets", StringComparison.OrdinalIgnoreCase)) &&
-                project.Path.StartsWith(path[..separator], StringComparison.OrdinalIgnoreCase);
-        }))
-            return false;
-        try
-        {
-            var source = Utf8.GetString(files[implementation.Path]);
-            if (string.IsNullOrWhiteSpace(source)) return false;
-            var projectBytes = files[project.Path].AsSpan();
-            if (projectBytes.StartsWith(new byte[] { 0xef, 0xbb, 0xbf })) projectBytes = projectBytes[3..];
-            var xml = Utf8.GetString(projectBytes);
-            using var text = new StringReader(xml);
-            using var reader = XmlReader.Create(text, new XmlReaderSettings
-            {
-                DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null,
-                MaxCharactersInDocument = MaxSelectedFileBytes
-            });
-            var document = XDocument.Load(reader);
-            var root = document.Root;
-            bool Named(XName name, string expected) =>
-                string.Equals(name.LocalName, expected, StringComparison.OrdinalIgnoreCase);
-            if (root is null || root.Name.NamespaceName.Length != 0 || !Named(root.Name, "Project"))
-                return false;
-            var sdk = root.Attributes().Where(a => Named(a.Name, "Sdk")).ToArray();
-            if (sdk.Length != 1 || sdk[0].Name.NamespaceName.Length != 0 || sdk[0].Value != "Microsoft.NET.Sdk")
-                return false;
-            // A literal package identity and default compile inclusion are a bounded mapping, not MSBuild evaluation.
-            if (root.DescendantsAndSelf().Any(e => e.Attributes().Any(a => Named(a.Name, "Condition"))) ||
-                root.Descendants().Any(e => Named(e.Name, "Compile") || Named(e.Name, "Import") ||
-                    Named(e.Name, "ImportGroup") || Named(e.Name, "Sdk") || Named(e.Name, "Choose") ||
-                    Named(e.Name, "Target") || Named(e.Name, "DefaultItemExcludes") ||
-                    (Named(e.Name, "EnableDefaultItems") || Named(e.Name, "EnableDefaultCompileItems")) &&
-                        (e.HasAttributes || e.HasElements ||
-                         !string.Equals(e.Value.Trim(), "true", StringComparison.OrdinalIgnoreCase))))
-                return false;
-            var identities = root.Descendants().Where(e => Named(e.Name, "PackageId")).ToArray();
-            return identities.Length == 1 && !identities[0].HasAttributes && !identities[0].HasElements &&
-                identities[0].Name.NamespaceName.Length == 0 &&
-                identities[0].Parent is { } group && group.Parent == root &&
-                group.Name.NamespaceName.Length == 0 && Named(group.Name, "PropertyGroup") &&
-                !identities[0].Parent!.HasAttributes &&
-                string.Equals(identities[0].Value.Trim(), package.Id, StringComparison.OrdinalIgnoreCase);
-        }
-        catch (XmlException) { return false; }
-        catch (DecoderFallbackException) { return false; }
-    }
 }

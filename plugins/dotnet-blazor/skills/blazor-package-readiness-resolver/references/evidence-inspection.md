@@ -29,8 +29,12 @@ supports at most 64 distinct dependency versions, 66 inputs total, a 1 MiB reque
 checked bytes, and 8 MiB per nupkg. The optional source ZIP is at most 64 MiB with the existing
 bounded safe ZIP/CRC/path/expanded-byte checks. This read-only source inspection additionally
 admits interior ASCII spaces in archive path segments; leading/trailing spaces, traversal,
-links and platform path syntax remain rejected. It never extracts entries, and the stricter
-LP-02 verdict/admission path profile is unchanged. At most 64 source projects are inspected;
+links and platform path syntax remain rejected. It never extracts entries.
+LP-02 source archives reuse that interior-space predicate, keeping package
+and checked-input path admission strict.
+LP-02 1.1.0 no longer requires project relevance or any SDK/build shape to verify
+public availability, but still requires a checked anonymous acquisition observation.
+At most 64 source projects are inspected;
 project XML is strict UTF-8, at most 1 MiB, with DTD/entity resolution prohibited.
 
 The schema-1 output has producer `package-evidence-observations/1.0.0` and retains:

@@ -57,7 +57,7 @@ using (var doc = JsonDocument.Parse(coverage))
                            row.GetProperty("resolver_version").GetString() == "1.0.0",
                 "LP-02" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp02-public-source" &&
-                           row.GetProperty("resolver_version").GetString() == "1.0.0",
+                           row.GetProperty("resolver_version").GetString() == "1.1.0",
                 "LP-03" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp03-dependency-licenses" &&
                            row.GetProperty("resolver_version").GetString() == "1.0.0",

@@ -92,6 +92,45 @@ def inspection_checks(helper, assessment):
     return output
 
 
+def lp02_public_capture_checks(plugin, work, root):
+    script = plugin / "skills/blazor-component-readiness/scripts/autofill-eleven.py"
+    helper = plugin / "skills/blazor-package-readiness-resolver/scripts/run-resolver.py"
+    tool = runpy.run_path(str(script), run_name="autofill_shipping_test")
+    capture = root / "public-capture"
+    capture.mkdir()
+    package = capture / "package.nupkg"
+    shutil.copyfile(root / "sample.nupkg", package)
+    source = (root / "source.zip").read_bytes()
+    metadata = tool["package_metadata"](package.read_bytes())
+    calls = []
+
+    def transport(url, destination, maximum, seconds):
+        if url != tool["source_url"](metadata):
+            raise ValueError("Unexpected transport request in mocked public-source integration.")
+        calls.append(url)
+        destination.write_bytes(source)
+        return {"result": "succeeded", "detail_code": "http-200", "http_status": 200,
+                "http_requests": [{"host": "codeload.github.com", "attempted_at_utc": "2026-10-30T12:00:00Z",
+                                   "http_status": 200}]}
+
+    collector = tool["Collector"](root, capture, 64, True, transport)
+    collector.collect(package, metadata, None, [])
+    _, request = tool["requests"](root, capture, package, metadata, collector, None)
+    lp02 = next(case for case in request["cases"] if case["row_id"] == "LP-02")
+    request_path = capture / "lp02-request.json"
+    request_path.write_text(json.dumps({"schema_version": 1, "cases": [lp02]}), encoding="utf-8")
+    result = json.loads(run([sys.executable, "-I", str(helper), "resolve", str(request_path)], work))["cases"][0]["result"]
+    tool["checked_result"](result, lp02["inputs"])
+    if (len(calls) != 1 or result["resolver_version"] != "1.1.0" or
+            result["branch_id"] != "public-source-observed" or
+            "source relevance is not independently established" not in result["finding"] or
+            "binaries were built from that revision" not in result["finding"]):
+        raise ValueError("Mocked single-fetch capture must reach the qualified LP-02 availability finding.")
+    (capture / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+    print("Installed LP-02: one mocked anonymous download -> pinned observation -> real resolver qualified positive; "
+          "Razor, inherited build files and interior filename spaces are not false blockers.")
+
+
 def autofill_checks(plugin, work, setup):
     root = work / "autofill-assessment"
     root.mkdir()
@@ -144,6 +183,8 @@ def autofill_checks(plugin, work, setup):
             "inspected signing fields" not in states["PI-01"]["observation"] or
             "build/assessment.targets" not in states["LP-10"]["observation"]):
         raise ValueError("Eleven-row autofill lost supported breadth or assigned outside its scope.")
+    if states["LP-02"]["status"] != "not tested" or "LP-02 [observation-missing]" not in states["LP-02"]["observation"]:
+        raise ValueError("A local source import must not invent anonymous public retrieval.")
     check = [*invocation, "check", "--root", str(root), "--confirmed", receipt["manifest"], "--state", receipt["state"]]
     run([*check, "--assessment", receipt["assessment"]], work, env)
     remaining = {"schema_version": 1, "rows": [{
@@ -194,6 +235,7 @@ def autofill_checks(plugin, work, setup):
     run([*invocation, "check", "--root", str(root), "--confirmed", str(root / "next.confirmed.json"),
          "--state", rebound["state"], "--assessment", rebound["assessment"]], work, env)
     run([*check, "--assessment", rebound["assessment"]], work, env, code=2)
+    lp02_public_capture_checks(plugin, work, root)
     lone = work / "autofill-single/blazor-component-readiness"
     shutil.copytree(consumer, lone, ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
     run([sys.executable, "-I", str(lone / "scripts/autofill-eleven.py"), "run", "--root", str(root),

@@ -3,7 +3,7 @@ import json
 import re
 import unicodedata
 
-VERSION = "eleven-row-handoff/1.0.1"
+VERSION = "eleven-row-handoff/1.1.0"
 ROWS = tuple(f"LP-{number:02}" for number in range(1, 11)) + ("PI-01",)
 RESOLVERS = dict(zip(ROWS, (
     "lp01-license-policy", "lp02-public-source", "lp03-dependency-licenses",
@@ -13,6 +13,7 @@ RESOLVERS = dict(zip(ROWS, (
 )))
 STATUSES = {"V": "verified", "G": "gap", "N": "not tested",
             "O": "owner evidence required", "A": "not applicable"}
+RESOLVER_VERSIONS = {row: "1.1.0" if row == "LP-02" else "1.0.0" for row in ROWS}
 
 # Each entry is (explicit branches, status, smallest next action). Unknown keys are errors.
 GROUPS = {
@@ -45,7 +46,7 @@ GROUPS = {
          "Obtain a supported exact repository and revision declaration and admitted anonymous retrieval."),
         ("observation-missing observation-invalid observation-binding-conflict", "N",
          "Obtain an admitted anonymous capture bound to the exact package, revision and retained archive."),
-        ("source-relevance-unestablished", "N", "Obtain an admitted project and implementation relevance mapping."),
+        ("source-relevance-unestablished", "N", "Repair the missing selected supplemental source-file binding."),
     ),
     "LP-03": (
         ("dependencies-policy-satisfied", "V", ""),
@@ -152,7 +153,7 @@ def checked_result(value, pins):
         raise ValueError("Unexpected resolver result fields.")
     row, branch = value["row_id"], value["branch_id"]
     if ((row, branch) not in MAPPING or value["resolver_id"] != RESOLVERS[row] or
-            value["resolver_version"] != "1.0.0" or value["inputs"] != pins):
+            value["resolver_version"] != RESOLVER_VERSIONS[row] or value["inputs"] != pins):
         raise ValueError("Unknown resolver branch, version or input binding.")
     code = MAPPING[row, branch][0]
     decision = "deterministic" if code in "VGA" else "escalated"
@@ -217,7 +218,8 @@ def partial_facts(row, facts, acquisition, branch=None):
                 f"Retained source SHA-256 {source['sha256']}, {source['file_count']} files, "
                 f"declared-root match {literal(source['declared_root_matches'])}; "
                 f"{len(projects)} unevaluated projects; first project {excerpt(projects[:1], 'observations#/source/projects', 1200)}. "
-                "Local source and project facts do not establish anonymous acquisition, library relevance or binary-build correspondence.")
+                "Project inventory is supplemental and unevaluated. Public availability requires a bound anonymous "
+                "acquisition observation; source relevance and binary-build correspondence are not independently established.")
     if row == "LP-03":
         licenses = [{"id": p["id"], "version": p["version"], "license": p["license_declarations"]}
                     for p in facts["supplied_dependencies"]]

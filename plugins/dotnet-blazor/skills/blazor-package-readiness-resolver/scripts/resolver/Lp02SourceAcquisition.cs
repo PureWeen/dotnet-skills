@@ -104,11 +104,14 @@ public static class Lp02SourceAcquisition
         catch (OperationCanceledException) { result = "unavailable"; archive = null; }
         if (result == "unavailable" && status == 200) status = null;
         var inventory = new List<Lp02SourceFile>();
-        if (archive is not null && Lp02PublicSourceResolver.TryArchive(archive, out var files, package.Commit))
+        if (archive is not null && Lp02PublicSourceResolver.TryArchive(archive, out var files, package.Commit, allowSpaces: true))
         {
             foreach (var (kind, path) in new[] { ("project", projectPath), ("implementation", implementationPath) })
-                if (files.TryGetValue(path, out var file))
-                    inventory.Add(new(kind, path, Catalog.Digest(file)));
+            {
+                if (!files.TryGetValue(path, out var file))
+                    throw new InvalidDataException($"Explicitly selected LP-02 supplemental file is missing: {path}");
+                inventory.Add(new(kind, path, Catalog.Digest(file)));
+            }
         }
         var observation = new Lp02Observation(1, Lp02PublicSourceResolver.Producer,
             package.Id, package.Version, Catalog.Digest(bytes.Span), repository, package.Commit,

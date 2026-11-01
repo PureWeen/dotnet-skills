@@ -28,7 +28,7 @@ public sealed class Registry
         new(catalog, PackageIds.Split(' ').Select(id => id switch
         {
             "LP-01" => new RegistryEntry(id, "implemented", "lp01-license-policy", "1.0.0"),
-            "LP-02" => new RegistryEntry(id, "implemented", "lp02-public-source", "1.0.0"),
+            "LP-02" => new RegistryEntry(id, "implemented", "lp02-public-source", "1.1.0"),
             "LP-03" => new RegistryEntry(id, "implemented", "lp03-dependency-licenses", "1.0.0"),
             "LP-04" => new RegistryEntry(id, "implemented", "lp04-notice-coverage", "1.0.0"),
             "LP-05" => new RegistryEntry(id, "implemented", "lp05-license-expression", "1.0.0"),

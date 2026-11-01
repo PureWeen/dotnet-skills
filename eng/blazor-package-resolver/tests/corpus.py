@@ -51,7 +51,7 @@ def sha(data):
 
 
 def check_parent_file(name, before, after):
-    """Admit only the reviewed lp01-approved-non-copyleft-verified delta."""
+    """Admit only the named LP-01 declaration and LP-02 public-availability deltas."""
     if before == after:
         return
     if name in ("lp01/cases.json", "lp01/acceptance.json"):
@@ -77,6 +77,47 @@ def check_parent_file(name, before, after):
         check(sha(before) == "93eaab58da17a9c14d687159edaa84ad134406c1e5b38ab78e523fa89a8fe039" and
               sha(after) == "fb806cc03a44028f73974aead8e6c2630d289611b6a959369908e832da8c1ef2",
               "Unreviewed LP-01 contract change")
+        return
+    if name in ("lp02/cases.json", "lp02/acceptance.json"):
+        expected = json.loads(before)
+        check(len(expected["cases"]) == (33 if name == "lp02/cases.json" else 2),
+              "Unexpected historical LP-02 inventory")
+        previous_finding = next((case["expected"]["finding"] for case in expected["cases"]
+                                 if case["expected"]["branch_id"] == "public-source-observed"), None)
+        finding = (previous_finding.replace(
+            "and retained files support a bounded mapping to the package's library source. ",
+            "and the retained nonempty archive matches the declared repository/revision root. ").replace(
+            "This establishes public source availability at the package-declared revision. ",
+            "This establishes public source availability at the package-declared revision. "
+            "The package declaration supplies that association; source relevance is not independently established. ")
+            if previous_finding else None)
+        for case in expected["cases"]:
+            result = case["expected"]
+            check(result["row_id"] == case["row_id"] == "LP-02" and
+                  result["resolver_id"] == "lp02-public-source" and result["resolver_version"] == "1.0.0",
+                  "Unexpected historical LP-02 identity")
+            result["resolver_version"] = "1.1.0"
+            if case["case_id"] in ("lp02-wrong-project-identity", "lp02-missing-implementation"):
+                check(result["branch_id"] == "source-relevance-unestablished" and finding is not None,
+                      "Unexpected historical LP-02 relevance result")
+                result.update(branch_id="public-source-observed", decision="deterministic",
+                              applicability="applicable", finding=finding, missing_fact=None,
+                              required_input=None, next_category=None)
+                case["rationale"] = case["rationale"].replace(
+                    "must yield source-relevance-unestablished.", "must yield public-source-observed.")
+            elif result["branch_id"] == "public-source-observed":
+                check(result["finding"] == previous_finding, "Unexpected historical LP-02 positive finding")
+                result["finding"] = finding
+            elif result["branch_id"] == "source-relevance-unestablished":
+                check(case["case_id"] == "lp02-missing-selected-file", "Unexpected selected-file case")
+                result["missing_fact"] = "A selected supplemental source file is absent from the checked archive."
+        reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
+        check(after == reviewed, "Unreviewed LP-02 change outside public-availability delta: " + name)
+        return
+    if name == "lp02/README.md":
+        check(sha(before) == "b46ea087b5a3700ff62c399aa2b5bb0d2ad6eb3115b5bdac04de508396044004" and
+              sha(after) == "2b4a08adfd5d5f91832a27297a3d163f7290e26407fbdec709dd5da4a14b5663",
+              "Unreviewed LP-02 contract change")
         return
     check(False, "Accepted parent mismatch: " + name)
 
@@ -264,7 +305,7 @@ def main():
                 check_parent_file(name, old, (fixtures / name).read_bytes())
         print("Corpus verified:", len(lock["files"]), "exact paths;",
               sum(pin[1] for pin in lock["files"]), "bytes; locked canonical outputs verified"
-              " (only the named LP-01 approved declaration delta is allowed against parent).")
+              " (only the named LP-01 declaration and LP-02 public-availability deltas are allowed against parent).")
     else:
         manifest = fixtures / ("cases.json" if args.row == "foundation" else args.row + "/cases.json")
         subprocess.run(["dotnet", "run", "--no-restore", "--project",

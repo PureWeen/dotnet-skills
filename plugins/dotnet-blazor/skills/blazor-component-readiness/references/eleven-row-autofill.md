@@ -65,7 +65,17 @@ Dependency selection is intentionally not NuGet resolution: `[v]` is exact; bare
 selects bytes at its literal minimum and is labelled a sample. Traverse exact matching root-TFM
 groups, otherwise ungrouped declarations; record unsupported groups, ranges and version forms.
 Preserve all literal declarations, including unfollowed groups, in the inspection packet.
-No restored graph, anonymous source observation, grant/review, notice map, owner approval or
+One successful single-hop anonymous codeload capture produces a pinned LP-02
+`source-observation` from its actual request UTC and checked archive digest. A local
+source import, offline mode, failed fetch or budget skip never creates that observation.
+LP-02 `lp02-public-source/1.1.0` verifies availability at the exact package-declared
+repository/revision with a checked nonempty root-bound archive. Project type,
+PackageId, conditional settings and inherited build files are not requirements.
+The package declaration supplies the association, not independent source relevance,
+binary-to-commit correspondence or branch/tag membership.
+Source archive paths may contain interior ASCII spaces (for example `Check Box.svg`);
+traversal, leading/trailing spaces, links and platform syntax still reject.
+No restored graph, grant/review, notice map, owner approval or
 compiled-build correspondence is fabricated. Frozen LP-01 policy 1.0.0/SPDX 3.27.0 are bundled
 byte-exact reference assets, not owner approval or new license policy.
 
@@ -102,6 +112,10 @@ release-scoped grant is required for this branch. Its observation retains declar
 named candidates and exact source-byte matches without an owner-authority missing-fact
 sentence. File-only and missing-license branches still require owner evidence; the separate
 `owner-evidence-accepted` branch and all other branch statuses are unchanged.
+LP-02 accepts only resolver version `1.1.0`; other rows retain `1.0.0`.
+Handoff producer `eleven-row-handoff/1.1.0` rejects older saved states rather than
+silently reinterpreting their row decisions. Preserve old captures; make a fresh run
+or explicitly supply already checked acquisition packets to evaluate the new contract.
 Observations preserve literal small license texts/headings and repository declarations,
 root/dependency/source notice-candidate counts, shipped-script match counts and unmatched
 stylesheet entries, plus per-PE declared assembly metadata and signing fields. Candidate text
@@ -151,6 +165,6 @@ Unchanged records under the same subject keep EV1 IDs when a ledger is appended/
 a changed manifest/subject or claim/provenance may change them. Always read producer IDs.
 Never transplant an old assessment identity or old EV1 references.
 
-The sibling resolver remains offline and unchanged. Missing sibling installation stops autofill
+The sibling resolver remains offline. Missing sibling installation stops autofill
 before acquisition; ordinary single-skill input/init remains available with explicit unresolved
 static conclusions, as described by [the manual handoff](package-resolver.md).

@@ -32,7 +32,7 @@ MISSING = {
     "observation-invalid": "The acquisition observation or retained archive is outside the supported evidence profile.",
     "observation-binding-conflict": "The observation, package, revision or retained source digests do not bind exactly.",
     "public-retrieval-unresolved": "Anonymous public retrieval is unresolved or unsupported; public source availability is not tested.",
-    "source-relevance-unestablished": "Selected project and implementation files do not establish the bounded library-source mapping.",
+    "source-relevance-unestablished": "A selected supplemental source file is absent from the checked archive.",
 }
 
 # Each expected branch is a normative assertion, never read from production output.
@@ -68,8 +68,8 @@ CASES = (
     ("unsafe-selected-path", "observation-invalid"),
     ("wrong-selected-digest", "observation-binding-conflict"),
     ("missing-selected-file", "source-relevance-unestablished"),
-    ("wrong-project-identity", "source-relevance-unestablished"),
-    ("missing-implementation", "source-relevance-unestablished"),
+    ("wrong-project-identity", "public-source-observed"),
+    ("missing-implementation", "public-source-observed"),
 )
 
 
@@ -209,15 +209,16 @@ def build():
         finding = (
             f"The exact package declares repository {REPOSITORY} and commit {COMMIT}. "
             f"At time {TIME}, that revision was retrieved without application credentials, "
-            "and retained files support a bounded mapping to the package's library source. "
+            "and the retained nonempty archive matches the declared repository/revision root. "
             "This establishes public source availability at the package-declared revision. "
+            "The package declaration supplies that association; source relevance is not independently established. "
             "It does not establish that the published binaries were built from that revision. "
             "It also does not establish membership in the declared repository's branches or tags, "
             "because codeload may serve fork-network commit objects."
         ) if branch == "public-source-observed" else None
         references = [f"input:{item['role']}:{item['sha256']}" for item in inputs]
         result = {
-            "row_id": "LP-02", "resolver_id": "lp02-public-source", "resolver_version": "1.0.0",
+            "row_id": "LP-02", "resolver_id": "lp02-public-source", "resolver_version": "1.1.0",
             "branch_id": branch, "decision": "deterministic" if finding else "escalated",
             "applicability": "applicable" if finding else "unknown", "inputs": copy.deepcopy(inputs),
             "evidence_references": references, "evidence_contract": CONTRACT, "finding": finding,
@@ -245,7 +246,7 @@ def build():
             "case_id": f"lp02-retained-{vendor['vendor']}",
             "row_id": "LP-02", "inputs": [identity],
             "expected": {
-                "row_id": "LP-02", "resolver_id": "lp02-public-source", "resolver_version": "1.0.0",
+                "row_id": "LP-02", "resolver_id": "lp02-public-source", "resolver_version": "1.1.0",
                 "branch_id": "observation-missing", "decision": "escalated", "applicability": "unknown",
                 "inputs": [identity], "evidence_references": [reference], "evidence_contract": CONTRACT,
                 "finding": None, "missing_fact": MISSING["observation-missing"],

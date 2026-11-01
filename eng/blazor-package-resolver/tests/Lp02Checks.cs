@@ -76,8 +76,64 @@ internal static class Lp02Checks
                 result.Finding!.Contains("It does not establish that the published binaries were built from that revision.",
                     StringComparison.Ordinal) &&
                 result.Finding.Contains("It also does not establish membership in the declared repository's branches or tags, " +
-                    "because codeload may serve fork-network commit objects.", StringComparison.Ordinal),
+                    "because codeload may serve fork-network commit objects.", StringComparison.Ordinal) &&
+                result.Finding.Contains("source relevance is not independently established.", StringComparison.Ordinal),
                 "Generated receipt reaches only the qualified positive with binary and membership limitations");
+        });
+        Case("explicit-supplemental-selection-must-exist", () =>
+        {
+            var requests = 0;
+            using var client = Client(_ =>
+            {
+                requests++;
+                return new(HttpStatusCode.OK) { Content = new ByteArrayContent(archive) };
+            });
+            try
+            {
+                Lp02SourceAcquisition.RetrieveAsync(client, package, project, implementation + ".missing",
+                    record.MappingRationale).GetAwaiter().GetResult();
+                throw new Exception("Acquisition silently dropped an explicitly selected supplemental file.");
+            }
+            catch (InvalidDataException error)
+            {
+                Require(error.Message.Contains("supplemental file is missing", StringComparison.Ordinal) &&
+                    requests == 1, "Missing explicit selection is an acquisition error without retries");
+            }
+        });
+        Case("nonempty-public-archive-without-project-selection", () =>
+        {
+            var root = project[..project.IndexOf("/src/", StringComparison.Ordinal)];
+            foreach (var entries in new Dictionary<string, byte[]>[]
+            {
+                new(), new() { [root + "/"] = [] },
+                new() { [root + "/README.md"] = "Source at the declared revision."u8.ToArray() }
+            })
+            {
+                var changed = Zip(entries);
+                var observation = receipt.DeepClone();
+                Bind(observation, changed);
+                observation["source_inventory"] = new JsonArray();
+                var result = Resolve(registry, package, Encoding.UTF8.GetBytes(observation.ToJsonString()), changed);
+                Require(result.BranchId == (entries.Keys.Any(path => !path.EndsWith('/'))
+                    ? "public-source-observed" : "observation-invalid"),
+                    "Empty and directory-only archives reject; optional project selection is not a requirement");
+            }
+        });
+        Case("source-path-spaces-preserve-safety", () =>
+        {
+            var root = project[..project.IndexOf("/src/", StringComparison.Ordinal)];
+            foreach (var path in new[] { "assets/Check Box.svg", "Getting Started/Intro.razor",
+                "assets/ Check.svg", "assets/Check.svg ", "../escape", "assets/../escape", @"assets\Check.svg" })
+            {
+                var changed = Zip(new() { [root + "/" + path] = "source"u8.ToArray() });
+                var observation = receipt.DeepClone();
+                Bind(observation, changed);
+                observation["source_inventory"] = new JsonArray();
+                Require(Resolve(registry, package, Encoding.UTF8.GetBytes(observation.ToJsonString()), changed).BranchId ==
+                    (path is "assets/Check Box.svg" or "Getting Started/Intro.razor"
+                        ? "public-source-observed" : "observation-invalid"),
+                    "Only interior ASCII spaces are admitted; traversal, edge spaces and platform syntax reject");
+            }
         });
         Case("retrieval-result-states", () =>
         {
@@ -152,7 +208,7 @@ internal static class Lp02Checks
             Require(Resolve(registry, package, [.. padded, (byte)' '], archive).BranchId == "observation-invalid",
                 "Observation above 16 KiB rejected");
         });
-        Case("selected-file-byte-boundary", () =>
+        Case("supplemental-file-sizes-do-not-gate-availability", () =>
         {
             using var zip = new ZipArchive(new MemoryStream(archive));
             using var projectStream = zip.GetEntry(project)!.Open();
@@ -168,9 +224,8 @@ internal static class Lp02Checks
                 Bind(observation, changed);
                 observation["source_inventory"]![1]!["sha256"] = Catalog.Digest(source);
                 Require(Resolve(registry, package, Encoding.UTF8.GetBytes(observation.ToJsonString()), changed).BranchId ==
-                    (length == Lp02PublicSourceResolver.MaxSelectedFileBytes
-                        ? "public-source-observed" : "source-relevance-unestablished"),
-                    "Selected implementation file must fit the documented inclusive byte cap");
+                    "public-source-observed",
+                    "Supplemental file bytes are digest-checked within archive limits, not parsed for relevance");
             }
         });
         Case("archive-resource-boundaries", () =>
@@ -205,7 +260,7 @@ internal static class Lp02Checks
             Require(Resolve(registry, package, Encoding.UTF8.GetBytes(invalid.ToJsonString()), archive).BranchId ==
                 "observation-invalid", "Absolute selected path is unsupported");
         });
-        Case("project-and-implementation-mapping", () =>
+        Case("project-and-implementation-are-supplemental", () =>
         {
             foreach (var mode in new[] { "outside", "disabled-defaults", "missing-project" })
             {
@@ -229,7 +284,7 @@ internal static class Lp02Checks
                     item["sha256"] = Catalog.Digest(files[item["path"]!.GetValue<string>()]);
                 }
                 Require(Resolve(registry, package, Encoding.UTF8.GetBytes(invalid.ToJsonString()), changed).BranchId ==
-                    "source-relevance-unestablished", $"Mapping cannot be established: {mode}");
+                    "public-source-observed", $"Project mapping does not gate public availability: {mode}");
             }
         });
         Case("duplicate-inventory-kinds", () =>
@@ -264,11 +319,15 @@ internal static class Lp02Checks
             }
             catch (InvalidDataException) { }
         });
-        Case("unsupported-msbuild-source-mapping", () =>
+        Case("msbuild-shapes-do-not-gate-public-availability", () =>
         {
             var root = project[..project.IndexOf("/src/", StringComparison.Ordinal)];
             var variants = new (string Name, string Xml, string? ExtraPath)[]
             {
+                ("razor-sdk", projectXml.Replace("Microsoft.NET.Sdk", "Microsoft.NET.Sdk.Razor",
+                    StringComparison.Ordinal), null),
+                ("no-literal-package-id", projectXml.Replace("<PackageId>Sample.Library</PackageId>", "",
+                    StringComparison.Ordinal), null),
                 ("lowercase-default-compile", projectXml.Replace("</PropertyGroup>",
                     "<enabledefaultcompileitems>false</enabledefaultcompileitems></PropertyGroup>", StringComparison.Ordinal), null),
                 ("mixed-case-default-items", projectXml.Replace("</PropertyGroup>",
@@ -302,11 +361,12 @@ internal static class Lp02Checks
                 Result: ProjectResult(Encoding.UTF8.GetBytes(item.Xml), item.ExtraPath))).ToArray();
             foreach (var item in outcomes)
                 Console.WriteLine($"LP-02 acceptance {item.Name}: {item.Result.BranchId}.");
-            Require(outcomes.All(item => item.Result.BranchId == "source-relevance-unestablished" &&
-                item.Result.Decision == "escalated" && item.Result.Finding is null),
-                "Unsupported case variants, conditional/competing identities, exclusions and ancestor imports cannot establish relevance");
+            Require(outcomes.All(item => item.Result.BranchId == "public-source-observed" &&
+                item.Result.Decision == "deterministic" &&
+                item.Result.Finding!.Contains("source relevance is not independently established.", StringComparison.Ordinal)),
+                "Razor, conditional/competing identities, exclusions and imports do not gate qualified public availability");
             Require(ProjectResult(Encoding.UTF8.GetBytes(projectXml), root + "/other/Directory.Build.props").BranchId ==
-                "public-source-observed", "Only Directory.Build files in the selected project's ancestors block relevance");
+                "public-source-observed", "Build-file locations are supplemental, not an availability gate");
         });
         Case("malformed-observation-unicode", () =>
         {
@@ -324,18 +384,18 @@ internal static class Lp02Checks
                 Require(Resolve(registry, package, item.Bytes, archive).BranchId == "observation-invalid",
                     $"Malformed JSON Unicode must reject without an unhandled exception: {item.Name}");
         });
-        Case("project-utf8-bom", () =>
+        Case("project-encoding-is-not-evaluated", () =>
         {
             var bytes = Encoding.UTF8.GetBytes(projectXml);
             var bom = new byte[] { 0xef, 0xbb, 0xbf };
             Require(ProjectResult([.. bom, .. bytes]).BranchId == "public-source-observed",
-                "A single UTF-8 BOM on an otherwise supported project preserves relevance");
-            Require(ProjectResult([.. bom, .. bom, .. bytes]).BranchId == "source-relevance-unestablished",
-                "Repeated BOMs are not a supported project encoding");
+                "Project bytes remain supplemental");
+            Require(ProjectResult([.. bom, .. bom, .. bytes]).BranchId == "public-source-observed",
+                "Project encoding is not evaluated for source availability");
         });
-        Require(runtimeCases == 15, "15 focused runtime cases; 48 total named synthetic cases");
+        Require(runtimeCases == 18, "18 focused runtime cases; 51 total named synthetic cases");
         Retained(registry, directory);
-        Console.WriteLine("LP-02: 33 frozen oracle cases + 15 runtime cases passed (network-free).");
+        Console.WriteLine("LP-02: 33 frozen oracle cases + 18 runtime cases passed (network-free).");
     }
 
     private static void Retained(Registry registry, string directory)

@@ -18,9 +18,9 @@ The [compact corpus contract](tests/CORPUS.md) explains byte-locked generation, 
 temporary-root replay, exact parent comparison and the **narrowed PI-01 independence claim**.
 Every `tests/fixtures/...` path below is a preserved **logical materialized path**, not a
 required checked-in tree. Historical contracts remain raw seeds under `tests/corpus/seeds/`,
-with the explicitly reviewed LP-01 contract correction documented in `tests/CORPUS.md`.
-The 868 row scenarios and two foundation scenarios are unchanged; only the 25 approved
-LP-01 expected results change from escalation to deterministic package-declaration findings.
+with the reviewed LP-01 declaration and LP-02 public-availability corrections documented
+in `tests/CORPUS.md`. The 868 row scenarios and two foundation scenarios and all
+input bytes are preserved; only the named row-specific expected-result deltas are allowed.
 
 The full 112-row
 normative rubric and JSON crosswalk/basis are copied byte-for-byte from
@@ -32,7 +32,7 @@ the canonical runtime's `data/provenance.json`. The loader checks both digests, 
 source version and all core scopes. Only the 60 `repository-wide` core rows
 enter the registry; the 52 component rows and the separate TA-08 extension
 are excluded. LP-01 through LP-10 have deterministic checked-byte
-handlers: `lp01-license-policy/1.0.0`, `lp02-public-source/1.0.0`,
+handlers: `lp01-license-policy/1.0.0`, `lp02-public-source/1.1.0`,
 `lp03-dependency-licenses/1.0.0`,
 `lp04-notice-coverage/1.0.0`,
 `lp05-license-expression/1.0.0`, `lp06-repository-url/1.0.0`,
@@ -287,8 +287,13 @@ It does not manufacture anonymous retrieval, full resolved closure,
 grant applicability, notice obligations or binary build mapping. See the shipping
 [inspection contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/evidence-inspection.md).
 The consumer registers the packet as supplemental evidence and preserves useful facts even
-when the deciding row remains unresolved. The existing LP-02 verified profile and LP-03/04/10
-admission/attribution boundaries are unchanged.
+when the deciding row remains unresolved. LP-02 1.1.0 verifies public availability
+at the package-declared exact revision using an anonymous capture and checked nonempty
+root-bound archive, without a project/MSBuild relevance gate. The declaration supplies
+the association; independent source relevance, binary correspondence and branch/tag
+membership are not established. The eleven-row helper creates the observation from its
+existing single successful anonymous download, never from a local import alone.
+LP-03/04/10 admission/attribution boundaries are unchanged.
 
 `dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj -- breadth`
 runs the unchanged LP-04 frozen matrix plus ordinary NuGet OPC/directory regressions and checked
@@ -311,8 +316,10 @@ replays do not depend on the checkout location.
 LP-02 establishes only qualified public source availability at the exact
 package-declared revision. Its offline handler binds the package identity,
 GitHub HTTPS repository and exact commit to a machine-generated anonymous
-codeload receipt, retained archive, and digests of a library project marker
-and implementation file. It does **not** establish that the published
+codeload receipt and nonempty root-bound retained archive. Optional supplemental
+file digests are checked, not evaluated for relevance. Source paths admit interior
+ASCII spaces using the existing inspection predicate, not leading/trailing
+spaces or traversal. It does **not** establish that the published
 binaries were built from that revision, repository ownership, complete build
 closure, reproducibility or readiness. Codeload can serve fork-network commit
 objects through the declared repository URL, so successful retrieval also
@@ -322,8 +329,8 @@ and unsupported observations remain unresolved (`not tested`), never
 closed-source or a gap. The narrowly scoped, separate `acquire-lp02`
 command disables application credentials, cookies, proxies, redirects and
 decompression; replay never retrieves anything. The full contract,
-acquisition procedure, schema, numerical limits, 33 frozen oracle cases,
-15 focused runtime cases (48 total named synthetic cases) and two opt-in retained escalations are in
+acquisition procedure, schema, numerical limits, 33 oracle cases,
+18 focused runtime cases (51 total named synthetic cases) and two opt-in retained escalations are in
 [the retained LP-02 contract](tests/corpus/seeds/lp02__README.md).
 The accepted base has no readiness skill acquisition infrastructure; this
 implementation reuses the existing checked-input/digest/replay and bounded
