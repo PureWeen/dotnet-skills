@@ -131,6 +131,11 @@ internal static class Lp01BoundaryChecks
             var result = Resolve(package, owner, checkedGrant, extraRoles);
             if (result.BranchId != branch)
                 throw new InvalidDataException($"LP-01 {label}: expected {branch}, got {result.BranchId}.");
+            if (branch == "approved-non-copyleft" &&
+                (result.Decision != "deterministic" || string.IsNullOrWhiteSpace(result.Finding) ||
+                 result.MissingFact is not null || result.RequiredInput is not null ||
+                 result.NextCategory is not null))
+                throw new InvalidDataException($"LP-01 {label}: approved package declarations must resolve without owner evidence.");
             checks++;
         }
 
@@ -295,6 +300,7 @@ internal static class Lp01BoundaryChecks
         }
 
         var cp437 = Encoding.GetEncoding(437);
+        Expect("approved declaration without owner evidence", "approved-non-copyleft", Package(source));
         Expect("valid CP437 entry", "approved-non-copyleft",
             Package(source, cp437, ("Stra\u00dfe.txt", "a"u8.ToArray())));
         Expect("CP437 casefold alias", "unsafe-package", Package(source, cp437,

@@ -14,6 +14,31 @@ import tempfile
 HERE = Path(__file__).resolve().parent
 STORE = HERE / "corpus"
 ACCEPTED = "9bba9b9c0afff93dd003f6b14d34b82292a2f8a7"
+LP01_APPROVED_BEFORE = {
+    "decision": "escalated",
+    "evidence_contract": (
+        "Checked package SPDX expression: all alternatives OSI-approved by SPDX 3.27.0 "
+        "and non-copyleft under pinned policy 1.0.0; owner grant and release/source scope not established."),
+    "finding": None,
+    "missing_fact": (
+        "An OSI-approved, non-copyleft package declaration does not establish an owner-authorized "
+        "repository license grant or correspondence to the checked release/source scope."),
+    "required_input": "owner-license-grant-and-release-scope",
+    "next_category": "package-owner",
+}
+LP01_APPROVED_VERIFIED = {
+    "decision": "deterministic",
+    "evidence_contract": (
+        "Checked package SPDX expression: every offered alternative is OSI-approved by SPDX 3.27.0 "
+        "and non-copyleft under pinned policy 1.0.0; classification is limited to this exact package declaration."),
+    "finding": (
+        "The checked package SPDX license expression is OSI-approved and non-copyleft under "
+        "the pinned policy for every offered alternative. This classifies the exact package "
+        "declaration; it does not legally interpret other repository files or other releases."),
+    "missing_fact": None,
+    "required_input": None,
+    "next_category": None,
+}
 
 
 def check(condition, message):
@@ -23,6 +48,37 @@ def check(condition, message):
 
 def sha(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def check_parent_file(name, before, after):
+    """Admit only the reviewed lp01-approved-non-copyleft-verified delta."""
+    if before == after:
+        return
+    if name in ("lp01/cases.json", "lp01/acceptance.json"):
+        expected = json.loads(before)
+        changed = 0
+        for case in expected["cases"]:
+            result = case["expected"]
+            if result["branch_id"] != "approved-non-copyleft":
+                continue
+            check(result["row_id"] == case["row_id"] == "LP-01" and
+                  result["resolver_id"] == "lp01-license-policy" and
+                  result["resolver_version"] == "1.0.0" and
+                  all(result[key] == value for key, value in LP01_APPROVED_BEFORE.items()),
+                  "Unexpected historical LP-01 approved result")
+            result.update(LP01_APPROVED_VERIFIED)
+            changed += 1
+        check(changed == (23 if name == "lp01/cases.json" else 2),
+              "Unexpected historical LP-01 approved inventory")
+        reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
+        check(after == reviewed, "Unreviewed LP-01 change outside approved declaration delta: " + name)
+        return
+    if name == "lp01/README.md":
+        check(sha(before) == "93eaab58da17a9c14d687159edaa84ad134406c1e5b38ab78e523fa89a8fe039" and
+              sha(after) == "fb806cc03a44028f73974aead8e6c2630d289611b6a959369908e832da8c1ef2",
+              "Unreviewed LP-01 contract change")
+        return
+    check(False, "Accepted parent mismatch: " + name)
 
 
 def canonical(value):
@@ -205,9 +261,10 @@ def main():
             for name, length, digest in lock["files"]:
                 old = subprocess.check_output(["git", "show", ACCEPTED +
                                                ":eng/blazor-package-resolver/tests/fixtures/" + name])
-                check(old == (fixtures / name).read_bytes(), "Accepted parent mismatch: " + name)
+                check_parent_file(name, old, (fixtures / name).read_bytes())
         print("Corpus verified:", len(lock["files"]), "exact paths;",
-              sum(pin[1] for pin in lock["files"]), "bytes; locked canonical outputs unchanged.")
+              sum(pin[1] for pin in lock["files"]), "bytes; locked canonical outputs verified"
+              " (only the named LP-01 approved declaration delta is allowed against parent).")
     else:
         manifest = fixtures / ("cases.json" if args.row == "foundation" else args.row + "/cases.json")
         subprocess.run(["dotnet", "run", "--no-restore", "--project",

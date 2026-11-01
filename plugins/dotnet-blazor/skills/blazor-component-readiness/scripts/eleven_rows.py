@@ -18,8 +18,9 @@ STATUSES = {"V": "verified", "G": "gap", "N": "not tested",
 GROUPS = {
     "LP-01": (
         ("owner-evidence-accepted", "V", ""),
+        ("approved-non-copyleft", "V", ""),
         ("copyleft weak-copyleft non-osi", "G", "Correct the authoritative offered license or grant."),
-        ("approved-non-copyleft file-declared file-unverified missing-license", "O",
+        ("file-declared file-unverified missing-license", "O",
          "Supply the owner-authorized complete repository and release-scoped license grant."),
         ("owner-acceptance-missing", "O", "Supply explicit acceptance of owner-authority prevalidation."),
         ("owner-record-conflict grant-contradiction conflicting-declarations", "O",
@@ -187,7 +188,7 @@ def excerpt(value, pointer, maximum=1800):
     return f"{len(value)} items retained at {pointer}; complete values exceed the row display budget"
 
 
-def partial_facts(row, facts, acquisition):
+def partial_facts(row, facts, acquisition, branch=None):
     root = facts["package"]
     source = facts["source"]
     if row == "LP-01":
@@ -198,10 +199,12 @@ def partial_facts(row, facts, acquisition):
                 item["literal_heading"] = original["utf8_text"].splitlines()[0]
         license_matches = [item["package_entry"] for item in facts["exact_source_matches"]
                            if item["package_entry"] in {c["path"] for c in candidates}]
+        limitation = (" Declarations and named files do not establish owner authority or a release-scoped grant."
+                      if MAPPING.get((row, branch), ("O", ""))[0] != "V" else "")
         return (f"Observed package license declarations {literal(root['license_declarations'])}; "
                 f"named text candidates {excerpt(candidates, 'observations#/package/license_or_notice_candidates', 1000)}; "
-                f"license/notice entries with exact source-byte matches {excerpt(license_matches, 'observations#/exact_source_matches', 400)}. "
-                "Declarations and named files do not establish owner authority or a release-scoped grant.")
+                f"license/notice entries with exact source-byte matches {excerpt(license_matches, 'observations#/exact_source_matches', 400)}."
+                + limitation)
     if row == "LP-02":
         if source is None:
             return "No admitted retained source archive; actual acquisition and eligibility limits are retained in acquisition.json."
@@ -272,7 +275,7 @@ def decisions(results, facts, acquisition, ids):
         code, action = MAPPING[row, value["branch_id"]]
         fact = value["finding"] if code in "VGA" else value["missing_fact"]
         observation = f"{row} [{value['branch_id']}]: {fact}"
-        partial = partial_facts(row, facts, acquisition)
+        partial = partial_facts(row, facts, acquisition, value["branch_id"])
         if partial:
             observation += " " + partial
         if facts["diagnostics"] and row in ("LP-01", "LP-02", "LP-03", "LP-04", "LP-10"):

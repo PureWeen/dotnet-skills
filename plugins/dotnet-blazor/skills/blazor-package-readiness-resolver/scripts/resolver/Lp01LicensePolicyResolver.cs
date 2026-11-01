@@ -16,7 +16,7 @@ public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
     private const string AcceptedContract =
         "Checked package/nuspec, SPDX 3.27.0, policy 1.0.0, canonical prevalidated owner record and one separately checked, caller-accepted complete grant per distinct normalized SPDX license ID bind exactly; owner authority, release correspondence and legal grant sufficiency are trusted at the input boundary, not cryptographically proven or legally interpreted by resolver.";
     private const string PackageContract =
-        "Checked package SPDX expression: all alternatives OSI-approved by SPDX 3.27.0 and non-copyleft under pinned policy 1.0.0; owner grant and release/source scope not established.";
+        "Checked package SPDX expression: every offered alternative is OSI-approved by SPDX 3.27.0 and non-copyleft under pinned policy 1.0.0; classification is limited to this exact package declaration.";
     private static readonly UTF8Encoding Utf8 = new(false, true);
     private static readonly Regex Hex = new(@"\A[a-f0-9]{64}\z", RegexOptions.CultureInvariant);
     private static readonly Regex Commit = new(@"\A(?:[a-f0-9]{40}|[a-f0-9]{64})\z", RegexOptions.CultureInvariant);
@@ -595,10 +595,12 @@ public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
             else if (licenseFilePath is not null && branch == "approved-non-copyleft")
                 references.Add("package:" + licenseFilePath);
         }
-        var deterministic = branch is "owner-evidence-accepted" or "copyleft" or
+        var deterministic = branch is "approved-non-copyleft" or "owner-evidence-accepted" or "copyleft" or
             "weak-copyleft" or "non-osi";
         var finding = branch switch
         {
+            "approved-non-copyleft" =>
+                "The checked package SPDX license expression is OSI-approved and non-copyleft under the pinned policy for every offered alternative. This classifies the exact package declaration; it does not legally interpret other repository files or other releases.",
             "owner-evidence-accepted" =>
                 "The checked package SPDX expression is OSI-approved and non-copyleft under pinned policy; every offered license ID has a checked grant binding matching the prevalidated owner/repository record. Caller-asserted authority, grant sufficiency and release scope were accepted at the input boundary, NOT cryptographically established or legally interpreted by this resolver.",
             "copyleft" or "weak-copyleft" or "non-osi" =>
@@ -607,11 +609,8 @@ public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
         };
         var (missing, required, next) = branch switch
         {
-            "owner-evidence-accepted" or "copyleft" or "weak-copyleft" or "non-osi" =>
+            "approved-non-copyleft" or "owner-evidence-accepted" or "copyleft" or "weak-copyleft" or "non-osi" =>
                 ((string?)null, (string?)null, (string?)null),
-            "approved-non-copyleft" => (
-                "An OSI-approved, non-copyleft package declaration does not establish an owner-authorized repository license grant or correspondence to the checked release/source scope.",
-                "owner-license-grant-and-release-scope", "package-owner"),
             "file-declared" => (
                 "The packaged SPDX-License-Identifier classifies MIT but is not license grant text; owner authorization and repository/release scope are also missing.",
                 "complete-owner-license-grant-and-release-scope", "package-owner"),

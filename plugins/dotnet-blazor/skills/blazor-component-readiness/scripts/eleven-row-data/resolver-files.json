@@ -9,7 +9,7 @@
   "resolver/data/rubric.json": "0153ba6982fd1102df9193d3bc2b1957bac1e3478bd0d6cef5a78b0e6daa31cd",
   "resolver/Lp01ArchiveIntegrity.cs": "75a46337230c7388ef57e76ae3160f37cee989b9977fd7b3b1b90a6ce1e19744",
   "resolver/Lp01CaseFold.cs": "d1504000e32c37bd0947da2e7936913e6fb995a83cc33140620f0011609db529",
-  "resolver/Lp01LicensePolicyResolver.cs": "5377bdce6c7fd6e7ce5a134f21bf958623ffdc07cb16355b28749ea6fd9c8b30",
+  "resolver/Lp01LicensePolicyResolver.cs": "a86969b0e42476dd2946c2fc2633d4f2643305ee1cabc5f6e54bc54e7f6d2b91",
   "resolver/Lp01SpdxExpression.cs": "743afcfe357ecf9e1781d1cd8f2bb445f6ae34d33abd3bc61e998639ca3d6d8d",
   "resolver/Lp02PublicSourceResolver.cs": "4c88c6c26b8e674c26a45ab3f90cfd11faf28e16567313a2be51e1aaccfa6016",
   "resolver/Lp02SourceAcquisition.cs": "8e3984d7252083f00652f49872ef777156554b02bd6683267955a8bb60c1b533",

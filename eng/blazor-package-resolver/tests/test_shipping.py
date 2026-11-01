@@ -128,6 +128,12 @@ def autofill_checks(plugin, work, setup):
     assessment = json.loads(Path(receipt["assessment"]).read_bytes())
     states = {row["id"]: row for row in assessment["rows"]}
     assigned = ["LP-%02d" % number for number in range(1, 11)] + ["PI-01"]
+    lp01 = states["LP-01"]
+    if (lp01["status"] != "verified" or lp01["owner_action"] is not None or
+            lp01["assessment_follow_up"] is not None or
+            "LP-01 [approved-non-copyleft]" not in lp01["observation"] or
+            "Declarations and named files do not establish owner authority" in lp01["observation"]):
+        raise ValueError("An approved LP-01 package declaration must be verified without owner follow-up.")
     if (len(states) != 60 or any(states[row]["status"] is None for row in assigned) or
             any(row["status"] is not None for key, row in states.items() if key not in assigned) or
             assessment["completion_state"] != "incomplete" or

@@ -71,28 +71,31 @@ choices for Phase B, not an assertion that the current reader already
 enforces them. These decisions are bounded to the pinned catalog and local
 policy, not legal opinions.
 
-**Package metadata alone cannot resolve the repository-wide LP-01
-obligation.** Every allowlisted expression without an accepted owner record,
-including both retained MIT packages, escalates with applicable scope,
-explicit missing owner-authorized license grant and release/source
-correspondence, and package policy classification in the evidence contract.
+**An OSI-approved, non-copyleft package expression resolves LP-01 for the
+checked package declaration.** Every allowlisted expression without an owner
+record, including both retained MIT packages, yields an applicable deterministic
+finding, mapped to `verified`, with no missing fact, required input or next category.
+The requirement does not impose an owner-authorized or release-scoped grant prerequisite.
 The absence of an owner record always uses the same
 `approved-non-copyleft` branch and evidence contract for eligible declarations,
 including the owner-path `no-record` control and both retained packages.
 Case IDs, input paths, package identities and unrelated repository metadata
-must not select a different no-record result. The eligible package declaration
-is a classification, never a repository-wide positive conclusion.
-Neither a populated expression nor a matching URL removes that missing fact.
+must not select a different no-record result. This affirmative classification
+is limited to the exact package declaration; it does not legally interpret
+other repository files or other releases or establish owner authority.
 Decisive negatives report only that an authoritative *package declaration*
 offers no acceptable alternative; they are not repository-wide conclusions.
+All other branches, including file-only declarations and supplied owner/grant
+validation, retain their existing decisions.
 
 ## Prevalidated owner evidence contract (v1)
 
 The required checked roles are `package`, `policy`, and `corpus`. An optional
 single `owner-record` and exactly one `grant-<lowercase-license-id>` role
-per distinct license ID in the normalized owner expression permit a positive
-branch under **the same resolver version**; absence of the owner record
-escalates. A secondary `owner-record-conflict` always conflicts rather than
+per distinct license ID in the normalized owner expression permit the separate
+`owner-evidence-accepted` branch under **the same resolver version**; absence
+of the owner record yields `approved-non-copyleft` for an eligible expression.
+A secondary `owner-record-conflict` always conflicts rather than
 winning by input order. Unknown, extra, duplicate, or missing roles are
 rejected or escalated as appropriate **before conversion to a role dictionary**.
 The foundation hashes each checked input, with normalized relative paths and
@@ -243,7 +246,7 @@ safe bounded ZIP and SPDX parser; the Python oracle is not production code.
 
 ## Retained package identities (local opt-in)
 
-| Vendor | SHA-256 | Nuspec SHA-256 | Package policy evidence (LP-01 escalated) |
+| Vendor | SHA-256 | Nuspec SHA-256 | Package policy evidence (LP-01 verified declaration) |
 |---|---|---|---|
 | Syncfusion `Syncfusion.Blazor.Toolkit` 2.0.1 | `87cf6795afe5106c9d6c4db5e63e7f0ef0c741a850243557b3bbab1854c6121d` | `e9a55efdfc3385c1df49206839689f3f01c0bf5731b6130f05a601632a77acb7` | MIT is OSI-approved and on local non-copyleft allowlist |
 | Infragistics `IgniteUI.Blazor.Lite` 0.3.0 | `e9565c7c7093ff3798b62abdc2e67fe9bc438807eb0fa9b9b43f4573f9df0e63` | `8399959e38391faa853f874f6d4c2d10a2724f3e978af5fc79fbd46a7a74833c` | MIT is OSI-approved and on local non-copyleft allowlist |
@@ -255,11 +258,11 @@ dependency coverage belongs to LP-03. `retained-inputs.json` pins the
 archives, nuspec and notice entry identities, without storing proprietary
 bytes or absolute workstation paths in Git. Its source hints are not
 identities. The component baseline report is not an LP-01 package verdict.
-`acceptance.json` still freezes **two applicable escalations** with independent
-MIT classification in `evidence_contract` and an explicit missing owner
-grant and release/source correspondence. An owner-authorized license grant
-and release-to-repository scope evidence are needed before asserting the
-full normative row. A future policy decision must review all remaining
+`acceptance.json` freezes **two applicable deterministic findings** with independent
+MIT classification in `evidence_contract`, nonempty declaration-scoped findings,
+and null `missing_fact`, `required_input` and `next_category`. They map to LP-01
+`verified` without owner grant or release-to-repository scope evidence; they
+do not establish owner authority or classify other releases. A future policy decision must review all remaining
 OSI IDs and exception interactions explicitly rather than loosening
 fail-closed handling by inference.
 

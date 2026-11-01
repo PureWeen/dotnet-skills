@@ -63,7 +63,7 @@ product findings.
 
 | Row | Useful observation | Still not established |
 |---|---|---|
-| LP-01 | Exact package license declaration and named retained text. | Owner-authorized grant and release/source scope. |
+| LP-01 | Exact package license declaration and named retained text. The deciding resolver verifies an OSI-approved, non-copyleft expression for every offered alternative under the pinned policy. | Inspection alone does not classify the license. The affirmative resolver finding is declaration-scoped, not a legal interpretation of other files/releases or proof of owner authority; owner grant and release/source scope are not prerequisites for `approved-non-copyleft`. |
 | LP-02 | Retained source archive, project/SDK/declaration facts and exact text matches. | Anonymous public retrieval, remote repository truth or compiled build correspondence. A matching archive prefix is only a local path comparison. |
 | LP-03 | Supplied exact dependency versions and their literal licenses/ranges. | Complete resolved direct/transitive closure or applicable whole-version grants. A static minimum-version graph is not an admitted full resolved export. |
 | LP-04 | Named license/notice entries, asset hashes and exact source matches. | Third-party attribution, complete obligations or exhaustive notice coverage. |

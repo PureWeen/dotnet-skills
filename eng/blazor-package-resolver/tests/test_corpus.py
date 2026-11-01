@@ -19,6 +19,43 @@ def main():
                  "Changed accepted replay inventory")
     corpus.check(all(corpus.sha((fixtures / name).read_bytes()) == digest
                      for name, _, digest in lock["files"]), "Byte pins changed")
+    current = json.loads((fixtures / "lp01/cases.json").read_bytes())
+    historical = copy.deepcopy(current)
+    for case in historical["cases"]:
+        if case["expected"]["branch_id"] == "approved-non-copyleft":
+            case["expected"].update(corpus.LP01_APPROVED_BEFORE)
+    def encoded(value):
+        return (json.dumps(value, indent=2, ensure_ascii=True) + "\n").encode()
+    before = encoded(historical)
+    corpus.check_parent_file("lp01/cases.json", before, encoded(current))
+    approved = next(i for i, case in enumerate(current["cases"])
+                    if case["expected"]["branch_id"] == "approved-non-copyleft")
+    other = next(i for i, case in enumerate(current["cases"])
+                 if case["expected"]["branch_id"] == "file-declared")
+    rejected_changes = (
+        ("other result", lambda suite: suite["cases"][other]["expected"].update(finding="unreviewed")),
+        ("other branch", lambda suite: suite["cases"][other]["expected"].update(branch_id="approved-non-copyleft")),
+        ("input bytes", lambda suite: suite["cases"][approved]["inputs"][0].update(sha256="0" * 64)),
+        ("approved evidence", lambda suite: suite["cases"][approved]["expected"].update(evidence_references=[])),
+        ("approved finding", lambda suite: suite["cases"][approved]["expected"].update(finding="unreviewed")),
+    )
+    for label, change in rejected_changes:
+        changed = copy.deepcopy(current)
+        change(changed)
+        try:
+            corpus.check_parent_file("lp01/cases.json", before, encoded(changed))
+        except ValueError:
+            pass
+        else:
+            raise ValueError("Parent preservation accepted " + label)
+    for name in ("lp02/cases.json", "lp01/README.md", "lp01/packages/mit.nupkg"):
+        try:
+            corpus.check_parent_file(name, b"historical", b"unreviewed")
+        except ValueError:
+            pass
+        else:
+            raise ValueError("Parent preservation accepted unreviewed bytes: " + name)
+    print("Named LP-01 parent allowance accepted; eight unreviewed result/input/contract changes rejected.")
     key = (fixtures / "pi01/template/public.snk").read_bytes()
     corpus.check(len(key) == 276 and key[:4] == b"\x06\x02\x00\x00" and key[8:12] == b"RSA1" and
                  struct.unpack_from("<I", key, 12)[0] == 2048, "Control key is not public-only")
@@ -105,7 +142,8 @@ def main():
             pass
         else:
             raise ValueError("Existing output root was overwritten")
-    print("16 fixed materializer rejection/overwrite checks passed; 1,563 paths / 6,007,501 bytes preserved.")
+    print("16 fixed materializer rejection/overwrite checks passed;",
+          len(lock["files"]), "paths /", sum(pin[1] for pin in lock["files"]), "locked bytes.")
 
 
 if __name__ == "__main__":

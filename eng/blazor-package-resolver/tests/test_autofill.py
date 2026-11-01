@@ -87,7 +87,7 @@ class MappingTests(unittest.TestCase):
             selected = {**defaults, value["row_id"]: value}
             text = value["finding"] if value["decision"] == "deterministic" else value["missing_fact"]
             observation = f"{value['row_id']} [{value['branch_id']}]: {text}"
-            partial = rows.partial_facts(value["row_id"], facts, {})
+            partial = rows.partial_facts(value["row_id"], facts, {}, value["branch_id"])
             if partial:
                 observation += " " + partial
             if not display_safe(observation):
@@ -98,6 +98,13 @@ class MappingTests(unittest.TestCase):
             row = next(item for item in output["rows"] if item["id"] == value["row_id"])
             self.assertEqual(row["status"], rows.STATUSES[status])
             self.assertEqual(row["owner_action"] is not None, status == "O")
+            if value["row_id"] == "LP-01":
+                limitation = "Declarations and named files do not establish owner authority or a release-scoped grant."
+                self.assertEqual(limitation in row["observation"], status != "V")
+                if value["branch_id"] == "approved-non-copyleft":
+                    self.assertEqual(row["status"], "verified")
+                    self.assertIsNone(row["owner_action"])
+                    self.assertIsNone(row["assessment_follow_up"])
             self.assertEqual(row["not_applicable_rationale"] is not None, status == "A")
             self.assertIn(text, row["observation"])
             self.assertEqual(output["completion_state"], "incomplete")
@@ -139,6 +146,12 @@ class MappingTests(unittest.TestCase):
         self.assertIn("MIT License", license_observation)
         self.assertIn('matches ["LICENSE.txt"]', license_observation)
         self.assertNotIn("Literal text, not owner approval.", license_observation)
+        for branch in ("approved-non-copyleft", "owner-evidence-accepted"):
+            verified_observation = rows.partial_facts("LP-01", facts, {}, branch)
+            self.assertIn('"value":"MIT"', verified_observation)
+            self.assertIn("MIT License", verified_observation)
+            self.assertIn('matches ["LICENSE.txt"]', verified_observation)
+            self.assertNotIn("Declarations and named files do not establish owner authority", verified_observation)
         self.assertIn(repository["url"], rows.partial_facts("LP-02", facts, {}))
         notice = rows.partial_facts("LP-04", facts, {})
         for expected in ("3 files across 2 of 2 supplied dependency versions", "1 source files",

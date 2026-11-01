@@ -1072,10 +1072,11 @@ def disposition(branch):
             "interpreted by this resolver."
         ), None, None, None
     if branch == "approved-non-copyleft":
-        return "escalated", None, (
-            "An OSI-approved, non-copyleft package declaration does not establish an owner-authorized "
-            "repository license grant or correspondence to the checked release/source scope."
-        ), "owner-license-grant-and-release-scope", "package-owner"
+        return "deterministic", (
+            "The checked package SPDX license expression is OSI-approved and non-copyleft under "
+            "the pinned policy for every offered alternative. This classifies the exact package "
+            "declaration; it does not legally interpret other repository files or other releases."
+        ), None, None, None
     if branch == "file-declared":
         return "escalated", None, (
             "The packaged SPDX-License-Identifier classifies MIT but is not license grant text; "
@@ -1121,8 +1122,8 @@ def disposition(branch):
 def result(branch, inputs, reference, contract=None):
     decision, finding, missing, required, owner = disposition(branch)
     if contract is None and branch == "approved-non-copyleft":
-        contract = ("Checked package SPDX expression: all alternatives OSI-approved by SPDX 3.27.0 "
-                    "and non-copyleft under pinned policy 1.0.0; owner grant and release/source scope not established.")
+        contract = ("Checked package SPDX expression: every offered alternative is OSI-approved by SPDX 3.27.0 "
+                    "and non-copyleft under pinned policy 1.0.0; classification is limited to this exact package declaration.")
     if contract is None and branch == "file-declared":
         contract = ("Checked LICENSE.txt contains only SPDX-License-Identifier: MIT; MIT is OSI-approved "
                     "and allowlisted non-copyleft, but the file supplies no actual license grant text.")
@@ -1425,7 +1426,7 @@ def main():
     by_id = {case["case_id"]: case for case in synthetic["cases"]}
     no_record = by_id["lp01-owner-no-record"]["expected"]
     require(no_record["branch_id"] == "approved-non-copyleft" and
-            no_record["decision"] == "escalated" and
+            no_record["decision"] == "deterministic" and
             no_record["evidence_contract"] == by_id["lp01-mit"]["expected"]["evidence_contract"] ==
             acceptance["cases"][0]["expected"]["evidence_contract"] ==
             acceptance["cases"][1]["expected"]["evidence_contract"],
@@ -1451,7 +1452,7 @@ def main():
         at = by_id[f"lp01-{name}-at-limit"]["expected"]
         over = by_id[f"lp01-{name}-over-limit"]["expected"]
         require(at["branch_id"] == "approved-non-copyleft" and
-                at["decision"] == "escalated" and
+                at["decision"] == "deterministic" and
                 over["branch_id"] == "expression-limit" and
                 over["decision"] == "escalated",
                 f"LP-01 expression resource threshold changed: {name}")
@@ -1488,7 +1489,14 @@ def main():
                 "LP-01 finding/decision mismatch.")
         require(all(expected[key] is not None for key in ("missing_fact", "required_input", "next_category")) ==
                 (expected["decision"] == "escalated"), "LP-01 escalation contract mismatch.")
-        if expected["branch_id"] in ("approved-non-copyleft", "file-declared"):
+        if expected["branch_id"] == "approved-non-copyleft":
+            require(expected["decision"] == "deterministic" and
+                    expected["applicability"] == "applicable" and
+                    expected["finding"] and "exact package declaration" in expected["finding"] and
+                    expected["evidence_contract"] and
+                    all(expected[key] is None for key in ("missing_fact", "required_input", "next_category")),
+                    f"Approved package declaration did not resolve LP-01: {case['case_id']}")
+        if expected["branch_id"] == "file-declared":
             require(expected["decision"] == "escalated" and expected["applicability"] == "applicable" and
                     expected["finding"] is None and expected["evidence_contract"] and
                     expected["next_category"] == "package-owner" and
@@ -1525,7 +1533,7 @@ def main():
                 ((case["expected"]["finding"] is None) ==
                  (case["expected"]["decision"] == "escalated"))
                 for case in owner_cases) and
-            all(case["expected"]["decision"] == "escalated" and
+            all(case["expected"]["decision"] == "deterministic" and
                 not any(item["role"] == "owner-record" for item in case["inputs"])
                 for case in acceptance["cases"]),
             "Owner-evidence or retained authority boundary changed.")

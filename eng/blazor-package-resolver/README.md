@@ -17,8 +17,10 @@ prerequisite are unchanged.
 The [compact corpus contract](tests/CORPUS.md) explains byte-locked generation, automatic
 temporary-root replay, exact parent comparison and the **narrowed PI-01 independence claim**.
 Every `tests/fixtures/...` path below is a preserved **logical materialized path**, not a
-required checked-in tree. Historical contracts remain exact raw seeds under `tests/corpus/seeds/`.
-The 868 row scenarios, two foundation scenarios and complete expected outputs are unchanged.
+required checked-in tree. Historical contracts remain raw seeds under `tests/corpus/seeds/`,
+with the explicitly reviewed LP-01 contract correction documented in `tests/CORPUS.md`.
+The 868 row scenarios and two foundation scenarios are unchanged; only the 25 approved
+LP-01 expected results change from escalation to deterministic package-declaration findings.
 
 The full 112-row
 normative rubric and JSON crosswalk/basis are copied byte-for-byte from
@@ -46,10 +48,12 @@ freeze is at `tests/fixtures/lp01/README.md`. It pins SPDX license-list
 198 synthetic cases/197 archives, six separately frozen pre-dispatch input
 rejections, a prevalidated caller-accepted owner record with a separately
 checked grant per distinct normalized SPDX license ID, and two opt-in retained-package MIT
-classifications that **escalate** pending owner grant and release/source
-scope evidence. The production resolver replays those exact expectations;
-an eligible package expression without an owner record is never a
-repository-wide license verdict. Coverage is eleven implemented and 49 TBD.
+classifications that yield **deterministic** findings mapped to LP-01 `verified`.
+An eligible package expression needs no owner grant or release/source scope evidence
+under this requirement. The production resolver replays those exact expectations;
+the finding classifies the exact package declaration, not other repository files
+or other releases, and does not establish owner authority.
+Coverage is eleven implemented and 49 TBD.
 Run `python eng\blazor-package-resolver\tests\lp01_expectations.py`
 to check the frozen oracle and policy bytes independently of production.
 
@@ -208,17 +212,21 @@ and the next physical boundary; a CRC equal to the descriptor signature does
 not choose the signed form by itself.
 Policy 1.0.0 and SPDX 3.27.0 are checked input bytes pinned independently
 by their SHA-256 identities, not downloaded or inferred from LP-05.
-Only an eligible package declaration with a canonical, checked owner record
-and complete, separately checked grants for every normalized license ID
-can reach the positive branch. Caller prevalidation accepts owner authority,
+An eligible package declaration without an owner record reaches the deterministic
+`approved-non-copyleft` branch and maps to LP-01 `verified`, with no owner action or
+assessment follow-up. Every offered alternative must be OSI-approved and non-copyleft
+under the pinned policy. The separate `owner-evidence-accepted` branch still requires
+a canonical, checked owner record and complete, separately checked grants for every
+normalized license ID. For that branch, caller prevalidation accepts owner authority,
 grant sufficiency and release/source correspondence; the resolver does not
 cryptographically establish authority, inspect the repository or legally
 interpret grant text. The 198-case replay, six pre-dispatch loader rejections,
 Unicode/encoding boundaries and opt-in retained replays run in ResolverChecks.
 
 The consumer's optional `autofill-eleven.py` orchestrates acquisition and the existing typed
-report producers. The resolver remains offline; apart from the LP-04 standard-packaging fix
-described below, its row classifiers are unchanged. Its fixed 179-branch report
+report producers. The resolver remains offline; apart from the reviewed LP-01 approved
+declaration correction and the LP-04 standard-packaging fix described below, its row
+classifiers are unchanged. Its fixed 179-branch report
 mapping is tested against every frozen result, including deterministic/escalated boundaries.
 Run `python eng\blazor-package-resolver\tests\test_autofill.py` for offline collector/mapping
 tests and `python eng\blazor-package-resolver\tests\test_shipping.py --autofill` for the

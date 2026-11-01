@@ -210,7 +210,7 @@ if (lp01Syncfusion is not null && lp01Infragistics is not null)
         Check(retained.RootElement.GetProperty("cases").GetArrayLength() == 2,
             "Both exact LP-01 retained cases replay");
         NoClaims(retained.RootElement);
-        Console.WriteLine($"LP-01 retained replay: 2 escalations, SHA-256 {Catalog.Digest(retainedOutput)}.");
+        Console.WriteLine($"LP-01 retained replay: 2 deterministic package-declaration findings, SHA-256 {Catalog.Digest(retainedOutput)}.");
     }
     finally { Directory.Delete(staging, true); }
 }

@@ -95,6 +95,13 @@ version, decision, applicability or input binding fails closed pending mapping r
 an escalation can only yield `not tested` or `owner evidence required`. Exit zero or the
 `decision` token alone never chooses status. Partial inspection facts enrich the observation
 without upgrading the status. Full result contracts and exact byte pointers remain retained.
+LP-01 `approved-non-copyleft` maps to `verified` with null `owner_action` and
+`assessment_follow_up`: every offered alternative in the exact package SPDX declaration
+is OSI-approved and non-copyleft under the pinned policy. No owner-authorized or
+release-scoped grant is required for this branch. Its observation retains declarations,
+named candidates and exact source-byte matches without an owner-authority missing-fact
+sentence. File-only and missing-license branches still require owner evidence; the separate
+`owner-evidence-accepted` branch and all other branch statuses are unchanged.
 Observations preserve literal small license texts/headings and repository declarations,
 root/dependency/source notice-candidate counts, shipped-script match counts and unmatched
 stylesheet entries, plus per-PE declared assembly metadata and signing fields. Candidate text
