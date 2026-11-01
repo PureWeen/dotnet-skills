@@ -139,7 +139,7 @@ def lp03_installed_checks(plugin, work):
                 check.state, check.assessment = rebound["state"], rebound["assessment"]
                 tool["continue_command"](check, root)
                 legacy = dict(state)
-                legacy["producer"] = "eleven-row-handoff/1.2.0"
+                legacy["producer"] = "eleven-row-handoff/1.3.0"
                 old = root / "legacy-state.json"
                 old.write_bytes(encoded(legacy))
                 try:
@@ -166,6 +166,51 @@ def run(command, cwd, env=None, code=0):
         raise ValueError(f"Unexpected exit {result.returncode} for {command[0:2]}:\n" +
                          result.stderr.decode(errors="replace") + result.stdout.decode(errors="replace"))
     return result.stdout
+
+
+def lp04_installed_checks(plugin, work):
+    from oracles.lp04_dlite_expectations import inventory, result
+    helper = plugin / "skills/blazor-package-readiness-resolver/scripts/run-resolver.py"
+    loaded = runpy.run_path(str(plugin / "skills/blazor-component-readiness/scripts/autofill-eleven.py"),
+                            run_name="lp04_installed_test")
+    cases, expected = [], {}
+    fixtures = (
+        ("empty", [], [], "no-supported-layout-assets", False),
+        ("assets", [("staticwebassets/a.js", b"x"), ("contentFiles/any/net8.0/wwwroot/a.css", b"y"),
+                    ("WWWROOT/a.JS.MAP", b"{}"), ("wwwroot/lib/empty.min.cjs", b"")],
+         [], "origin-review-missing", False),
+        ("outside", [], ["tools/x.js"], "surface-unsupported", False),
+        ("compressed", [], ["staticwebassets/x.css.br"], "surface-unsupported", False),
+        ("legacy", [], [], "legacy-protocol", True),
+    )
+    for label, files, unsupported, branch, legacy in fixtures:
+        path = work / (label + ".nupkg")
+        with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_STORED) as archive:
+            archive.writestr("Sample.nuspec", "<package><metadata><id>Sample</id><version>1.0.0</version></metadata></package>")
+            for name, raw in files:
+                archive.writestr(name, raw)
+            for name in unsupported:
+                archive.writestr(name, b"x")
+        pins = [{"role": "package", "path": path.name, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}]
+        if legacy:
+            packet = work / "v1.json"
+            packet.write_bytes(b'{"protocol":"notice-coverage-v1"}')
+            pins.append({"role": "notice-coverage", "path": packet.name,
+                         "sha256": hashlib.sha256(packet.read_bytes()).hexdigest()})
+        cases.append({"case_id": label, "row_id": "LP-04", "inputs": pins})
+        expected[label] = result(branch, pins, None if legacy else inventory(files, unsupported))
+    request = work / "lp04-request.json"
+    request.write_text(json.dumps({"schema_version": 1, "cases": cases}), encoding="utf-8")
+    output = json.loads(run([sys.executable, "-I", str(helper), "resolve", str(request)], work))
+    for case in output["cases"]:
+        actual = case["result"]
+        loaded["checked_result"](actual, expected[case["case_id"]]["inputs"])
+        if actual != expected.pop(case["case_id"]):
+            raise ValueError("Installed LP-04 output differs from independent byte-construction facts.")
+    if expected:
+        raise ValueError("Installed LP-04 omitted a case.")
+    print("Installed LP-04: five complete independent expectations passed, including full inventory, "
+          "empty not-tested wording, unsupported roots/compressed variants and v1 refusal; no network/models.")
 
 
 def report_command(consumer):
@@ -320,8 +365,10 @@ def autofill_checks(plugin, work, setup):
             assessment["completion_state"] != "incomplete" or
             "Microsoft.NET.Sdk.Razor" not in states["LP-02"]["observation"] or
             "MIT" not in states["LP-03"]["observation"] or
-            "1 files across 1 of 1 supplied dependency versions" not in states["LP-04"]["observation"] or
-            "1 source files" not in states["LP-04"]["observation"] or
+            states["LP-04"]["status"] != "not tested" or
+            "No JS/CSS assets detected in the supported package layouts; other representations were not assessed."
+                not in states["LP-04"]["observation"] or
+            not states["LP-04"]["assessment_follow_up"] or
             "inspected signing fields" not in states["PI-01"]["observation"] or
             "build/assessment.targets" not in states["LP-10"]["observation"]):
         raise ValueError("Eleven-row autofill lost supported breadth or assigned outside its scope.")
@@ -738,8 +785,8 @@ def isolated_checks(plugin, work, setup):
 
 
 def main():
-    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"], ["--autofill"], ["--lp03"]):
-        raise ValueError("Supported options: --isolated, --launcher, --cert, --autofill, --lp03")
+    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"], ["--autofill"], ["--lp03"], ["--lp04"]):
+        raise ValueError("Supported options: --isolated, --launcher, --cert, --autofill, --lp03, --lp04")
     with tempfile.TemporaryDirectory(prefix="resolver-installed-") as work:
         work = Path(work)
         plugin = work / "plugin"
@@ -747,6 +794,9 @@ def main():
                         ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
         if sys.argv[1:] == ["--lp03"]:
             lp03_installed_checks(plugin, work)
+            return
+        if sys.argv[1:] == ["--lp04"]:
+            lp04_installed_checks(plugin, work)
             return
         if sys.argv[1:] == ["--cert"]:
             certificate_launcher_checks(plugin, work)
@@ -769,7 +819,7 @@ def main():
                   for p in plugin.rglob("*") if p.is_file()}
         invocation = [sys.executable, str(helper)]
         coverage = run([*invocation, "coverage"], assessment)
-        if hashlib.sha256(coverage).hexdigest() != "17c4b777bc53892a8c2fa35cb962053bc9b8fa84687658c87fb927e005dddf12":
+        if hashlib.sha256(coverage).hexdigest() != "9f6e80b58ab63cffdcf4dedae827c2fea9551421f5d77176aa5e3b47f89c8c03":
             raise ValueError("Installed coverage changed.")
         if sys.argv[1:] == ["--launcher"]:
             print("Exact installed coverage invocation passed with hostile caller global.json, "

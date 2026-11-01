@@ -77,9 +77,15 @@ product findings.
 | LP-01 | Exact package license declaration and named retained text. The deciding resolver verifies an OSI-approved, non-copyleft expression for every offered alternative under the pinned policy. | Inspection alone does not classify the license. The affirmative resolver finding is declaration-scoped, not a legal interpretation of other files/releases or proof of owner authority; owner grant and release/source scope are not prerequisites for `approved-non-copyleft`. |
 | LP-02 | Retained source archive, project/SDK/declaration facts and exact text matches. | Anonymous public retrieval, remote repository truth or compiled build correspondence. A matching archive prefix is only a local path comparison. |
 | LP-03 | Supplied exact dependency versions and literal licenses/ranges; the resolver separately admits a caller-designated authoritative release-wide raw SBOM and classifies every exact member through LP-01 policy. | Inspection alone does not designate a complete inventory. Minimum-version samples, NOASSERTION, file-only/URL-only licenses do not establish all dependency expressions. See [SBOM admission](sbom-inventory.md); no ordinary grant/review/owner gate or independent publication/completeness proof. |
-| LP-04 | Named license/notice entries, asset hashes and exact source matches. | Third-party attribution, complete obligations or exhaustive notice coverage. |
+| LP-04 | D-lite's complete bounded `bundled-web-assets/1` path/length/hash inventory and digest from the assessed package. | Origin, SBOM coverage, applicability, legal notice obligations or notice preservation. Empty supported layouts do not establish universal N/A or absence of other web representations. |
 | LP-10 | Exact source-byte matches and per-PE declared assembly identity/version/repository metadata. | Authenticated authorship, referenced upstream identity or compiled binary-to-commit build mapping. |
 | PI-01 | Each root PE/CLI candidate's checked signing state and fields. | Complete nested-assembly inventory or a package-wide verdict; those remain the deciding resolver's responsibility. An outer NuGet signature does not sign contained DLLs. |
+
+Use the package-only [LP-04 D-lite contract](lp04-notices.md), not `inspect`'s source
+matches or dependency notice candidates, for the current surface. All six D-lite reasons
+remain `not tested` with follow-up. Unsupported candidates and invalid/incomplete scans
+cannot become empty surfaces. Retire v1 packets; npm admission, origin/notice review,
+verified/gap and validator-v2 protocols remain deferred.
 
 No inspection property is a canonical readiness status, owner approval, legal conclusion or
 replacement for a `resolve` evidence contract. A filename match is only a candidate, a supplied

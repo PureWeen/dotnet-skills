@@ -16,8 +16,16 @@ public sealed record CaseResult(
     IReadOnlyList<string> EvidenceReferences, string? EvidenceContract, string? Finding,
     string? MissingFact, string? RequiredInput, string? NextCategory)
 {
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public BundledWebAssetsEvidence? BundledWebAssets { get; init; }
+
     public void Validate(ResolverCase input, IDeterministicResolver? handler = null)
     {
+        if (BundledWebAssets is not null &&
+            (RowId != "LP-04" || ResolverVersion != "2.0.0" || Decision != "escalated" ||
+             Applicability != "unknown" || BranchId is not ("surface-unsupported" or
+                 "no-supported-layout-assets" or "origin-review-missing")))
+            throw new InvalidDataException("Bundled web assets belong only to LP-04 D-lite surface results.");
         if (RowId != input.RowId || Inputs is null || !Inputs.SequenceEqual(input.Inputs) ||
             Inputs.Any(item => item is null || string.IsNullOrWhiteSpace(item.Role) ||
                 string.IsNullOrWhiteSpace(item.Path) ||
@@ -83,6 +91,11 @@ public sealed record CaseResult(
         WriteNullable(writer, "missing_fact", MissingFact);
         WriteNullable(writer, "required_input", RequiredInput);
         WriteNullable(writer, "next_category", NextCategory);
+        if (BundledWebAssets is not null)
+        {
+            writer.WritePropertyName("bundled_web_assets");
+            BundledWebAssets.Write(writer);
+        }
         writer.WriteEndObject();
     }
 

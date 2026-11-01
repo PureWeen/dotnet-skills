@@ -155,12 +155,22 @@ PI-01 scenarios still execute, but agreement with the historical correlated chec
 conformance evidence, **not an independent correctness proof**. No common validator was
 deduplicated into production.
 
-LP-01 through LP-04 retain their independently constructed oracle boundaries. The normal
-installed production build contains no weakening entrypoint or weakening-label table.
-The native project explicitly enables `RESOLVER_TEST_HOOKS` for the finite accepted LP-04
-counterfactuals; only its 108 labels are admitted and unknown labels still reject.
-Normal dispatch has no mutation parameter. Internal predicates remain shared with the
-counterfactual build so the accepted mutation-discrimination tests exercise the real guards.
+LP-04 D-lite `2.0.0` retires the v1 deciding oracle/counterfactual machinery. Its historical
+oracle, seeds and optional `acceptance.json` remain archival only, not active expectations
+or a verified/gap fallback. Only `lp04/cases.json` receives the named result-only D-lite
+delta: missing root -> `missing-package`, duplicate/casefold-alias root -> `input-invalid`,
+all other synthetic legacy packets -> `legacy-protocol`. Inputs, metadata, rationales,
+recipes, chunks, seeds and the other ten rows stay byte-identical.
+`corpus.py check_parent_file` reconstructs this independently specified delta and rejects
+any extra mutation. The new `oracles/lp04_dlite_expectations.py` checks the construction
+facts without importing production; the launcher runs it in ordinary and optimized Python.
+Native D-lite checks cover package layouts, unsupported candidates, all five suffixes,
+empty/large/512-asset inventories, pre-stream expansion/count bounds, strict ZIP/nuspec
+safety, exact per-asset hashes and canonical inventory determinism. All six reasons are
+not tested with follow-up, including empty supported layouts; no legal/origin/notice
+conclusion or universal N/A is inferred. Retained real-package replay is separate from
+the retired optional v1 acceptance manifests. npm/review/verified/gap/validator-v2 work is deferred.
+The installed production build contains no LP-04 weakening entrypoint or label table.
 
 The materializer authenticates no external review, inventory completeness, legal fact or
 publisher. Proprietary retained archives are never seeds; only their existing optional

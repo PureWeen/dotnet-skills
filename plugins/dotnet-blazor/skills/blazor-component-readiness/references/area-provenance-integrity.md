@@ -85,9 +85,11 @@ publication/enumeration outputs remain separate and unassigned. Passing LP-03 is
 
 ### Verified-boundary protocols
 
-- `LP-04`: license files and detected sidecars prove only their own presence. `verified` requires a
-  canonical `notice-coverage-v1` protocol whose complete dependency inventory, bundled-asset
-  inventory, and notice mapping are each digest-bound confirmed inputs.
+- `LP-04`: the current D-lite resolver (`2.0.0`) inventories only bounded JS/CSS/maps in
+  supported assessed-package layouts. Every outcome is `not tested`, including an empty
+  profile, with substantive follow-up; no origin, SBOM, applicability, legal or notice
+  conclusion follows. Preserve the full sorted path/length/hash inventory and digest.
+  V1 packets are retired/refused, never a deciding fallback. See [eleven-row intake](eleven-row-autofill.md).
 - `PI-02`: a PE certificate table or signer subject proves only embedded signature material.
   `verified` requires an `authenticode-verification-v1` protocol covering every shipped DLL entry,
   the exact package-entry digest, expected and observed identity, file-digest verification, chain
@@ -98,11 +100,14 @@ The validator enforces these protocol shapes and package-entry coverage. It does
 replace the platform signature verifier or legal notice review; the protocol binds those direct
 results so weaker metadata hints cannot be promoted to `verified`.
 
-Register notice protocols as `reviewer-generated-analysis` with method
-`protocol:notice-coverage-v1`. Register Authenticode protocols as
+The validator retains its historical `protocol:notice-coverage-v1` gate for externally
+supplied LP-04 verified/gap decisions only; D-lite cannot produce either and needs no
+validator change. Do not generate that protocol for D-lite. New review protocols, npm
+admission, verified/gap machinery and validator v2 are deferred. Register Authenticode protocols as
 `reproduced-runtime-observation` with method `protocol:authenticode-verification-v1`. In both cases,
 the locator is the confirmed protocol basename and its digest must match `evidence_inputs`.
-Notice coverage may resolve `complete` or `incomplete`. Authenticode remains schema version 1 with
+The historical notice protocol accepts `complete` or `incomplete`; that is not a D-lite
+decision path. Authenticode remains schema version 1 with
 method `protocol:authenticode-verification-v1`. Its `file_digest_disposition` is `valid`, `invalid`
 (signature/file-digest material is present but verification failed), or `absent` (direct verification
 found no Authenticode signature/file-digest material, as with an unsigned DLL). For `absent`, require

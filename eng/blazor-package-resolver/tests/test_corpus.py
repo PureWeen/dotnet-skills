@@ -58,6 +58,42 @@ def main():
         else:
             raise ValueError("Parent preservation accepted unreviewed bytes: " + name)
     print("Named LP-01 parent allowance accepted; eight unreviewed result/input/contract changes rejected.")
+    name = "lp04/cases.json"
+    before_lp04 = subprocess.check_output(["git", "show",
+        corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/" + name])
+    current_lp04 = json.loads((fixtures / name).read_bytes())
+    corpus.check_parent_file(name, before_lp04, encoded(current_lp04))
+    for label, change in (
+        ("input pin", lambda suite: suite["cases"][1]["inputs"][0].update(sha256="0" * 64)),
+        ("rationale", lambda suite: suite["cases"][0].update(rationale="unreviewed")),
+        ("branch", lambda suite: suite["cases"][0]["expected"].update(branch_id="origin-review-missing")),
+        ("version", lambda suite: suite["cases"][0]["expected"].update(resolver_version="1.0.0")),
+        ("result", lambda suite: suite["cases"][0]["expected"].update(missing_fact="unreviewed")),
+        ("inventory", lambda suite: suite["cases"][0]["expected"].update(bundled_web_assets={})),
+        ("case identity", lambda suite: suite["cases"][0].update(case_id="unreviewed")),
+        ("extra case", lambda suite: suite["cases"].append(copy.deepcopy(suite["cases"][0]))),
+    ):
+        changed = copy.deepcopy(current_lp04)
+        change(changed)
+        try:
+            corpus.check_parent_file(name, before_lp04, encoded(changed))
+        except ValueError:
+            pass
+        else:
+            raise ValueError("LP-04 D-lite parent preservation accepted " + label)
+    for row in [f"lp{i:02}" for i in range(1, 11) if i != 4] + ["pi01"]:
+        name = row + "/cases.json"
+        before_row = subprocess.check_output(["git", "show",
+            corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/" + name])
+        changed = json.loads((fixtures / name).read_bytes())
+        changed["cases"][0]["expected"]["missing_fact"] = "Unapproved cross-row change"
+        try:
+            corpus.check_parent_file(name, before_row, encoded(changed))
+        except ValueError:
+            pass
+        else:
+            raise ValueError("D-lite migration admitted a change to another row: " + row)
+    print("Named LP-04 D-lite result allowance accepted; eight mutations and all ten cross-row edits rejected.")
     current_lp02 = json.loads((fixtures / "lp02/cases.json").read_bytes())
     historical_lp02 = copy.deepcopy(current_lp02)
     old_missing = "Selected project and implementation files do not establish the bounded library-source mapping."

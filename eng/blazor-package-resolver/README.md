@@ -34,7 +34,7 @@ enter the registry; the 52 component rows and the separate TA-08 extension
 are excluded. LP-01 through LP-10 have deterministic checked-byte
 handlers: `lp01-license-policy/1.0.0`, `lp02-public-source/1.1.0`,
 `lp03-dependency-licenses/1.1.0`,
-`lp04-notice-coverage/1.0.0`,
+`lp04-notice-coverage/2.0.0`,
 `lp05-license-expression/1.0.0`, `lp06-repository-url/1.0.0`,
 `lp07-repository-commit/1.0.0`, `lp08-authors/1.0.0`,
 `lp09-project-url/1.0.0`, `lp10-binary-attribution/1.0.0`, and
@@ -114,67 +114,55 @@ Absent/partial/misspelled/missing-file/wrong-size/wrong-digest bindings are
 separately rejected. Supply the corresponding `LP01_*` and `LP02_*` pairs to
 include their retained regressions in the full suite.
 
-LP-04's **offline production handler** implements the accepted
-[`notice-coverage-v1` Phase A contract](tests/corpus/seeds/lp04__README.md), frozen at
-`68893eb6d5bf8ebab919a8787069c9870a110039`. All accepted Phase A files remain
-byte-identical, including historical pre-production status statements.
-Production reads only checked buffers, never fixture names, ledgers, case IDs,
-expected outcomes or the Python oracle. The 43 replay expectations, five loader
-rejections, two optional retained roots and 331 checked inputs / 735351 bytes
-remain the same 50 named expectations.
+LP-04's offline production handler is now **D-lite**, `lp04-notice-coverage/2.0.0`.
+See the shipping [bundled-web-assets/1 contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/lp04-notices.md).
+It takes package bytes only and retains every selected path/length/SHA-256 in
+`bundled_web_assets`, sorted ordinally, with a canonical inventory digest. Select
+`.js/.mjs/.cjs/.css/.map` under `staticwebassets`, `wwwroot`, or
+`contentFiles/<language>/<tfm>/wwwroot` using ASCII-case-insensitive segment matching.
+Include empty, minified, generated/isolated files and all TFM copies. Known suffixes outside
+these roots and `.gz/.br` variants anywhere produce `surface-unsupported`, with the full list.
 
-The handler requires the exact root and explicit TFM/all-root-entry scope,
-admitted complete dependency and bundled-asset inventories, retained
-whole-subject preservation-obligation reviews, and exhaustive mappings to
-exact packaged entries or explicitly accepted aggregate byte segments.
-Dependency license acceptability is not notice applicability. Files, metadata,
-SPDX expressions and detected sidecars alone never establish coverage.
-An omitted review document remains unresolved even for empty inventories;
-only an explicitly retained captured empty review document can establish an
-empty reviewed surface. All supplied bindings are checked before missing
-subject bytes or unresolved evidence. Unresolved reviews precede unresolved
-mapping, genuinely owner-private evidence, and a supported gap, in that order.
-Direct missing/incomplete representation gaps require complete admitted
-inventories/reviews/mappings plus observed absence or a strict nonempty proper
-prefix. Arbitrary modified text or unsupported forms remain unresolved.
+Preflight the 64 MiB expanded-byte and 512 selected-asset bounds before streaming or
+hashing entries. Reuse ZIP/nuspec safety, duplicate/casefold-alias/range/CRC checks,
+8 MiB package, 4096 entry and 1 MiB nuspec bounds. There is no per-asset 1 MiB cap.
+No extraction, restore, source/dependency inspection or assessed-code execution occurs.
+All six reasons are **not tested**, with substantive follow-up: `missing-package`,
+`input-invalid`, `legacy-protocol`, `surface-unsupported`, `no-supported-layout-assets`
+and `origin-review-missing`. Nonempty observations show suffix counts, bytes and digest;
+full inventories stay checked evidence rather than silently truncated display text.
+Empty observations state:
 
-The result contract is unchanged:
+> No JS/CSS assets detected in the supported package layouts; other representations were not assessed.
 
-> Qualified exact-byte notice coverage for the checked root and explicit TFM/all-root-entry scope.
-> Admitted complete dependency and asset captures, prevalidated whole-subject obligation reviews,
-> and exhaustive reviewed mappings are trust boundaries, not authenticated by hashes or references.
-> No legal advice, LP-03 acceptability, build/source correspondence, ownership, vulnerability/support
-> conclusion, or proof that the supplied obligation review is legally correct.
+This classifies package bytes, not law, origin, SBOM coverage, applicability or notices.
+An empty profile is not proof of no web code or universal N/A. V1 graphs, all-root
+classifications, whole-subject reviews and notice packets are retired/refused, never a V/G
+fallback. npm admission, new review protocols, verified/gap and validator-v2 work is deferred.
+The historical validator notice-v1 gate only constrains verified/gap, so it is unchanged.
 
-Bounded helpers reuse the checked-input/registry/result/canonicalization
-foundation, strict XML/nuspec reader, and LP-01 raw ZIP name/range/CRC/encoding
-validation. Normal inspection streams hashes of all root entries without
-materializing their bodies; separately retained checked evidence supplies the
-selected notice bytes. Archive limits remain 8 MiB each, 64 MiB total checked
-bytes, 4096 entries, 1 MiB nuspec and 64 MiB expanded per archive. Normalized
-JSON remains 64 KiB / depth 8, four TFMs, 64 dependency versions/assets,
-128 root entries/reviews/mappings/total edges per target, and 1-16384 strict
-UTF-8 reference/entry bytes. The narrower limits and complete schemas remain
-in the frozen contract. Unsupported paths, aliases, duplicate fields and
-outside-profile observations fail closed; no solver, scanner, acquisition,
-network, execution or legal-authority mechanism is added.
+`ResolverChecks -- lp04` exercises bounded layout/unsupported/safety/digest cases and
+the 43 result-only migrated legacy fixtures. The independent Python D-lite oracle runs via
+`python eng\blazor-package-resolver\tests\lp04_expectations.py` (also `-O`).
+Old v1 seeds/oracle and optional retained `acceptance.json` are archival, not active tests.
+The offline eleven-row Syncfusion replay separately checks its 21 JS and one large CSS asset.
 
-`ResolverChecks -- lp04` executes all 128 critical guard families / 166
-witnesses, 108 explicit weakened variants / 148 executions (32 existing-case
-and 116 native fixed-memory recipes), 256 registration/empty-witness
-meta-checks, five loader rejections, six retained binding negatives and 218
-strict parser/resource/checked-buffer/culture runtime boundaries. It compares
-complete canonical results, not just branch counts. Counterfactual controls are
-friend-assembly test entry points compiled only with `RESOLVER_TEST_HOOKS`, admitting only the 108 frozen labels;
-unknown labels are rejected and normal dispatch has no weakening option.
-The shared ZIP validator's alias bypass is
-used only by those explicit counterfactual checks; all existing/default callers
-retain strict name validation and every counterfactual retains raw range/CRC
-validation. Python only materializes locked fixture bytes, never classifications. Run the unchanged independent
-`python eng\blazor-package-resolver\tests\lp04_expectations.py` (also `-O`)
-separately. Optional paired `LP04_SYNCFUSION_NUPKG` /
-`LP04_INFRAGISTICS_NUPKG` bindings verify exact retained bytes/identities and
-still return `scope-missing` / `not tested`, never a vendor positive or gap.
+Focused offline validation (set `DOTNET_GENERATE_ASPNET_CERTIFICATE=false` and
+`DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1`; use the existing offline restore config only if
+trusted-tool assets are missing):
+
+```powershell
+dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj --no-restore -p:NuGetAudit=false -- lp04
+dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj --no-restore -p:NuGetAudit=false -- lp03
+python -B eng\blazor-package-resolver\tests\test_autofill.py
+python -B eng\blazor-package-resolver\tests\test_shipping.py --lp04
+python -B eng\blazor-package-resolver\tests\test_shipping.py --lp03
+python -B eng\blazor-package-resolver\tests\test_shipping.py --autofill
+python -B eng\blazor-package-resolver\tests\test_corpus.py
+python -B eng\blazor-package-resolver\tests\corpus.py verify --parent
+dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj --no-restore -p:NuGetAudit=false
+git diff --check
+```
 
 LP-01 checks archive-wide entry identity using a pinned Unicode 15.0.0
 casefold table (generated from Python Unicode 15.0.0 `str.casefold()` for
@@ -224,12 +212,12 @@ LP-03 is `1.2.0` because its dependency classifier reuses LP-01.
 The collector also recognizes 2011/10. Independent oracle and native boundary
 controls cover every supported namespace and unsupported/mixed namespace refusals.
 The frozen corpus gains result-version-only deltas, not rewritten inputs or branches;
-see [corpus preservation](tests/CORPUS.md). Handoff `1.3.0` rejects older saved state.
+see [corpus preservation](tests/CORPUS.md). Handoff `2.0.0` rejects older saved state.
 
 The consumer's optional `autofill-eleven.py` orchestrates acquisition and the existing typed
 report producers. The resolver remains offline; apart from the reviewed LP-01 approved
 declaration correction and the LP-04 standard-packaging fix described below, its row
-classifiers are unchanged except for the explicit LP-03 B-prime and nuspec namespace changes above. Its fixed 178-branch report
+classifiers are unchanged except for LP-04 D-lite, the explicit LP-03 B-prime and nuspec namespace changes above. Its fixed 171-branch report
 mapping is tested against every frozen result, including deterministic/escalated boundaries.
 Run `python eng\blazor-package-resolver\tests\test_autofill.py` for offline collector/mapping
 tests and `python eng\blazor-package-resolver\tests\test_shipping.py --autofill` for the
@@ -296,10 +284,10 @@ root-bound archive, without a project/MSBuild relevance gate. The declaration su
 the association; independent source relevance, binary correspondence and branch/tag
 membership are not established. The eleven-row helper creates the observation from its
 existing single successful anonymous download, never from a local import alone.
-LP-04/10 admission/attribution boundaries are unchanged; LP-03 uses the separate B-prime inventory/declaration protocol above.
+LP-10 attribution boundaries are unchanged; LP-04 uses D-lite above and LP-03 uses the separate B-prime inventory/declaration protocol above.
 
 `dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj -- breadth`
-runs the unchanged LP-04 frozen matrix plus ordinary NuGet OPC/directory regressions and checked
+runs the LP-04 D-lite matrix plus ordinary NuGet OPC/directory regressions and checked
 evidence-inspection tests. Standard root `[Content_Types].xml` is a packaging exception, not
 permission for bracketed checked-input paths or unsafe/nested archive paths.
 

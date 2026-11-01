@@ -1,9 +1,10 @@
 """Reviewed, fail-closed report mapping for the eleven offline package resolvers."""
+import hashlib
 import json
 import re
 import unicodedata
 
-VERSION = "eleven-row-handoff/1.3.0"
+VERSION = "eleven-row-handoff/2.0.0"
 ROWS = tuple(f"LP-{number:02}" for number in range(1, 11)) + ("PI-01",)
 RESOLVERS = dict(zip(ROWS, (
     "lp01-license-policy", "lp02-public-source", "lp03-dependency-licenses",
@@ -13,7 +14,7 @@ RESOLVERS = dict(zip(ROWS, (
 )))
 STATUSES = {"V": "verified", "G": "gap", "N": "not tested",
             "O": "owner evidence required", "A": "not applicable"}
-RESOLVER_VERSIONS = {row: "1.2.0" if row == "LP-03" else
+RESOLVER_VERSIONS = {row: "2.0.0" if row == "LP-04" else "1.2.0" if row == "LP-03" else
                      "1.1.0" if row in ("LP-01", "LP-02", "PI-01") else "1.0.0" for row in ROWS}
 
 # Each entry is (explicit branches, status, smallest next action). Unknown keys are errors.
@@ -61,16 +62,12 @@ GROUPS = {
         ("license-evidence-unresolved", "N", "Obtain unambiguous supported exact-package license declaration evidence."),
     ),
     "LP-04": (
-        ("notice-coverage-satisfied", "V", ""),
-        ("required-representation-missing", "G", "Restore the identified required representation and recheck exhaustive mapping."),
-        ("no-applicable-surface", "A", ""),
-        ("owner-evidence-required", "O", "Supply the genuinely private fact named by the admitted obligation review."),
-        ("missing-package scope-missing", "N", "Obtain the exact root and explicit target-framework and all-entry scope."),
-        ("input-invalid binding-conflict", "N", "Repair admission and exact root, inventory, review and entry bindings."),
-        ("evidence-missing inventories-unresolved", "N", "Obtain admitted complete dependency and all-root-entry inventories."),
-        ("subject-bytes-missing", "N", "Obtain the exact inventoried dependency or asset bytes."),
-        ("reviews-unresolved", "N", "Obtain a supported retained whole-subject obligation review."),
-        ("mapping-unresolved", "N", "Obtain exhaustive reviewed mapping and supported exact representations."),
+        ("missing-package", "N", "Obtain the exact assessed package bytes for a bounded web-asset scan."),
+        ("input-invalid", "N", "Obtain a complete safely inspectable package within the supported bounds."),
+        ("legacy-protocol", "N", "Remove retired v1 packet roles and rerun the package-only inventory."),
+        ("surface-unsupported", "N", "Assess the listed unsupported representations separately to establish their origin and notice obligations."),
+        ("no-supported-layout-assets", "N", "Establish whether the requirement applies by assessing other representations or obtaining explicit applicability evidence."),
+        ("origin-review-missing", "N", "Review the retained assets to establish origin and any resulting notice obligations."),
     ),
     "LP-05": (
         ("expression", "V", ""),
@@ -137,8 +134,8 @@ def mapping():
                 if key in result:
                     raise ValueError(f"Duplicate mapping: {key}")
                 result[key] = (status, action)
-    if len(result) != 178:
-        raise ValueError("The reviewed mapping must contain exactly 178 row/branch pairs.")
+    if len(result) != 171:
+        raise ValueError("The reviewed mapping must contain exactly 171 row/branch pairs.")
     return result
 
 
@@ -149,7 +146,7 @@ FIELDS = {"row_id", "resolver_id", "resolver_version", "branch_id", "decision", 
 
 
 def checked_result(value, pins):
-    if not isinstance(value, dict) or set(value) != FIELDS:
+    if not isinstance(value, dict) or set(value) not in (FIELDS, FIELDS | {"bundled_web_assets"}):
         raise ValueError("Unexpected resolver result fields.")
     row, branch = value["row_id"], value["branch_id"]
     if ((row, branch) not in MAPPING or value["resolver_id"] != RESOLVERS[row] or
@@ -175,7 +172,44 @@ def checked_result(value, pins):
             len(set(references)) != len(references) or
             decision == "deterministic" and not references and not value["evidence_contract"]):
         raise ValueError("Resolver evidence contract is missing or malformed.")
+    surface_branch = row == "LP-04" and branch in (
+        "surface-unsupported", "no-supported-layout-assets", "origin-review-missing")
+    if ("bundled_web_assets" in value) != surface_branch:
+        raise ValueError("Unexpected or missing LP-04 bounded inventory.")
+    if surface_branch:
+        checked_web_assets(value["bundled_web_assets"], branch)
     return value
+
+
+def checked_web_assets(inventory, branch):
+    if (not isinstance(inventory, dict) or set(inventory) != {
+            "profile", "assets", "unsupported_candidates", "inventory_sha256"} or
+            inventory["profile"] != "bundled-web-assets/1"):
+        raise ValueError("Unsupported LP-04 inventory profile.")
+    assets, unsupported = inventory["assets"], inventory["unsupported_candidates"]
+    if not isinstance(assets, list) or len(assets) > 512 or not isinstance(unsupported, list) or len(unsupported) > 4096:
+        raise ValueError("LP-04 inventory exceeds its bounded profile.")
+    paths, canonical, total = [], "bundled-web-assets/1\n", 0
+    for asset in assets:
+        if (not isinstance(asset, dict) or set(asset) != {"path", "length", "sha256"} or
+                not isinstance(asset["path"], str) or not asset["path"] or
+                any(ord(ch) < 32 or ord(ch) == 127 for ch in asset["path"]) or
+                type(asset["length"]) is not int or not 0 <= asset["length"] <= 64 * 1024 * 1024 or
+                not isinstance(asset["sha256"], str) or not re.fullmatch("[a-f0-9]{64}", asset["sha256"])):
+            raise ValueError("Malformed LP-04 asset evidence.")
+        paths.append(asset["path"])
+        total += asset["length"]
+        canonical += f"{asset['path']}\t{asset['length']}\t{asset['sha256']}\n"
+    # Match .NET StringComparer.Ordinal, including supplementary Unicode characters.
+    ordinal = lambda path: path.encode("utf-16-be")
+    if (paths != sorted(set(paths), key=ordinal) or total > 64 * 1024 * 1024 or
+            not all(isinstance(path, str) and path and not any(ord(ch) < 32 for ch in path) for path in unsupported) or
+            unsupported != sorted(set(unsupported), key=ordinal) or
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest() != inventory["inventory_sha256"] or
+            (branch == "surface-unsupported") != bool(unsupported) or
+            branch == "origin-review-missing" and not assets or
+            branch == "no-supported-layout-assets" and assets):
+        raise ValueError("LP-04 inventory digest, ordering or branch is inconsistent.")
 
 
 def literal(value):
@@ -190,6 +224,8 @@ def excerpt(value, pointer, maximum=1800):
 
 
 def partial_facts(row, facts, acquisition, branch=None):
+    if row == "LP-04":
+        return ""
     root = facts["package"]
     source = facts["source"]
     if row == "LP-01":
@@ -247,27 +283,10 @@ def partial_facts(row, facts, acquisition, branch=None):
                 f"{excerpt(groups, 'observations#/supplied_dependencies', 2100)}. "
                 f"Root grouped ranges {excerpt(root['declared_dependencies'], 'observations#/package/declared_dependencies', 650)}. "
                 + summary)
-    if row in ("LP-04", "LP-10"):
+    if row == "LP-10":
         matches = [item["package_entry"] for item in facts["exact_source_matches"]]
         common = (f"{len(facts['package_entries'])} package files; {len(matches)} exact packaged/source match sets "
                   f"{excerpt(matches, 'observations#/exact_source_matches', 1400)}. ")
-        if row == "LP-04":
-            dependencies = facts["supplied_dependencies"]
-            notice_packages = sum(bool(p["license_or_notice_candidates"]) for p in dependencies)
-            notice_files = sum(len(p["license_or_notice_candidates"]) for p in dependencies)
-            scripts = [item["path"] for item in facts["package_entries"]
-                       if item["path"].lower().endswith((".js", ".mjs", ".cjs"))]
-            correspondence = (f"{sum(path in matches for path in scripts)} of {len(scripts)} shipped scripts have exact source-byte matches; "
-                              f"stylesheet entries without exact source-byte matches "
-                              f"{excerpt([item['path'] for item in facts['package_entries'] if item['path'].lower().endswith('.css') and item['path'] not in matches], 'observations#/package_entries', 650)}. "
-                              if source is not None else "Source-byte correspondence was not inspected. ")
-            return (common + f"Named license/notice candidates: {len(root['license_or_notice_candidates'])} root files "
-                    "(observations#/package/license_or_notice_candidates); "
-                    f"{notice_files} files across {notice_packages} of {len(dependencies)} supplied dependency versions "
-                    "(observations#/supplied_dependencies); "
-                    + (f"{len(source['license_or_notice_candidates'])} source files "
-                       "(observations#/source/license_or_notice_candidates). " if source is not None else "source unavailable. ")
-                    + correspondence + "Named notice candidates are not obligation reviews or exhaustive notice mappings.")
         assemblies = [{key: item[key] for key in ("path", "name", "version", "informational_versions", "repository_metadata")}
                       for item in facts["assembly_candidates"]]
         return (common + f"{len(assemblies)} PE/CLI candidates with declared assembly metadata "

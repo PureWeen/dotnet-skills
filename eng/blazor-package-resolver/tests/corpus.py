@@ -97,6 +97,14 @@ def check_parent_file(name, before, after):
     """Admit only named row deltas, including nuspec-namespaces version-only results."""
     if before == after:
         return
+    if name == "lp04/cases.json":
+        from oracles.lp04_dlite_expectations import legacy_delta
+        expected = json.loads(before)
+        check(len(expected["cases"]) == 43, "Unexpected historical LP-04 inventory")
+        legacy_delta(expected)
+        reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
+        check(after == reviewed, "Unreviewed LP-04 change outside D-lite expected results: " + name)
+        return
     if name == "cases.json":
         expected = json.loads(before)
         check(len(expected["cases"]) == 2 and
@@ -375,7 +383,7 @@ def main():
         print("Corpus verified:", len(lock["files"]), "exact paths;",
               sum(pin[1] for pin in lock["files"]), "bytes; locked canonical outputs verified"
               " (only named LP-01 declaration, LP-02 public-availability, lp03-sbom-declarations-1.1.0"
-              " and nuspec-namespaces version-only deltas are allowed against parent).")
+              ", nuspec-namespaces version-only and LP-04 D-lite result-only deltas are allowed against parent).")
     else:
         manifest = fixtures / ("cases.json" if args.row == "foundation" else args.row + "/cases.json")
         subprocess.run(["dotnet", "run", "--no-restore", "--project",

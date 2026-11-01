@@ -55,8 +55,11 @@ def frozen_results():
                      {store["strings"][key]: built[item] for key, item in value} if kind == "o" else
                      [built[item] for item in value] if kind == "a" else value)
     from oracles.lp03_sbom_expectations import mapping_results
+    from oracles.lp04_dlite_expectations import mapping_results as lp04_results
     return ([case["expected"] for kind, index in store["files"].values() if kind in ("j", "u")
-             for case in built[index].get("cases", []) if "expected" in case] + mapping_results())
+             for case in built[index].get("cases", []) if "expected" in case and
+             not (case["expected"]["row_id"] == "LP-04" and
+                  case["expected"]["resolver_version"] == "1.0.0")] + mapping_results() + lp04_results())
 
 
 def empty_observations():
@@ -117,6 +120,9 @@ class SbomCollectionTests(unittest.TestCase):
             collector.collect(main, tool.package_metadata(main.read_bytes()), None, [supplied], release_sbom=raw)
             _, request = tool.requests(root, capture, main, tool.package_metadata(main.read_bytes()), collector, None)
             lp03 = next(c for c in request["cases"] if c["row_id"] == "LP-03")
+            lp04 = next(c for c in request["cases"] if c["row_id"] == "LP-04")
+            self.assertEqual([p["role"] for p in lp04["inputs"]], ["package"])
+            self.assertFalse((capture / "lp-04-scope.json").exists())
             self.assertEqual([p["role"] for p in lp03["inputs"] if p["role"].startswith("dependency-")], ["dependency-001"])
             self.assertEqual([r["subject"] for r in collector.records], ["package", "documentation"])
             self.assertTrue(all(not r["request_sent"] and r["method"] == "local-file" for r in collector.records))
@@ -174,11 +180,11 @@ class SbomCollectionTests(unittest.TestCase):
 
 
 class MappingTests(unittest.TestCase):
-    def test_all_178_branches_and_frozen_decision_boundaries(self):
+    def test_all_171_branches_and_frozen_decision_boundaries(self):
         results = frozen_results()
         observed = {(r["row_id"], r["branch_id"]) for r in results}
         self.assertEqual(set(rows.MAPPING), observed)
-        self.assertEqual(len(observed), 178)
+        self.assertEqual(len(observed), 171)
         self.assertGreaterEqual(len(results), 870)
         def display_safe(text):
             return (len(text.encode("utf-8")) <= 4096 and unicodedata.normalize("NFC", text) == text and
@@ -228,7 +234,7 @@ class MappingTests(unittest.TestCase):
                 rows.checked_result(value, original["inputs"])
 
     def test_versions_are_admitted_only_for_their_reviewed_contracts(self):
-        versions = {"LP-01": "1.1.0", "LP-02": "1.1.0", "LP-03": "1.2.0", "PI-01": "1.1.0"}
+        versions = {"LP-01": "1.1.0", "LP-02": "1.1.0", "LP-03": "1.2.0", "LP-04": "2.0.0", "PI-01": "1.1.0"}
         for row in rows.ROWS:
             original = next(value for value in frozen_results() if value["row_id"] == row)
             self.assertEqual(original["resolver_version"], versions.get(row, "1.0.0"))
@@ -272,10 +278,7 @@ class MappingTests(unittest.TestCase):
             self.assertNotIn("Declarations and named files do not establish owner authority", verified_observation)
         self.assertIn(repository["url"], rows.partial_facts("LP-02", facts, {}))
         notice = rows.partial_facts("LP-04", facts, {})
-        for expected in ("3 files across 2 of 2 supplied dependency versions", "1 source files",
-                         "1 of 2 shipped scripts", "styles/bundle.scp.css",
-                         "observations#/supplied_dependencies", "not obligation reviews"):
-            self.assertIn(expected, notice)
+        self.assertEqual(notice, "")
         attribution = rows.partial_facts("LP-10", facts, {})
         signing = rows.partial_facts("PI-01", facts, {})
         for assembly in facts["assembly_candidates"]:
@@ -287,8 +290,7 @@ class MappingTests(unittest.TestCase):
         self.assertIn('"public_key_length":null', signing)
         self.assertIn("does not sign the contained DLLs", signing)
         facts["source"] = None
-        self.assertIn("correspondence was not inspected", rows.partial_facts("LP-04", facts, {}))
-        self.assertNotIn("stylesheet entries without", rows.partial_facts("LP-04", facts, {}))
+        self.assertEqual(rows.partial_facts("LP-04", facts, {}), "")
 
     def test_large_observation_lists_retain_counts_and_exact_packet_pointers(self):
         facts = empty_observations()
@@ -303,10 +305,10 @@ class MappingTests(unittest.TestCase):
                 "state": "unsigned", "public_key_length": 0, "strong_name_signed_flag": False,
                 "strong_name_signature_size": 0,
             })
-        for row in ("LP-04", "LP-10", "PI-01"):
+        for row in ("LP-10", "PI-01"):
             observation = rows.partial_facts(row, facts, {})
             self.assertLess(len(observation.encode("utf-8")), 3500)
-            pointer = "observations#/exact_source_matches" if row == "LP-04" else "observations#/assembly_candidates"
+            pointer = "observations#/assembly_candidates"
             self.assertIn("100 items retained at " + pointer, observation)
         self.assertNotIn("lib/net8.0/0.dll", rows.partial_facts("PI-01", facts, {}))
 
@@ -314,13 +316,49 @@ class MappingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="eleven-old-projection-") as directory:
             root = Path(directory)
             path = root / "state.json"
-            for version in ("1.0.0", "1.0.1"):
+            for version in ("1.0.0", "1.0.1", "1.3.0"):
                 original = json.dumps({"schema_version": 1, "producer": "eleven-row-handoff/" + version,
                                        "captured_at": "2026-01-01T00:00:00Z", "paths": {}, "files": {}}).encode()
                 path.write_bytes(original)
                 with self.subTest(version=version), self.assertRaisesRegex(ValueError, "Unknown eleven-row state"):
                     tool.open_state(root, path)
                 self.assertEqual(path.read_bytes(), original)
+
+    def test_lp04_inventory_binding_and_bounded_display(self):
+        from oracles.lp04_dlite_expectations import inventory, result, EMPTY
+        assets = [("staticwebassets/" + str(i).zfill(3) + "-" + "x" * 90 + ".js", b"x")
+                  for i in range(512)]
+        value = result("origin-review-missing", [], inventory(assets))
+        rows.checked_result(value, [])
+        defaults = {row: next(item for item in frozen_results() if item["row_id"] == row)
+                    for row in rows.ROWS}
+        defaults["LP-04"] = value
+        output = rows.decisions(defaults, empty_observations(), {}, {row: [] for row in rows.ROWS})
+        row = next(item for item in output["rows"] if item["id"] == "LP-04")
+        self.assertEqual(row["status"], "not tested")
+        self.assertIn("512 assets", row["observation"])
+        self.assertIn(value["bundled_web_assets"]["inventory_sha256"], row["observation"])
+        self.assertLessEqual(len(row["observation"].encode()), 4096)
+        self.assertTrue(row["assessment_follow_up"])
+        self.assertIsNone(row["not_applicable_rationale"])
+        empty = result("no-supported-layout-assets", [], inventory([]))
+        defaults["LP-04"] = empty
+        row = next(item for item in rows.decisions(defaults, empty_observations(), {},
+                   {r: [] for r in rows.ROWS})["rows"] if item["id"] == "LP-04")
+        self.assertIn(EMPTY, row["observation"])
+        self.assertEqual(row["status"], "not tested")
+        for change in (
+            lambda v: v.pop("bundled_web_assets"),
+            lambda v: v["bundled_web_assets"].update(inventory_sha256="0" * 64),
+            lambda v: v["bundled_web_assets"]["assets"].reverse(),
+            lambda v: v["bundled_web_assets"]["assets"][0].update(length=2),
+            lambda v: v.update(branch_id="no-applicable-surface"),
+            lambda v: v.update(decision="deterministic", applicability="not-applicable"),
+        ):
+            changed = copy.deepcopy(value)
+            change(changed)
+            with self.assertRaises(ValueError):
+                rows.checked_result(changed, [])
 
     def test_fingerprints_and_policy_bytes(self):
         sibling = SCRIPTS.parent.parent / "blazor-package-readiness-resolver/scripts"

@@ -63,7 +63,7 @@ using (var doc = JsonDocument.Parse(coverage))
                            row.GetProperty("resolver_version").GetString() == "1.2.0",
                 "LP-04" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp04-notice-coverage" &&
-                           row.GetProperty("resolver_version").GetString() == "1.0.0",
+                           row.GetProperty("resolver_version").GetString() == "2.0.0",
                 "LP-05" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp05-license-expression" &&
                            row.GetProperty("resolver_version").GetString() == "1.0.0",

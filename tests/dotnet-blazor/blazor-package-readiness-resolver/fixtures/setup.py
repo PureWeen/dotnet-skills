@@ -27,11 +27,13 @@ if len(sys.argv) > 1:
     for item in cases:
         require(set(item) == {"case_id", "result"})
         row = item["result"]
-        require(set(row) == {"row_id", "resolver_id", "resolver_version", "branch_id", "decision",
+        fields = {"row_id", "resolver_id", "resolver_version", "branch_id", "decision",
                              "applicability", "finding", "missing_fact", "required_input",
-                             "next_category", "evidence_contract", "evidence_references", "inputs"})
+                             "next_category", "evidence_contract", "evidence_references", "inputs"}
+        require(set(row) == fields | ({"bundled_web_assets"} if row["row_id"] == "LP-04" else set()))
         require(row["row_id"] in rows and
-                row["resolver_version"] == ("1.2.0" if row["row_id"] == "LP-03" else
+                row["resolver_version"] == ("2.0.0" if row["row_id"] == "LP-04" else
+                                           "1.2.0" if row["row_id"] == "LP-03" else
                                            "1.1.0" if row["row_id"] in ("LP-01", "LP-02", "PI-01") else "1.0.0"))
         require(re.fullmatch(r"[a-z][a-z0-9-]*", row["resolver_id"]) is not None and
                 re.fullmatch(r"[a-z][a-z0-9-]*", row["branch_id"]) is not None)
@@ -49,7 +51,10 @@ if len(sys.argv) > 1:
                     bool(row["evidence_references"] or row["evidence_contract"]) and
                     all(row[key] is None for key in ("missing_fact", "required_input", "next_category")))
         if row["row_id"] == "LP-04":
-            require(row["branch_id"] == "scope-missing" and row["decision"] == "escalated")
+            require(row["branch_id"] == "no-supported-layout-assets" and row["decision"] == "escalated" and
+                    row["bundled_web_assets"]["assets"] == [] and
+                    "No JS/CSS assets detected in the supported package layouts; other representations were not assessed."
+                    in row["missing_fact"])
     sys.exit(0)
 
 buffer = io.BytesIO()

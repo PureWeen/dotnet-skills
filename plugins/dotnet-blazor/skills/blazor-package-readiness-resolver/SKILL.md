@@ -70,8 +70,7 @@ Acquisition and evidence admission are separate from offline classification.
        "case_id": "notice-check",
        "row_id": "LP-04",
        "inputs": [
-         {"role": "package", "path": "package.nupkg", "sha256": "<64 lowercase hex characters>"},
-         {"role": "assessment", "path": "assessment.json", "sha256": "<64 lowercase hex characters>"}
+         {"role": "package", "path": "package.nupkg", "sha256": "<64 lowercase hex characters>"}
        ]
      }]
    }
@@ -113,13 +112,13 @@ the exact raw digest/root-bound caller designation is a separate trust boundary.
 Ordinary grants, reviews and owner approval are not prerequisites; missing or unsupported
 evidence stays `not tested`. PI-06/PI-07 remain unimplemented and unassigned.
 
-For LP-04, complete dependency and asset inventories, whole-subject obligation reviews, and
-exhaustive notice mappings must be admitted and digest-bound to the exact root and scope.
-Missing/incomplete/unresolved evidence stays `not tested`; owner evidence is required only for
-a genuinely owner-private fact. Direct gaps need admitted complete applicable inputs and
-observed missing/incomplete representation. No-applicable-surface needs complete inventories
-and an explicit retained empty review when there are no subjects. Hashes bind supplied evidence,
-not its truth or legal correctness.
+For LP-04 `lp04-notice-coverage/2.0.0`, pass the assessed package only. Follow
+[D-lite bundled web assets](references/lp04-notices.md) for the bounded layout/suffix profile,
+complete retained inventory, digest and six unresolved reasons. Every outcome is `not tested`,
+including an empty supported-profile scan; it does not prove the absence of other web code.
+V1 roles/packets are refused, never converted or used as a verified/gap fallback.
+No origin, SBOM, applicability or notice conclusion is inferred; review protocols and deciding
+machinery are deferred. Preserve `bundled_web_assets` alongside the compact observation.
 
 Full-report status vocabulary remains `verified`, `gap`, `owner evidence required`, `not tested`,
 `not applicable`. Consume the row's complete qualified result; a caller must not invent a status

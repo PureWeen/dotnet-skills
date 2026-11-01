@@ -127,7 +127,7 @@ bundle, emits `decisions.json`, applies it and canonicalizes. Raw archives remai
 pinned; registering three documents does not pretend 50 dependency archives are individually
 confirmed source artifacts.
 
-`scripts/eleven_rows.py` owns the explicit 178 `(row, branch)` mappings. Bundled resolver source
+`scripts/eleven_rows.py` owns the explicit 171 `(row, branch)` mappings. Bundled resolver source
 and data fingerprints are checked before collection; a changed file inventory, unknown branch,
 version, decision, applicability or input binding fails closed pending mapping review.
 `verified`, `gap` and `not applicable` require the appropriate direct deterministic branch;
@@ -141,18 +141,30 @@ release-scoped grant is required for this branch. Its observation retains declar
 named candidates and exact source-byte matches without an owner-authority missing-fact
 sentence. File-only and missing-license branches still require owner evidence; the separate
 `owner-evidence-accepted` branch and all other branch statuses are unchanged.
+LP-04 accepts only `lp04-notice-coverage/2.0.0`: its default request passes package
+bytes only, without TFM/all-root-entry scope. All six reasons (`missing-package`,
+`input-invalid`, `legacy-protocol`, `surface-unsupported`, `no-supported-layout-assets`,
+`origin-review-missing`) map to `not tested`, with substantive missing-fact/action follow-up.
+The complete bounded `bundled_web_assets` inventory is checked and retained in `results.json`;
+the observation gives suffix counts, bytes and inventory digest, never truncated asset lists.
+An empty scan states: "No JS/CSS assets detected in the supported package layouts; other
+representations were not assessed." It is not proof of no web code or universal N/A.
+No origin, SBOM, applicability or notice conclusion is inferred. V1 packets are refused,
+not converted; npm admission, review protocols, verified/gap and validator-v2 machinery
+are deferred. See the sibling resolver's `references/lp04-notices.md`.
+
 LP-01, LP-02 and PI-01 accept only resolver version `1.1.0`; LP-03 accepts `1.2.0`;
-other rows retain `1.0.0`. LP-01 and PI-01 recognize the empty nuspec namespace and
+the remaining rows retain `1.0.0`. LP-01 and PI-01 recognize the empty nuspec namespace and
 all six official NuGet schema namespaces (2010/07, 2011/08, 2011/10, 2012/06,
 2013/01 and 2013/05). Metadata must still match its root namespace; LP-01 also
 requires the license element to match. The collector recognizes the same namespace
 set, including 2011/10; unknown namespaces remain unsupported.
-Handoff producer `eleven-row-handoff/1.3.0` rejects older saved states rather than
+Handoff producer `eleven-row-handoff/2.0.0` rejects older saved states rather than
 silently reinterpreting their row decisions. Preserve old captures; make a fresh run
 or explicitly supply already checked acquisition packets to evaluate the new contract.
 Observations preserve literal small license texts/headings and repository declarations,
-root/dependency/source notice-candidate counts, shipped-script match counts and unmatched
-stylesheet entries, plus per-PE declared assembly metadata and signing fields. Candidate text
+root/dependency/source notice-candidate facts for other rows, plus per-PE declared
+assembly metadata and signing fields. LP-04 uses only its bounded package inventory. Candidate text
 above 4,096 bytes or outside strict UTF-8 retains an explicit state and exact digest, never a
 clipped grant. Large lists use measured counts and exact inspection-packet pointers; declared
 assembly attributes are not authenticated ownership or binary-to-commit build proof.

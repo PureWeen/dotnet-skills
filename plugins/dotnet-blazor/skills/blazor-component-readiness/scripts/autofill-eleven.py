@@ -677,17 +677,6 @@ def requests(root, capture, package, metadata, collector, supplied_request):
     if not lp03_scope.exists():
         dump(lp03_scope, release_scope(package, metadata, collector.sbom))
     scopes["LP-03"] = pin(capture, lp03_scope, "assessment")
-    frameworks = metadata["groups"]
-    if 0 < len(frameworks) <= 4 and all(ID.fullmatch(framework) for framework in frameworks):
-        for row in ("LP-04",):
-            scope = {"schema_version": 1, "root": {"id": metadata["id"], "version": metadata["version"],
-                                                "sha256": package_pin["sha256"]},
-                     "target_frameworks": frameworks}
-            if row == "LP-04":
-                scope["asset_scope"] = "all-root-package-entries"
-            path = capture / (row.lower() + "-scope.json")
-            dump(path, scope)
-            scopes[row] = pin(capture, path, "assessment")
     retained_bytes = collector.total + sum(len(read(beneath(capture, item["path"]))) for item in policy_pins)
     retained_bytes += sum(len(read(beneath(capture, item["path"]))) for item in scopes.values())
     if observation_pin:
