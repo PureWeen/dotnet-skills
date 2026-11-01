@@ -99,7 +99,7 @@ Native admission failures do not trigger dependency acquisition. Local SBOM/sour
 never fabricate anonymous observations. Missing bytes stay `not tested`; synthetic mocked successes
 are not real package acquisition claims.
 
-LP-03 `lp03-dependency-licenses/1.1.0` classifies exact members' own nuspec expressions through
+LP-03 `lp03-dependency-licenses/1.2.0` classifies exact members' own nuspec expressions through
 the actual pinned LP-01 classifier. All allowed AND/OR alternatives pass without ordinary grants,
 reviews or owner approval. Missing/ambiguous/file-only/URL-only/NOASSERTION declarations stay
 `not tested`; positive copyleft/non-OSI declarations support `gap` only after complete evidence
@@ -141,8 +141,13 @@ release-scoped grant is required for this branch. Its observation retains declar
 named candidates and exact source-byte matches without an owner-authority missing-fact
 sentence. File-only and missing-license branches still require owner evidence; the separate
 `owner-evidence-accepted` branch and all other branch statuses are unchanged.
-LP-02 and LP-03 accept only resolver version `1.1.0`; other rows retain `1.0.0`.
-Handoff producer `eleven-row-handoff/1.2.0` rejects older saved states rather than
+LP-01, LP-02 and PI-01 accept only resolver version `1.1.0`; LP-03 accepts `1.2.0`;
+other rows retain `1.0.0`. LP-01 and PI-01 recognize the empty nuspec namespace and
+all six official NuGet schema namespaces (2010/07, 2011/08, 2011/10, 2012/06,
+2013/01 and 2013/05). Metadata must still match its root namespace; LP-01 also
+requires the license element to match. The collector recognizes the same namespace
+set, including 2011/10; unknown namespaces remain unsupported.
+Handoff producer `eleven-row-handoff/1.3.0` rejects older saved states rather than
 silently reinterpreting their row decisions. Preserve old captures; make a fresh run
 or explicitly supply already checked acquisition packets to evaluate the new contract.
 Observations preserve literal small license texts/headings and repository declarations,

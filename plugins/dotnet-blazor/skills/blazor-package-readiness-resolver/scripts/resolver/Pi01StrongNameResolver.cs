@@ -11,13 +11,13 @@ namespace BlazorPackageResolver;
 
 public sealed class Pi01StrongNameResolver : IDeterministicResolver
 {
+    private const string ResolverVersion = "1.1.0";
     private const int PackageLimit = 64 * 1024 * 1024;
     private const int NuspecLimit = 1024 * 1024;
     private const int EntryLimit = 8 * 1024 * 1024;
     private const int TotalLimit = 32 * 1024 * 1024;
     private const int NameLimit = 1024;
     private const int CountLimit = 4096;
-    private const string NuspecNamespace = "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd";
     private const string ContractPrefix =
         "Inspected PE/CLI candidates (sorted by ordinal path; SHA-256 covers exact ZIP entry bytes): ";
     private static readonly uint[] CrcTable = Enumerable.Range(0, 256).Select(index =>
@@ -48,7 +48,7 @@ public sealed class Pi01StrongNameResolver : IDeterministicResolver
 
     public string RowId => "PI-01";
     public string ResolverId => "pi01-strong-name";
-    public string Version => "1.0.0";
+    public string Version => ResolverVersion;
 
     public CaseResult Resolve(ResolverCase input)
     {
@@ -102,7 +102,7 @@ public sealed class Pi01StrongNameResolver : IDeterministicResolver
         var decisive = finding is not null;
         if (!decisive && missing is null)
             throw new InvalidDataException($"Unknown PI-01 branch: {branch}");
-        return new("PI-01", "pi01-strong-name", "1.0.0", branch,
+        return new("PI-01", "pi01-strong-name", ResolverVersion, branch,
             decisive ? "deterministic" : "escalated",
             structural ? "unknown" : "applicable", input.Inputs,
             branch == "missing-package" ? [] : ["package:archive"],
@@ -282,9 +282,11 @@ public sealed class Pi01StrongNameResolver : IDeterministicResolver
         };
         using var reader = XmlReader.Create(new StringReader(text), settings);
         var document = XDocument.Load(reader);
-        return document.Root?.Name == XName.Get("package", NuspecNamespace) &&
-            document.Root.Elements().Select(item => item.Name)
-                .SequenceEqual([XName.Get("metadata", NuspecNamespace)]);
+        var root = document.Root;
+        return root is not null && root.Name.LocalName == "package" &&
+            NuGetNuspecReader.IsSupportedNamespace(root.Name.NamespaceName) &&
+            root.Elements().Select(item => item.Name)
+                .SequenceEqual([root.Name.Namespace + "metadata"]);
     }
 
     private static byte[] ReadEntry(ZipArchiveEntry entry, int limit)

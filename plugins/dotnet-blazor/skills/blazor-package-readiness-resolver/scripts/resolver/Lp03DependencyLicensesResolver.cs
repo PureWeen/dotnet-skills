@@ -12,7 +12,7 @@ public sealed class Lp03DependencyLicensesResolver : IDeterministicResolver
         "is required. No legal sufficiency, notice compliance or build correspondence is established.";
     public string RowId => "LP-03";
     public string ResolverId => "lp03-dependency-licenses";
-    public string Version => "1.1.0";
+    public string Version => "1.2.0";
     internal static bool ValidId(string value) => NuGetPackageIdentity.ValidId(value);
     internal static bool ValidVersion(string value) => NuGetPackageIdentity.ValidVersion(value);
 

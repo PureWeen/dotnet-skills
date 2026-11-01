@@ -20,7 +20,7 @@ internal static class Lp01BoundaryChecks
             source = buffer.ToArray();
         }
 
-        void Check(byte[] nuspec, params string[] aliases)
+        void CheckResult(byte[] nuspec, string branch, params string[] aliases)
         {
             using var buffer = new MemoryStream();
             using (var archive = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
@@ -44,8 +44,33 @@ internal static class Lp01BoundaryChecks
             var inputs = identities.Zip(bytes).ToDictionary(pair => pair.First.Role,
                 pair => new CheckedInput(pair.First, pair.Second), StringComparer.Ordinal);
             var result = registry.Dispatch(new ResolverCase("lp01-boundary", "LP-01", identities, inputs));
-            if (result.BranchId != "unsafe-package" || result.Applicability != "unknown")
-                throw new InvalidDataException("LP-01 must reject unsupported XML and Unicode-casefold ZIP aliases.");
+            if (result.BranchId != branch ||
+                result.Applicability != (branch == "unsafe-package" ? "unknown" : "applicable"))
+                throw new InvalidDataException($"LP-01 namespace/archive boundary: {result.BranchId} != {branch}.");
+        }
+
+        void Check(byte[] nuspec, params string[] aliases) => CheckResult(nuspec, "unsafe-package", aliases);
+
+        var namespaces = new[] { "", "2010/07", "2011/08", "2011/10", "2012/06", "2013/01", "2013/05" }
+            .Select(version => version.Length == 0 ? "" :
+                $"http://schemas.microsoft.com/packaging/{version}/nuspec.xsd");
+        foreach (var ns in namespaces.Append("http://example.com/nuspec.xsd"))
+        {
+            string Manifest(string license, string? metadataNamespace = null) =>
+                $"<package xmlns=\"{ns}\"><metadata" +
+                (metadataNamespace is null ? "" : $" xmlns=\"{metadataNamespace}\"") +
+                "><id>Sample.LP01</id><version>1.0.0</version>" + license + "</metadata></package>";
+            var supported = ns != "http://example.com/nuspec.xsd";
+            CheckResult(Encoding.UTF8.GetBytes(Manifest("<license type=\"expression\">MIT</license>")),
+                supported ? "approved-non-copyleft" : "unsafe-package");
+            if (supported)
+            {
+                var other = ns.Length == 0 ? "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd" : "";
+                CheckResult(Encoding.UTF8.GetBytes(Manifest(
+                    $"<license xmlns=\"{other}\" type=\"expression\">MIT</license>")), "unsafe-metadata");
+                CheckResult(Encoding.UTF8.GetBytes(Manifest(
+                    "<license type=\"expression\">MIT</license>", other)), "unsafe-package");
+            }
         }
 
         Check(source, "Stra\u00dfe.txt", "STRASSE.txt");

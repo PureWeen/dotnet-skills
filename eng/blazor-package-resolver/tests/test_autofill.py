@@ -67,6 +67,28 @@ def empty_observations():
 
 
 class SbomCollectionTests(unittest.TestCase):
+    def test_package_metadata_supports_all_nuspec_namespaces(self):
+        namespaces = ("", *(f"http://schemas.microsoft.com/packaging/{version}/nuspec.xsd"
+                            for version in ("2010/07", "2011/08", "2011/10", "2012/06", "2013/01", "2013/05")))
+        for namespace in (*namespaces, "http://example.com/nuspec.xsd"):
+            def control(metadata_namespace=None, id_namespace=None):
+                return archive({"Example.nuspec": (
+                    f'<package xmlns="{namespace}"><metadata' +
+                    (f' xmlns="{metadata_namespace}"' if metadata_namespace is not None else "") +
+                    '><id' + (f' xmlns="{id_namespace}"' if id_namespace is not None else "") +
+                    '>Example.Controls</id><version>1.0.0</version></metadata></package>').encode()})
+            with self.subTest(namespace=namespace):
+                if namespace not in namespaces:
+                    with self.assertRaisesRegex(ValueError, "namespace"):
+                        tool.package_metadata(control())
+                    continue
+                self.assertEqual(tool.package_metadata(control())["id"], "example.controls")
+                other = namespaces[-1] if not namespace else ""
+                with self.assertRaisesRegex(ValueError, "metadata"):
+                    tool.package_metadata(control(metadata_namespace=other))
+                with self.assertRaisesRegex(ValueError, "id"):
+                    tool.package_metadata(control(id_namespace=other))
+
     def test_exact_native_inventory_roles_holes_and_no_minimum_sampling(self):
         from oracles.lp03_sbom_expectations import sbom, encoded
         with tempfile.TemporaryDirectory(prefix="sbom-helper-") as directory:
@@ -205,12 +227,13 @@ class MappingTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 rows.checked_result(value, original["inputs"])
 
-    def test_lp02_version_is_admitted_only_for_its_reviewed_contract(self):
+    def test_versions_are_admitted_only_for_their_reviewed_contracts(self):
+        versions = {"LP-01": "1.1.0", "LP-02": "1.1.0", "LP-03": "1.2.0", "PI-01": "1.1.0"}
         for row in rows.ROWS:
             original = next(value for value in frozen_results() if value["row_id"] == row)
-            self.assertEqual(original["resolver_version"], "1.1.0" if row in ("LP-02", "LP-03") else "1.0.0")
+            self.assertEqual(original["resolver_version"], versions.get(row, "1.0.0"))
             value = copy.deepcopy(original)
-            value["resolver_version"] = "1.0.0" if row in ("LP-02", "LP-03") else "1.1.0"
+            value["resolver_version"] = "1.1.0" if row == "LP-03" or row not in versions else "1.0.0"
             with self.subTest(row=row), self.assertRaisesRegex(ValueError, "version"):
                 rows.checked_result(value, original["inputs"])
 

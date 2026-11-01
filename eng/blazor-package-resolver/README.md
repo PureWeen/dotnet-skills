@@ -213,10 +213,23 @@ cryptographically establish authority, inspect the repository or legally
 interpret grant text. The 198-case replay, six pre-dispatch loader rejections,
 Unicode/encoding boundaries and opt-in retained replays run in ResolverChecks.
 
+LP-01 `1.1.0` and PI-01 `1.1.0` accept the shared nuspec reader's empty namespace
+and all six official NuGet schema namespaces (2010/07, 2011/08, 2011/10,
+2012/06, 2013/01 and 2013/05). LP-01 no longer narrows the already admitted
+namespace set; PI-01 reuses the shared namespace predicate. Unknown roots remain
+unsafe, metadata must still match its root namespace, and LP-01 rejects mixed
+license namespaces. PI-01's existing package/metadata shape checks and assembly
+verification are unchanged; it does not classify license declarations.
+LP-03 is `1.2.0` because its dependency classifier reuses LP-01.
+The collector also recognizes 2011/10. Independent oracle and native boundary
+controls cover every supported namespace and unsupported/mixed namespace refusals.
+The frozen corpus gains result-version-only deltas, not rewritten inputs or branches;
+see [corpus preservation](tests/CORPUS.md). Handoff `1.3.0` rejects older saved state.
+
 The consumer's optional `autofill-eleven.py` orchestrates acquisition and the existing typed
 report producers. The resolver remains offline; apart from the reviewed LP-01 approved
 declaration correction and the LP-04 standard-packaging fix described below, its row
-classifiers are unchanged except for the explicit LP-03 B-prime change above. Its fixed 178-branch report
+classifiers are unchanged except for the explicit LP-03 B-prime and nuspec namespace changes above. Its fixed 178-branch report
 mapping is tested against every frozen result, including deterministic/escalated boundaries.
 Run `python eng\blazor-package-resolver\tests\test_autofill.py` for offline collector/mapping
 tests and `python eng\blazor-package-resolver\tests\test_shipping.py --autofill` for the

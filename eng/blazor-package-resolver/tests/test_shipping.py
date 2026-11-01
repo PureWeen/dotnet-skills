@@ -139,7 +139,7 @@ def lp03_installed_checks(plugin, work):
                 check.state, check.assessment = rebound["state"], rebound["assessment"]
                 tool["continue_command"](check, root)
                 legacy = dict(state)
-                legacy["producer"] = "eleven-row-handoff/1.1.0"
+                legacy["producer"] = "eleven-row-handoff/1.2.0"
                 old = root / "legacy-state.json"
                 old.write_bytes(encoded(legacy))
                 try:
@@ -769,7 +769,7 @@ def main():
                   for p in plugin.rglob("*") if p.is_file()}
         invocation = [sys.executable, str(helper)]
         coverage = run([*invocation, "coverage"], assessment)
-        if hashlib.sha256(coverage).hexdigest() != "1183c972c00b8b4249c2b8de66861a2afc04b7b9848debaff924e156f389a60d":
+        if hashlib.sha256(coverage).hexdigest() != "17c4b777bc53892a8c2fa35cb962053bc9b8fa84687658c87fb927e005dddf12":
             raise ValueError("Installed coverage changed.")
         if sys.argv[1:] == ["--launcher"]:
             print("Exact installed coverage invocation passed with hostile caller global.json, "

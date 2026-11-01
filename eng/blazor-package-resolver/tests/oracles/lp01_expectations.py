@@ -20,6 +20,8 @@ POLICY = ROOT / "policy" / "lp01-policy-1.0.0.json"
 CATALOG = ROOT / "policy" / "spdx-licenses-3.27.0.json"
 CATALOG_SHA = "157789ba91984aecba5c67b84168dbbd41a235b910a7569aa64bf42a88b24290"
 NS = "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"
+NAMESPACES = ("", *(f"http://schemas.microsoft.com/packaging/{version}/nuspec.xsd"
+                    for version in ("2010/07", "2011/08", "2011/10", "2012/06", "2013/01", "2013/05")))
 LICENSE = '<license type="expression">{}</license>'
 ZIP_DATE = (2020, 1, 1, 0, 0, 0)
 MAX_EXPRESSION_BYTES = 4096
@@ -492,13 +494,13 @@ def entry(name):
     return info
 
 
-def archive(name, metadata, file_text):
+def archive(name, metadata, file_text, namespace=None):
     if name in ("no-package",):
         return None
     if name == "corrupt-archive":
         return b"not-a-nupkg\n"
     variant = name.removeprefix("owner-")
-    namespace = ("urn:other" if variant == "foreign-root" else
+    namespace = namespace if namespace is not None else ("urn:other" if variant == "foreign-root" else
                  "http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd"
                  if variant == "old-namespace" else "" if variant == "no-namespace" else NS)
     extra = '<x:metadata xmlns:x="urn:other"/>' if variant.startswith("foreign-metadata") else ""
@@ -644,8 +646,7 @@ def classify_package(content, policy, licenses):
             root = checked_xml_root(nuspec)
             namespace = root.tag.removesuffix("package")
             if root.tag != namespace + "package" or namespace not in (
-                "", f"{{{NS}}}",
-                "{http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd}"
+                f"{{{ns}}}" if ns else "" for ns in NAMESPACES
             ):
                 return "unsafe-package", None, None
             metadata = [child for child in root if child.tag == namespace + "metadata"]
@@ -1142,7 +1143,7 @@ def result(branch, inputs, reference, contract=None):
         "policy:lp01-policy-1.0.0", "corpus:spdx-licenses-3.27.0"]
     if reference and branch not in unavailable:
         citations.insert(0, reference)
-    return dict(row_id="LP-01", resolver_id="lp01-license-policy", resolver_version="1.0.0",
+    return dict(row_id="LP-01", resolver_id="lp01-license-policy", resolver_version="1.1.0",
                 branch_id=branch, decision=decision,
                 applicability="unknown" if unknown else "applicable", inputs=inputs,
                 evidence_references=citations,
@@ -1298,6 +1299,18 @@ def main():
         check_negative_bindings()
         return
     policy_bytes, catalog_bytes, policy, licenses = policy_data()
+    for namespace in (*NAMESPACES, "http://example.com/nuspec.xsd"):
+        content = archive("namespace-control", LICENSE.format("MIT"), None, namespace)
+        supported = namespace in NAMESPACES
+        require(classify_package(content, policy, licenses)[0] ==
+                ("approved-non-copyleft" if supported else "unsafe-package"),
+                f"LP-01 namespace control failed: {namespace}")
+        if supported:
+            other = NS if not namespace else ""
+            mixed = f'<license xmlns="{other}" type="expression">MIT</license>'
+            require(classify_package(archive("namespace-control", mixed, None, namespace), policy, licenses)[0]
+                    == "unsafe-metadata", f"LP-01 mixed license namespace accepted: {namespace}")
+    print("LP-01 seven supported namespaces, unknown root and seven mixed-license controls passed.")
     synthetic = suite_data(policy_bytes, catalog_bytes, policy, licenses)
     acceptance = retained_data(policy_bytes, catalog_bytes, policy, licenses)
     rejected = rejected_input_data(policy_bytes, catalog_bytes, policy, licenses)

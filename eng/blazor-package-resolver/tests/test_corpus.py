@@ -23,6 +23,7 @@ def main():
     current = json.loads((fixtures / "lp01/cases.json").read_bytes())
     historical = copy.deepcopy(current)
     for case in historical["cases"]:
+        case["expected"]["resolver_version"] = "1.0.0"
         if case["expected"]["branch_id"] == "approved-non-copyleft":
             case["expected"].update(corpus.LP01_APPROVED_BEFORE)
     def encoded(value):
@@ -119,6 +120,46 @@ def main():
             else:
                 raise ValueError("LP-03 parent preservation accepted " + label)
     print("Named lp03-sbom-declarations-1.1.0 allowance accepted; 16 unrelated changes rejected; all legacy inputs unchanged.")
+    for row in ("lp01", "lp03", "pi01"):
+        for filename in ("cases.json", "acceptance.json"):
+            name = row + "/" + filename
+            historical_bytes = subprocess.check_output(["git", "show",
+                corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/" + name])
+            current_namespace = json.loads((fixtures / name).read_bytes())
+            corpus.check_parent_file(name, historical_bytes, encoded(current_namespace))
+            for label, change in (
+                ("version rollback", lambda suite: suite["cases"][0]["expected"].update(resolver_version="1.0.0")),
+                ("branch", lambda suite: suite["cases"][0]["expected"].update(branch_id="unreviewed")),
+                ("input pin", lambda suite: suite["cases"][-1]["inputs"][0].update(sha256="0" * 64)),
+                ("rationale", lambda suite: suite["cases"][0].update(rationale="unreviewed")),
+                ("finding", lambda suite: suite["cases"][0]["expected"].update(finding="unreviewed")),
+                ("extra case", lambda suite: suite["cases"].append(copy.deepcopy(suite["cases"][0]))),
+            ):
+                changed = copy.deepcopy(current_namespace)
+                change(changed)
+                try:
+                    corpus.check_parent_file(name, historical_bytes, encoded(changed))
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError("Nuspec namespace parent allowance accepted " + row + ": " + label)
+    before_foundation = subprocess.check_output(["git", "show",
+        corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/cases.json"])
+    current_foundation = (fixtures / "cases.json").read_bytes()
+    corpus.check_parent_file("cases.json", before_foundation, current_foundation)
+    for changed in (
+        current_foundation.replace(b'"1.1.0"', b'"1.2.0"', 1),
+        current_foundation.replace(b'"missing-policy"', b'"unreviewed"', 1),
+        current_foundation.replace(b'"c51ea103', b'"051ea103', 1),
+        current_foundation.replace(b'"synthetic-package"', b'"unreviewed"', 1),
+    ):
+        try:
+            corpus.check_parent_file("cases.json", before_foundation, changed)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("Foundation namespace allowance accepted unrelated changes")
+    print("Named nuspec-namespaces version-only allowances accepted; 40 unrelated changes rejected.")
     key = (fixtures / "pi01/template/public.snk").read_bytes()
     corpus.check(len(key) == 276 and key[:4] == b"\x06\x02\x00\x00" and key[8:12] == b"RSA1" and
                  struct.unpack_from("<I", key, 12)[0] == 2048, "Control key is not public-only")

@@ -9,6 +9,7 @@ namespace BlazorPackageResolver;
 
 public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
 {
+    private const string ResolverVersion = "1.1.0";
     private const string CorpusDigest = "157789ba91984aecba5c67b84168dbbd41a235b910a7569aa64bf42a88b24290";
     private const string PolicyDigest = "b395256c51e7c0ae68bf3a213aab90bee0479f6115c3507e456269d0cdd41f47";
     private const string OwnerContract =
@@ -51,7 +52,7 @@ public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
 
     public string RowId => "LP-01";
     public string ResolverId => "lp01-license-policy";
-    public string Version => "1.0.0";
+    public string Version => ResolverVersion;
 
     public CaseResult Resolve(ResolverCase input)
     {
@@ -156,10 +157,6 @@ public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
                 return new("unsafe-package");
             var metadata = read.Metadata;
             var ns = metadata.Name.Namespace;
-            if (ns.NamespaceName is not ("" or
-                "http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd" or
-                "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"))
-                return new("unsafe-package");
             var licenses = metadata.Elements()
                 .Where(e => e.Name.LocalName == "license").ToArray();
             if (licenses.Length > 1 || licenses.Any(e => e.Name.Namespace != ns))
@@ -674,7 +671,7 @@ public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
             _ when isOwner => OwnerContract,
             _ => null
         };
-        return new("LP-01", "lp01-license-policy", "1.0.0", branch,
+        return new("LP-01", "lp01-license-policy", ResolverVersion, branch,
             deterministic ? "deterministic" : "escalated", unavailable ? "unknown" : "applicable",
             input.Inputs, references, contract, finding,
             deterministic ? null : missing, deterministic ? null : required,

@@ -137,6 +137,7 @@ def package_metadata(data):
     document = ET.fromstring(text)
     namespaces = ("", "{http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd}",
                   "{http://schemas.microsoft.com/packaging/2011/08/nuspec.xsd}",
+                  "{http://schemas.microsoft.com/packaging/2011/10/nuspec.xsd}",
                   "{http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd}",
                   "{http://schemas.microsoft.com/packaging/2013/01/nuspec.xsd}",
                   "{http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd}")

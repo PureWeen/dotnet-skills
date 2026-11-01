@@ -5,6 +5,13 @@ and raw source/dependency archives are available but the stronger row-specific a
 are not. This preserves useful observations for LP-01/02/03/04/10 and PI-01; it is not another row resolver,
 acquisition operation, license review or route to a more generous pass label.
 
+LP-01 `1.1.0`, LP-03 `1.2.0` (through LP-01), PI-01 `1.1.0` and the collector
+recognize the empty nuspec namespace plus all six official NuGet schemas:
+2010/07, 2011/08, 2011/10, 2012/06, 2013/01 and 2013/05. Unknown root
+namespaces remain unsupported. Existing root/metadata namespace agreement and
+LP-01's license-element namespace checks are unchanged; PI-01 does not classify
+license declarations.
+
 The request is data, not an expected answer:
 
 ```json

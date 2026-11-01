@@ -54,13 +54,13 @@ using (var doc = JsonDocument.Parse(coverage))
             {
                 "LP-01" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp01-license-policy" &&
-                           row.GetProperty("resolver_version").GetString() == "1.0.0",
+                           row.GetProperty("resolver_version").GetString() == "1.1.0",
                 "LP-02" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp02-public-source" &&
                            row.GetProperty("resolver_version").GetString() == "1.1.0",
                 "LP-03" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp03-dependency-licenses" &&
-                           row.GetProperty("resolver_version").GetString() == "1.1.0",
+                           row.GetProperty("resolver_version").GetString() == "1.2.0",
                 "LP-04" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp04-notice-coverage" &&
                            row.GetProperty("resolver_version").GetString() == "1.0.0",
@@ -84,7 +84,7 @@ using (var doc = JsonDocument.Parse(coverage))
                            row.GetProperty("resolver_version").GetString() == "1.0.0",
                 "PI-01" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "pi01-strong-name" &&
-                           row.GetProperty("resolver_version").GetString() == "1.0.0",
+                           row.GetProperty("resolver_version").GetString() == "1.1.0",
                 _ => row.GetProperty("work_state").GetString() == "tbd" &&
                      !row.TryGetProperty("resolver_id", out _)
             })), "Only LP-01 through LP-10 and PI-01 are implemented; 49 rows remain TBD");

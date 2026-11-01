@@ -27,9 +27,9 @@ public sealed class Registry
     public static Registry Bootstrap(Catalog catalog) =>
         new(catalog, PackageIds.Split(' ').Select(id => id switch
         {
-            "LP-01" => new RegistryEntry(id, "implemented", "lp01-license-policy", "1.0.0"),
+            "LP-01" => new RegistryEntry(id, "implemented", "lp01-license-policy", "1.1.0"),
             "LP-02" => new RegistryEntry(id, "implemented", "lp02-public-source", "1.1.0"),
-            "LP-03" => new RegistryEntry(id, "implemented", "lp03-dependency-licenses", "1.1.0"),
+            "LP-03" => new RegistryEntry(id, "implemented", "lp03-dependency-licenses", "1.2.0"),
             "LP-04" => new RegistryEntry(id, "implemented", "lp04-notice-coverage", "1.0.0"),
             "LP-05" => new RegistryEntry(id, "implemented", "lp05-license-expression", "1.0.0"),
             "LP-06" => new RegistryEntry(id, "implemented", "lp06-repository-url", "1.0.0"),
@@ -37,7 +37,7 @@ public sealed class Registry
             "LP-08" => new RegistryEntry(id, "implemented", "lp08-authors", "1.0.0"),
             "LP-09" => new RegistryEntry(id, "implemented", "lp09-project-url", "1.0.0"),
             "LP-10" => new RegistryEntry(id, "implemented", "lp10-binary-attribution", "1.0.0"),
-            "PI-01" => new RegistryEntry(id, "implemented", "pi01-strong-name", "1.0.0"),
+            "PI-01" => new RegistryEntry(id, "implemented", "pi01-strong-name", "1.1.0"),
             _ => new RegistryEntry(id, "tbd")
         }), [new Lp01LicensePolicyResolver(), new Lp02PublicSourceResolver(), new Lp03DependencyLicensesResolver(),
             new Lp04NoticeCoverageResolver(),

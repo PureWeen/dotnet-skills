@@ -51,7 +51,7 @@ def result(branch, pins, detail=None):
         finding = "An exact dependency in the caller-designated release inventory declares an incompatible copyleft or non-OSI license under the pinned policy: " + detail
     elif detail is not None:
         missing = detail
-    return dict(row_id="LP-03", resolver_id="lp03-dependency-licenses", resolver_version="1.1.0",
+    return dict(row_id="LP-03", resolver_id="lp03-dependency-licenses", resolver_version="1.2.0",
                 branch_id=branch, decision="deterministic" if positive or negative else "escalated",
                 applicability="applicable" if positive or negative else "unknown", inputs=pins,
                 evidence_references=[f"input:{p['role']}:{p['sha256']}" for p in pins],

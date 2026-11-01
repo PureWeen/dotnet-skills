@@ -105,7 +105,7 @@ Implemented handlers are LP-01 through LP-10 and PI-01, at their frozen versions
 remain TBD. Coverage never establishes package compliance. The resolver preserves per-row
 precedence and qualified claims; do not broaden them into a full report.
 
-LP-03 `lp03-dependency-licenses/1.1.0` uses the caller-designated release-wide SBOM
+LP-03 `lp03-dependency-licenses/1.2.0` uses the caller-designated release-wide SBOM
 and exact inventoried nupkgs' own declarations through the actual LP-01 classifier.
 See [SBOM admission](references/sbom-inventory.md) for schema 2, the narrow retained
 SPDX 2.2 JSON profile and bounds. An admitted structure alone is not authoritative:

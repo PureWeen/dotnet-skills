@@ -27,6 +27,23 @@ LP-03 oracle changes. The old 66/77 guard/witness inventory is historical, not
 current positive coverage. New current-profile tests are separate from this store.
 Current lengths/digests are pinned in `lock.json`.
 
+The subsequent named `nuspec-namespaces` allowance changes only
+`expected.resolver_version` in seven documents: all 198 synthetic and two retained
+LP-01 results (`1.0.0` to `1.1.0`), 43 synthetic and two retained LP-03 results
+(`1.1.0` to `1.2.0`), and 138 synthetic and two retained PI-01 results
+(`1.0.0` to `1.1.0`), plus the foundation `synthetic-package` missing-policy
+LP-01 result (`1.0.0` to `1.1.0`). These 386 version-only changes identify the corrected
+namespace readers, including LP-03's reuse of LP-01. Every case keeps its
+existing branch, finding, evidence, rationale, ID and input pins: none of the
+locked archives uses a namespace newly admitted by this fix. Receipt templates
+retain their historical versions; they are not current execution receipts.
+No seed, input recipe, raw bank, policy, fixture input or historical LP-03 oracle
+changes. New generated namespace controls run outside the frozen fixture store.
+The parent guard composes this exact version-only allowance with the prior
+named deltas and rejects unrelated mutations in all seven documents. The foundation
+document keeps its raw-byte composition and formatting; only its LP-01 version
+digit changes, not the synthetic SUP-01 dispatcher result or test-only branch handlers.
+
 The compact store has 33 genuine/raw seeds and one shared SPDX catalog; all generated
 products are temporary. The aggregate review surface also includes the full report
 consumer restored from provenance commit `fefdaccbfdc0f34cec3d3ca5b8f7ea3fce4a68e3`
@@ -46,6 +63,8 @@ The LP-03 allowance first verifies the exact historical before-document digests,
 then admits only the specified version/contract/branch/escalation replacements
 in `lp03/cases.json` and `lp03/acceptance.json`. Its rationales/references/input
 pins are not rewritten to hide the deliberately refused legacy protocol.
+After those prior deltas, the namespace allowance replaces only the specified
+LP-01/LP-03/PI-01 result versions; no historical branch is reclassified.
 Every other byte must equal the accepted parent. Rejection tests cover unrelated
 result/input changes, changed branches/versions, extra cases and unreviewed README edits.
 Ordinary replay needs neither Git nor the parent commit.

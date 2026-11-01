@@ -21,6 +21,26 @@ internal static class Pi01BoundaryChecks
     internal static void Run(Registry registry, string fixtureRoot)
     {
         var directory = Path.Combine(fixtureRoot, "pi01");
+        var signed = File.ReadAllBytes(Path.Combine(directory, "templates", "verified.dll"));
+        var namespaces = new[] { "", "2010/07", "2011/08", "2011/10", "2012/06", "2013/01", "2013/05" }
+            .Select(version => version.Length == 0 ? "" :
+                $"http://schemas.microsoft.com/packaging/{version}/nuspec.xsd");
+        foreach (var ns in namespaces.Append("http://example.com/nuspec.xsd"))
+        {
+            byte[] Manifest(string metadataNamespace) => Encoding.UTF8.GetBytes(
+                $"<package xmlns=\"{ns}\"><metadata xmlns=\"{metadataNamespace}\">" +
+                "<id>Sample.PI01</id><version>1.0.0</version>" +
+                "<license type=\"expression\">MIT</license></metadata></package>");
+            var supported = ns != "http://example.com/nuspec.xsd";
+            CheckBranch(registry, Pack([("lib/Sample.dll", signed)], Manifest(ns)),
+                supported ? "verified-signed" : "unsafe-package", "PI-01 nuspec namespace " + ns);
+            if (supported)
+            {
+                var other = ns.Length == 0 ? "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd" : "";
+                CheckBranch(registry, Pack([("lib/Sample.dll", signed)], Manifest(other)),
+                    "unsafe-package", "PI-01 mixed metadata namespace " + ns);
+            }
+        }
         var suite = JsonSerializer.Deserialize<CaseSuite>(
             File.ReadAllBytes(Path.Combine(directory, "cases.json")), FixtureJson)
             ?? throw new InvalidDataException("Missing PI-01 frozen cases.");
@@ -148,12 +168,12 @@ internal static class Pi01BoundaryChecks
         Console.WriteLine("PI-01 supplemental module, ZIP name, alias, ordering, culture, resource, crypto and metadata checks passed.");
     }
 
-    private static byte[] Pack(IEnumerable<(string Name, byte[] Bytes)> entries)
+    private static byte[] Pack(IEnumerable<(string Name, byte[] Bytes)> entries, byte[]? nuspec = null)
     {
         using var buffer = new MemoryStream();
         using (var zip = new ZipArchive(buffer, ZipArchiveMode.Create, leaveOpen: true))
         {
-            Write(zip, "Sample.PI01.nuspec", Nuspec);
+            Write(zip, "Sample.PI01.nuspec", nuspec ?? Nuspec);
             foreach (var (name, bytes) in entries)
                 Write(zip, name, bytes);
         }

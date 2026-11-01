@@ -17,6 +17,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).parent / "fixtures" / "pi01"
 NS = "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"
+NAMESPACES = ("", *(f"http://schemas.microsoft.com/packaging/{version}/nuspec.xsd"
+                    for version in ("2010/07", "2011/08", "2011/10", "2012/06", "2013/01", "2013/05")))
 ZIP_DATE = (2020, 1, 1, 0, 0, 0)
 NUSPEC = (f'<package xmlns="{NS}"><metadata><id>Sample.PI01</id>'
           '<version>1.0.0</version></metadata></package>').encode()
@@ -901,8 +903,10 @@ def scan(content):
             require("\x00" not in text and "<!DOCTYPE" not in declarations.upper() and
                     "<!ENTITY" not in declarations.upper(), "unsafe nuspec XML")
             root = ET.fromstring(text)
-            require(root.tag == "{" + NS + "}package" and
-                    [child.tag for child in root] == ["{" + NS + "}metadata"],
+            namespace = root.tag.removesuffix("package")
+            require(namespace in (f"{{{ns}}}" if ns else "" for ns in NAMESPACES) and
+                    root.tag == namespace + "package" and
+                    [child.tag for child in root] == [namespace + "metadata"],
                     "invalid nuspec root or metadata")
             records = []
             total_bytes = 0
@@ -1002,7 +1006,7 @@ def result(inputs, branch, records):
                                  "supported-strong-name-algorithm-and-key-evidence",
                                  "package-owner"),
     }.get(branch, (None, None, None))
-    return dict(row_id="PI-01", resolver_id="pi01-strong-name", resolver_version="1.0.0",
+    return dict(row_id="PI-01", resolver_id="pi01-strong-name", resolver_version="1.1.0",
                 branch_id=branch, decision="deterministic" if decisive else "escalated",
                 applicability="unknown" if structural else "applicable", inputs=inputs,
                 evidence_references=evidence, evidence_contract=contract, finding=finding,
@@ -1132,6 +1136,23 @@ def check_negative_bindings():
 
 
 def boundary_checks():
+    for namespace in (*NAMESPACES, "http://example.com/nuspec.xsd"):
+        def control(metadata_namespace):
+            output = io.BytesIO()
+            with zipfile.ZipFile(output, "w") as archive:
+                archive.writestr(zip_entry("Sample.PI01.nuspec"), (
+                    f'<package xmlns="{namespace}"><metadata xmlns="{metadata_namespace}">'
+                    '<id>Sample.PI01</id><version>1.0.0</version>'
+                    '<license type="expression">MIT</license></metadata></package>').encode())
+                archive.writestr(zip_entry(EXAMPLE), VERIFIED)
+            return output.getvalue()
+        supported = namespace in NAMESPACES
+        require(scan(control(namespace))[0] == ("verified-signed" if supported else "unsafe-package"),
+                f"PI-01 namespace control failed: {namespace}")
+        if supported:
+            require(scan(control(NS if not namespace else ""))[0] == "unsafe-package",
+                    f"PI-01 mixed metadata namespace accepted: {namespace}")
+    print("PI-01 seven supported namespaces, unknown root and seven mixed-metadata controls passed.")
     at_entry = b"x" * (8 * 1024 * 1024)
     require(scan(package((("data.txt", at_entry),)))[0] == "no-assemblies",
             "At-limit entry must remain inspectable")

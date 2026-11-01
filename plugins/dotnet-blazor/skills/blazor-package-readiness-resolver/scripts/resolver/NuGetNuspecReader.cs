@@ -44,6 +44,8 @@ internal static class NuGetNuspecReader
         "http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd"
     };
 
+    internal static bool IsSupportedNamespace(string value) => NuGetNamespaces.Contains(value);
+
     internal static NuspecRead Read(ReadOnlyMemory<byte> content)
     {
         if (content.Length > MaxPackageBytes || !TryReadDirectory(content.Span, out var entryCount))
@@ -126,7 +128,7 @@ internal static class NuGetNuspecReader
 
         var root = document.Root;
         if (root is null || root.Name.LocalName != "package" ||
-            !NuGetNamespaces.Contains(root.Name.NamespaceName))
+            !IsSupportedNamespace(root.Name.NamespaceName))
             return new(NuspecStatus.ForeignRoot);
         var metadata = root.Elements()
             .Where(element => string.Equals(element.Name.LocalName, "metadata", StringComparison.Ordinal))

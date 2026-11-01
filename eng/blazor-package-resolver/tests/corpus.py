@@ -79,14 +79,40 @@ def sha(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def nuspec_namespace_version_delta(suite, row):
+    """Only result versions change; historical fixture bytes and branches stay frozen."""
+    versions = {"LP-01": ("lp01-license-policy", "1.0.0", "1.1.0"),
+                "LP-03": ("lp03-dependency-licenses", "1.1.0", "1.2.0"),
+                "PI-01": ("pi01-strong-name", "1.0.0", "1.1.0")}
+    resolver, before, after = versions[row]
+    for case in suite["cases"]:
+        result = case["expected"]
+        check(result["row_id"] == case["row_id"] == row and
+              result["resolver_id"] == resolver and result["resolver_version"] == before,
+              "Unexpected historical nuspec namespace result identity: " + row)
+        result["resolver_version"] = after
+
+
 def check_parent_file(name, before, after):
-    """Admit only named LP-01, LP-02 and LP-03 expected-output deltas."""
+    """Admit only named row deltas, including nuspec-namespaces version-only results."""
     if before == after:
+        return
+    if name == "cases.json":
+        expected = json.loads(before)
+        check(len(expected["cases"]) == 2 and
+              expected["cases"][0]["case_id"] == "synthetic-package" and
+              expected["cases"][0]["row_id"] == expected["cases"][0]["expected"]["row_id"] == "LP-01" and
+              expected["cases"][0]["expected"]["resolver_id"] == "lp01-license-policy" and
+              expected["cases"][0]["expected"]["resolver_version"] == "1.0.0",
+              "Unexpected historical foundation LP-01 identity")
+        reviewed = before.replace(b'"resolver_version": "1.0.0"', b'"resolver_version": "1.1.0"', 1)
+        check(after == reviewed, "Unreviewed foundation change outside nuspec-namespaces version delta")
         return
     if name in LP03_LEGACY_PINS:
         check(sha(before) == LP03_LEGACY_PINS[name], "Unexpected historical LP-03 bytes")
         expected = json.loads(before)
         lp03_declaration_delta(expected)
+        nuspec_namespace_version_delta(expected, "LP-03")
         reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
         check(after == reviewed, "Unreviewed LP-03 change outside lp03-sbom-declarations-1.1.0: " + name)
         return
@@ -106,8 +132,15 @@ def check_parent_file(name, before, after):
             changed += 1
         check(changed == (23 if name == "lp01/cases.json" else 2),
               "Unexpected historical LP-01 approved inventory")
+        nuspec_namespace_version_delta(expected, "LP-01")
         reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
         check(after == reviewed, "Unreviewed LP-01 change outside approved declaration delta: " + name)
+        return
+    if name in ("pi01/cases.json", "pi01/acceptance.json"):
+        expected = json.loads(before)
+        nuspec_namespace_version_delta(expected, "PI-01")
+        reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
+        check(after == reviewed, "Unreviewed PI-01 change outside nuspec-namespaces version delta: " + name)
         return
     if name == "lp01/README.md":
         check(sha(before) == "93eaab58da17a9c14d687159edaa84ad134406c1e5b38ab78e523fa89a8fe039" and
@@ -341,7 +374,8 @@ def main():
                 check_parent_file(name, old, (fixtures / name).read_bytes())
         print("Corpus verified:", len(lock["files"]), "exact paths;",
               sum(pin[1] for pin in lock["files"]), "bytes; locked canonical outputs verified"
-              " (only named LP-01 declaration, LP-02 public-availability and lp03-sbom-declarations-1.1.0 deltas are allowed against parent).")
+              " (only named LP-01 declaration, LP-02 public-availability, lp03-sbom-declarations-1.1.0"
+              " and nuspec-namespaces version-only deltas are allowed against parent).")
     else:
         manifest = fixtures / ("cases.json" if args.row == "foundation" else args.row + "/cases.json")
         subprocess.run(["dotnet", "run", "--no-restore", "--project",
