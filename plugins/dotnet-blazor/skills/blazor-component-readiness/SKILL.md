@@ -9,7 +9,7 @@ description: >-
   review, generic NuGet help, CI/PR/issue triage, implementation-only work, or certification.
   Deterministic package/evidence resolver invocation without a full report belongs to
   blazor-package-readiness-resolver; full reports remain here.
-compatibility: Requires an active .NET 11 SDK; full-library mode requires top-level writable worker sessions.
+compatibility: Requires an active .NET 11 SDK; package autofill also requires Python 3.10+ and stable .NET 10; full-library mode requires top-level writable worker sessions.
 ---
 
 # Blazor Component Readiness
@@ -180,12 +180,17 @@ For a package-based assessment, load the sibling skill `blazor-package-readiness
 If only this skill is staged, its bundled rubric/basis and validator still support input
 confirmation and separate package/component drafts. Report unavailable resolver replay explicitly;
 leave unsupported static conclusions unresolved rather than inventing results or blocking init.
-With the sibling available, invoke its bundled launcher on
-the exact local package and any supplied checked packet; consume the machine-readable output
-for LP-01 through LP-10 and PI-01 without inventing scope/owner evidence. Preserve complete row
-contracts and explicit unresolved results. These are static package facts, not component
-evidence or a complete report; the ordinary input-bound assessment/report workflow still owns
-all other rows and final validation. Do not look for an unshipped repository-root helper.
+With the sibling available, use the shipped
+[eleven-row autofill](references/eleven-row-autofill.md) after exact package/input confirmation:
+`python "<SKILL_DIR>/scripts/autofill-eleven.py" run --root "<output>" --nupkg "<exact.nupkg>" --candidates "<latest-candidates.json>" --confirmed "<confirmed.json>" --offline`.
+Supply retained source/dependencies, or replace `--offline` with explicitly authorized
+`--allow-network` collection. Use `--nuget-feed dotnet-public` for the public Azure DevOps mirror
+when nuget.org is blocked. The script runs both offline tools and produces evidence-bound
+LP-01 through LP-10 and PI-01 rows without model translation. Continue the other 49 rows on
+its incomplete draft, preserve its eleven decisions, and run its `check` before final validation.
+These are static package facts, not component evidence or a complete report. Missing owner,
+closure, review and build-mapping facts stay unresolved. The handoff documents manual fallback
+and rebinding after input changes; never invent admission or approval.
 
 For canonical assessments, [assessment workflow](references/assessment-workflow.md) sequences
 scope, final identity, evidence/status application, production, verification and partial work.

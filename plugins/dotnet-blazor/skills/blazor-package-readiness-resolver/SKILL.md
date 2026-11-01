@@ -33,6 +33,7 @@ outputs without turning them into component evidence or certification.
 |---|---|
 | An exact local `.nupkg` | `package` checks all 11 implemented rows with package bytes only. Missing checked evidence stays unresolved. |
 | A local `request.json` plus relative input files | `resolve` admits pinned roles/paths/SHA-256 and dispatches without expected answers. |
+| An `inputs.json` pinning a package and retained source/dependencies | `inspect` preserves broader literal observations and exact source matches without inventing complete/admitted row evidence. |
 | A frozen `cases.json` and its checked inputs | `replay` additionally requires exact complete expected results and evidence pointers. |
 | No assessment inputs | `coverage` lists 60 package rows: 11 implemented, 49 TBD. It is not an assessment. |
 
@@ -45,13 +46,14 @@ Acquisition and evidence admission are separate from offline classification.
 1. Resolve `SKILL_DIR` as the directory containing this loaded `SKILL.md`. Inspect the supplied
    local artifacts and requested scope. Do not search host caches or download missing inputs.
    Missing package bytes or malformed bindings are failures, not positive results.
-2. Select exactly one operation. These commands work in PowerShell, Bash or another shell with
+2. Select one operation per invocation. These commands work in PowerShell, Bash or another shell with
    Python available; replace the script prefix with its resolved installed path:
 
    ```text
    python "<SKILL_DIR>/scripts/run-resolver.py" coverage
    python "<SKILL_DIR>/scripts/run-resolver.py" package "<supplied.nupkg>"
    python "<SKILL_DIR>/scripts/run-resolver.py" resolve "<request.json>"
+   python "<SKILL_DIR>/scripts/run-resolver.py" inspect "<inputs.json>"
    python "<SKILL_DIR>/scripts/run-resolver.py" replay "<cases.json>"
    ```
 
@@ -91,6 +93,11 @@ Acquisition and evidence admission are separate from offline classification.
    evidence is missing. Cite the preserved result and its checked bytes when handing off.
 
 ## Validation and interpretation
+
+When raw source/dependencies are retained but no admitted row packet exists, follow
+[evidence inspection](references/evidence-inspection.md). Missing stronger evidence is not a
+reason to discard supported dependency declarations, source/project observations or exact text
+matches. `inspect` does not relax the `resolve` contracts or assign statuses.
 
 Implemented handlers are LP-01 through LP-10 and PI-01, at their frozen versions. Other rows
 remain TBD. Coverage never establishes package compliance. The resolver preserves per-row

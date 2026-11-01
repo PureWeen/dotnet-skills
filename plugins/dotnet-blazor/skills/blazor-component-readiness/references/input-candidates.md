@@ -218,6 +218,14 @@ instant remain explicit. `--input` still means the previous evidence draft for i
 
 ## Post-output confirmation
 
+The shipped [eleven-row autofill](eleven-row-autofill.md) orchestrates these same typed
+commands; it does not author candidates, canonical identities, ledgers or EV1 IDs itself.
+Its `run` requires the latest candidates to reproduce the current confirmed manifest.
+Only the three authorized derived result documents and actual acquisition records are appended.
+`rebind` reuses unchanged registered results and actual capture metadata against a new confirmed
+identity; every added unrelated evidence basename must be explicitly named. Relevant source,
+owner, packet or byte changes require fresh collection/inspection instead.
+
 If an authorized collection produced a result after confirmation, preserve its original manifest
 and bytes. Use `inputs candidates add-evidence` on the retained latest candidates, write a new
 candidate, `inputs discover` a new draft and explicitly `inputs confirm` a new final manifest.

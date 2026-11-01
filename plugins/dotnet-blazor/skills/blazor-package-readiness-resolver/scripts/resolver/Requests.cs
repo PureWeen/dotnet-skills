@@ -5,6 +5,7 @@ namespace BlazorPackageResolver;
 
 public sealed record ResolveRequest(int SchemaVersion, List<RequestedCase> Cases);
 public sealed record RequestedCase(string CaseId, string RowId, List<PinnedInput> Inputs);
+public sealed record InspectionRequest(int SchemaVersion, List<PinnedInput> Inputs);
 
 /// <summary>Bounded admission without expected answers; row classification is unchanged.</summary>
 public static class Requests
@@ -36,29 +37,49 @@ public static class Requests
                 string.IsNullOrWhiteSpace(item.CaseId) || string.IsNullOrWhiteSpace(item.RowId) ||
                 !ids.Add(item.CaseId) || item.Inputs is not { Count: <= 512 })
                 throw new InvalidDataException("Invalid case identity or input count.");
-            var inputs = new Dictionary<string, CheckedInput>(StringComparer.Ordinal);
-            foreach (var pin in item.Inputs)
-            {
-                if (pin is null || pin.Role is not { Length: > 0 and <= 128 } || string.IsNullOrWhiteSpace(pin.Role) ||
-                    inputs.ContainsKey(pin.Role) || !Relative(pin.Path) ||
-                    !Regex.IsMatch(pin.Sha256 ?? "", "\\A[a-f0-9]{64}\\z", RegexOptions.CultureInvariant))
-                    throw new InvalidDataException("Invalid input identity.");
-                var path = root;
-                foreach (var part in pin.Path.Split('/'))
-                {
-                    path = Path.Combine(path, part);
-                    if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
-                        throw new InvalidDataException("Linked inputs are unsupported.");
-                }
-                var bytes = Read(path, (int)Math.Min(FileLimit, TotalLimit - total));
-                total += bytes.Length;
-                if (Catalog.Digest(bytes) != pin.Sha256)
-                    throw new InvalidDataException("Input digest mismatch.");
-                inputs.Add(pin.Role, new(pin, bytes));
-            }
+            var inputs = CheckInputs(root, item.Inputs, ref total);
             results.Add((item.CaseId, registry.Dispatch(new(item.CaseId, item.RowId, item.Inputs, inputs))));
         }
         return Write(results);
+    }
+
+    public static byte[] Inspect(string manifestPath)
+    {
+        var full = FullPath(manifestPath);
+        using var document = JsonDocument.Parse(Read(full, 1024 * 1024), new() { MaxDepth = 16 });
+        Unique(document.RootElement);
+        var request = document.Deserialize<InspectionRequest>(Options);
+        if (request is not { SchemaVersion: 1, Inputs.Count: > 0 and <= 66 })
+            throw new InvalidDataException("Unsupported or oversized inspection request.");
+        long total = 0;
+        var inputs = CheckInputs(Path.GetDirectoryName(full)!, request.Inputs, ref total);
+        return PackageEvidenceInspection.Run(request.Inputs, inputs);
+    }
+
+    private static Dictionary<string, CheckedInput> CheckInputs(
+        string root, List<PinnedInput> pins, ref long total)
+    {
+        var inputs = new Dictionary<string, CheckedInput>(StringComparer.Ordinal);
+        foreach (var pin in pins)
+        {
+            if (pin is null || pin.Role is not { Length: > 0 and <= 128 } || string.IsNullOrWhiteSpace(pin.Role) ||
+                inputs.ContainsKey(pin.Role) || !Relative(pin.Path) ||
+                !Regex.IsMatch(pin.Sha256 ?? "", "\\A[a-f0-9]{64}\\z", RegexOptions.CultureInvariant))
+                throw new InvalidDataException("Invalid input identity.");
+            var path = root;
+            foreach (var part in pin.Path.Split('/'))
+            {
+                path = Path.Combine(path, part);
+                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0)
+                    throw new InvalidDataException("Linked inputs are unsupported.");
+            }
+            var bytes = Read(path, (int)Math.Min(FileLimit, TotalLimit - total));
+            total += bytes.Length;
+            if (Catalog.Digest(bytes) != pin.Sha256)
+                throw new InvalidDataException("Input digest mismatch.");
+            inputs.Add(pin.Role, new(pin, bytes));
+        }
+        return inputs;
     }
 
     public static byte[] Package(string packagePath, Registry registry)

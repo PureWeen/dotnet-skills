@@ -216,6 +216,22 @@ cryptographically establish authority, inspect the repository or legally
 interpret grant text. The 198-case replay, six pre-dispatch loader rejections,
 Unicode/encoding boundaries and opt-in retained replays run in ResolverChecks.
 
+The consumer's optional `autofill-eleven.py` orchestrates acquisition and the existing typed
+report producers. The resolver remains offline; apart from the LP-04 standard-packaging fix
+described below, its row classifiers are unchanged. Its fixed 179-branch report
+mapping is tested against every frozen result, including deterministic/escalated boundaries.
+Run `python eng\blazor-package-resolver\tests\test_autofill.py` for offline collector/mapping
+tests and `python eng\blazor-package-resolver\tests\test_shipping.py --autofill` for the
+installed producer chain, unchanged-row checks, rebinding and single-skill rejection.
+The full shipping suite also includes that integration. No test makes network or model calls.
+The two frozen policy/catalog copies are shipping reference assets with the same digests as
+the corpus seeds, not new policy or owner attestations. Resolver source/data fingerprints
+deliberately require report-mapping review when the bundled tool changes.
+For explicitly authorized network collection behind a blocked nuget.org endpoint,
+`--nuget-feed dotnet-public` selects the repository's public Azure DevOps mirror, with
+one restricted provider-blob redirect and no retained signed query. Default feed behavior
+and offline operation are unchanged.
+
 Run from the repository root with the normal SDK in `global.json`:
 
 ```text
@@ -245,6 +261,7 @@ Installed use needs only the complete plugin:
 ```text
 python plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/scripts/run-resolver.py package <supplied.nupkg>
 python plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/scripts/run-resolver.py resolve <checked-request.json>
+python plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/scripts/run-resolver.py inspect <checked-inputs.json>
 ```
 
 `resolve` admits a bounded schema-version-1 request with `case_id`, `row_id` and pinned
@@ -252,6 +269,23 @@ python plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/scripts/ru
 and canonical result writer. Native checks compare this path against all 870 accepted
 foundation/row outcomes. Invalid bindings, duplicates, unknown fields, links and resource
 limits fail explicitly. The installed launcher does not expose acquisition.
+
+`inspect` preserves broader evidence without changing the row classifiers: one checked root,
+an optional source ZIP and up to 64 distinct checked dependency nupkgs produce literal license
+and dependency/repository declarations, bounded literal license/notice text and source notice
+candidates, root entry hashes, Razor/project/inherited-build observations, exact source-byte
+matches and per-PE assembly identity/signing fields through the existing strict PE inspector.
+It does not manufacture anonymous retrieval, full resolved closure,
+grant applicability, notice obligations or binary build mapping. See the shipping
+[inspection contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/evidence-inspection.md).
+The consumer registers the packet as supplemental evidence and preserves useful facts even
+when the deciding row remains unresolved. The existing LP-02 verified profile and LP-03/04/10
+admission/attribution boundaries are unchanged.
+
+`dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj -- breadth`
+runs the unchanged LP-04 frozen matrix plus ordinary NuGet OPC/directory regressions and checked
+evidence-inspection tests. Standard root `[Content_Types].xml` is a packaging exception, not
+permission for bracketed checked-input paths or unsafe/nested archive paths.
 
 `coverage` emits ordered, canonical UTF-8 JSON with the two source digests and
 per-row scope, text, clause, and work state. `replay` reads a `schema_version: 1`

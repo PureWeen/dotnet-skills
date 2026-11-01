@@ -27,7 +27,8 @@ internal sealed record Lp04PackageEvidence(string Id, string Version,
                 entry.FullName.EndsWith('/') && entry.Length != 0 ||
                 ((entry.ExternalAttributes >> 16) & 0xf000) == 0xa000) ||
                 !Lp01ArchiveIntegrity.Validate(content.Span, entries, allowNameAliases: allowNames)) return null;
-            var safe = names.All(Lp04NoticeCoverageResolver.SafePath);
+            var safe = names.All(name => name == "[Content_Types].xml" ||
+                Lp04NoticeCoverageResolver.SafePath(name.EndsWith('/') ? name[..^1] : name));
             var nuspecs = entries.Where(entry => !entry.FullName.Contains('/') &&
                 entry.FullName.EndsWith(".nuspec", StringComparison.OrdinalIgnoreCase)).ToArray();
             if (nuspecs.Length != 1 || nuspecs[0].Length > 1024 * 1024) return null;
@@ -51,7 +52,7 @@ internal sealed record Lp04PackageEvidence(string Id, string Version,
             id = id.ToLowerInvariant();
             if (!Lp03DependencyLicensesResolver.ValidId(id) || !Lp03DependencyLicensesResolver.ValidVersion(version)) return null;
             var observed = new Dictionary<string, Lp04EntryEvidence>(StringComparer.Ordinal);
-            foreach (var entry in entries)
+            foreach (var entry in entries.Where(entry => !entry.FullName.EndsWith('/')))
             {
                 using var source = entry.Open();
                 using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);

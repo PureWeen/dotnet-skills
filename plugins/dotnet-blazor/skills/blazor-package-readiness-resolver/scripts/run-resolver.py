@@ -38,7 +38,7 @@ def pin_sdk(dotnet, scratch, env):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("coverage", "package", "resolve", "replay"))
+    parser.add_argument("command", choices=("coverage", "package", "resolve", "inspect", "replay"))
     parser.add_argument("input", nargs="?")
     args = parser.parse_args()
     if (args.command == "coverage") != (args.input is None):

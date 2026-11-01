@@ -73,6 +73,20 @@ the required fact, identity binding or coverage. Carry the supported fact and ex
 forward; an index or summary does not replace inspection of the relevant underlying record.
 Follow [saved-output evidence recovery](../SKILL.md#saved-output-evidence-recovery).
 
+For package LP-01/02/03/04/10, follow the [resolver handoff](package-resolver.md) after
+source/dependency collection. Its checked inspection route preserves usable partial facts from
+raw archives even when no admitted row packet can be produced. Carry those facts and the exact
+remaining limitation into the canonical observation; do not replace them with a generic
+"evidence missing" merely because the overall status stays unresolved.
+
+In a full-plugin package assessment, [eleven-row autofill](eleven-row-autofill.md) owns
+LP-01 through LP-10 and PI-01 acquisition, evidence and decisions. Continue from its canonical
+incomplete draft using decisions for only the other 49 IDs. Keep its immutable ledger and
+include its selected IDs in the final input-bound bundle. Run its read-only `check` after
+continuation. Adding inputs changes the assessment subject: use its `rebind` for explicitly
+unrelated supplemental evidence, or a fresh `run` for relevant changes; rebuild the other
+ledgers/IDs through the producers too. Never transplant old subject-bound EV1 IDs.
+
 Use the [input producer](input-candidates.md) for typed `evidence draft-add`, actual capture
 metadata, and the post-output confirmation sequence. Preserve the pre-output manifest and
 authorized derived result; append only that result to new candidates, discover and explicitly

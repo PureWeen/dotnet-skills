@@ -8,9 +8,19 @@ initialize the separate report from confirmed inputs, preserve unresolved static
 state that resolver replay is unavailable. Do not invent JSON results, search an unrelated
 checkout, download tools, or block the report's own input/assessment initialization.
 
+For the full-plugin package workflow, use [eleven-row autofill](eleven-row-autofill.md).
+It collects explicitly authorized inputs, invokes both offline tools, and constructs the eleven
+canonical row decisions and evidence through the existing producers. Do not translate those
+results again in model prose. Continue the other 49 rows and check preservation of the eleven.
+The manual sequence below remains available for individually scoped evidence work and diagnostics;
+it does not authorize bypassing the autofill's unknown-branch or changed-tool failures.
+
 1. Use the approved exact local `.nupkg`. Invoke the sibling's
    `scripts/run-resolver.py package <path>` or `resolve <request.json>` with supplied checked
-   packet files. No acquisition, dependency restore, package build or assessed-code execution.
+   packet files. The resolver is offline: no acquisition, dependency restore, package build or
+   assessed-code execution. This does not cancel the assessment's authorized
+   [source/dependency acquisition](artifact-acquisition.md). Package-level scope is not a
+   restriction to package-file-only evidence.
 2. Retain the command, exit, exact JSON bytes and SHA-256 under the approved output root.
    Do not treat exit 0 as verification. Missing environment/bundled files or invalid input
    is an explicit blocker, not guessed evidence or a product gap.
@@ -24,12 +34,25 @@ checkout, download tools, or block the report's own input/assessment initializat
    `not tested` or `owner evidence required` with the exact deciding missing fact.
    Preserve stronger conjuncts from the report's status boundaries; no mapping by exit code
    or `decision` alone is allowed.
-5. The existing typed input producer accepts supplemental `document` evidence. Register the
+5. Before finalizing unresolved LP-01/02/03/04/10 observations, inspect the authorized retained
+   source and exact dependency packages. When raw archives exist but admitted row packets do
+   not, use the sibling's `inspect <inputs.json>` route and its
+   [checked inspection contract](../../blazor-package-readiness-resolver/references/evidence-inspection.md).
+   Preserve literal licenses/ranges, source/project/import facts and exact per-entry matches
+   alongside the stronger missing facts. Do not label those present observations absent or
+   discard them merely because the full row remains unresolved. The inspection packet does
+   not attest anonymous retrieval, resolved closure, ownership, applicability or notice coverage.
+   Do not relabel an old static graph as an admitted resolved export or invent a review/receipt.
+6. The existing typed input producer accepts supplemental `document` evidence. Register the
    retained JSON as a document using [input candidates](input-candidates.md), preserve its
    capture metadata/byte digest and confirm a **new** input revision before building evidence
    and assessment records. Cite exact row/result/input references in the deciding evidence.
    Resolver output has no special trusted evidence kind and bypasses no confirmation.
-6. Continue the [assessment workflow](assessment-workflow.md) for all selected report rows.
+7. After newly authorized source/dependency collection, run inspection on the new exact bytes;
+   run `resolve` again only when the required admitted row packets actually exist. Reconfirm
+   the supplemental outputs, then recompute affected provisional observations/statuses before
+   finalizing. Preserve old outputs as evidence, not the current decision after inputs change.
+8. Continue the [assessment workflow](assessment-workflow.md) for all selected report rows.
    The resolver implements only 11 of 60 package rows and no component-specific row.
    Never manufacture completion, legal correctness, release approval or certification.
 

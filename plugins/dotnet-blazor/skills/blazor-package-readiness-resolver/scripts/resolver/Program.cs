@@ -10,6 +10,7 @@ try
         [] or ["coverage"] => registry.Coverage(catalog),
         ["replay", var manifest] => Replay.Run(manifest, registry),
         ["resolve", var request] => Requests.Run(request, registry),
+        ["inspect", var request] => Requests.Inspect(request),
         ["package", var package] => Requests.Package(package, registry),
         ["acquire-lp02", var package, var destination, var project, var implementation, var rationale] =>
             await Lp02SourceAcquisition.CaptureAsync(package, destination, project, implementation, rationale),
@@ -18,9 +19,11 @@ try
     using var stdout = Console.OpenStandardOutput();
     stdout.Write(output);
 }
-catch (InvalidDataException)
+catch (InvalidDataException error)
 {
-    Console.Error.WriteLine("Invalid resolver catalog or replay contract.");
+    Console.Error.WriteLine(args is ["inspect", _]
+        ? "Invalid resolver catalog or input contract: " + error.Message
+        : "Invalid resolver catalog or replay contract.");
     Environment.ExitCode = 2;
 }
 catch (JsonException)
@@ -40,7 +43,7 @@ catch (UnauthorizedAccessException)
 }
 catch (CliUsageException)
 {
-    Console.Error.WriteLine("Usage: blazor-package-resolver [coverage | resolve <request.json> | package <nupkg> | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]");
+    Console.Error.WriteLine("Usage: blazor-package-resolver [coverage | resolve <request.json> | inspect <inputs.json> | package <nupkg> | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]");
     Environment.ExitCode = 2;
 }
 

@@ -116,6 +116,7 @@ internal static class Lp04Checks
 
     internal static void Run(Registry registry, Catalog catalog, string directory)
     {
+        StandardPackaging(registry);
         foreach (var (path, hash) in FrozenHashes)
             Require(Catalog.Digest(File.ReadAllBytes(Path.Combine(directory, path))) == hash, $"Phase A pin: {path}");
         CheckOracle();
@@ -793,6 +794,49 @@ internal static class Lp04Checks
             "<license type=\"expression\">MIT</license></metadata></package>");
         return [(id + ".nuspec", nuspec), .. entries];
     }
+    private static void StandardPackaging(Registry registry)
+    {
+        var metadata = Encoding.UTF8.GetBytes(
+            "<package><metadata><id>sample.library</id><version>1.0.0</version></metadata></package>");
+        foreach (var directories in new[] { false, true })
+        {
+            var entries = new List<(string Path, byte[] Bytes)>
+            {
+                ("sample.library.nuspec", metadata),
+                ("[Content_Types].xml", "<Types/>"u8.ToArray()),
+                ("lib/net8.0/readme.txt", "passive"u8.ToArray())
+            };
+            if (directories) entries.AddRange([("lib/", []), ("lib/net8.0/", [])]);
+            var bytes = WriteZip(entries);
+            var observed = Lp04PackageEvidence.Read(bytes, [], null);
+            Require(observed is { Safe: true, Duplicates: false, Aliases: false } &&
+                observed.Entries.Count == 3 && observed.Entries.ContainsKey("[Content_Types].xml"),
+                "Standard root OPC entry and safe empty directories are admitted as packaging, not unsafe paths");
+            var scope = Encoding.UTF8.GetBytes($$"""
+                {"schema_version":1,"root":{"id":"sample.library","version":"1.0.0","sha256":"{{Catalog.Digest(bytes)}}"},
+                 "target_frameworks":["net8.0"],"asset_scope":"all-root-package-entries"}
+                """);
+            var packagePin = new PinnedInput("package", "package.nupkg", Catalog.Digest(bytes));
+            var scopePin = new PinnedInput("assessment", "scope.json", Catalog.Digest(scope));
+            var result = registry.Dispatch(new("standard-packaging", "LP-04", [packagePin, scopePin],
+                new Dictionary<string, CheckedInput>
+                {
+                    ["package"] = new(packagePin, bytes), ["assessment"] = new(scopePin, scope)
+                }));
+            Require(result.BranchId == "evidence-missing" && result.Decision == "escalated",
+                "Ordinary packaging reaches the genuine missing notice evidence, never a false invalid-input result");
+        }
+        foreach (var path in new[] { "nested/[Content_Types].xml", "../escape/", "CON/" })
+        {
+            var bytes = WriteZip([("sample.library.nuspec", metadata), (path, [])]);
+            Require(Lp04PackageEvidence.Read(bytes, [], null) is not { Safe: true },
+                "The packaging exception does not admit nested bracket names, traversal or device directories");
+        }
+        Require(!Lp04NoticeCoverageResolver.SafePath("[Content_Types].xml"),
+            "The exact archive packaging exception does not weaken checked evidence path rules");
+        Console.WriteLine("LP-04 standard NuGet packaging and directory profile checks passed.");
+    }
+
     private static byte[] WriteZip(IEnumerable<(string Path, byte[] Bytes)> entries, int attributes = unchecked((int)0x81a40000))
     {
         using var buffer = new MemoryStream();

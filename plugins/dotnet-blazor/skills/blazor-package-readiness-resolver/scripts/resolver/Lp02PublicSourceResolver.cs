@@ -170,7 +170,7 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
         RelativePath.IsMatch(path) && !path.Split('/').Any(p => p is "." or "..");
 
     internal static bool TryArchive(ReadOnlyMemory<byte> bytes, out Dictionary<string, byte[]> files,
-        string? sourceCommit = null)
+        string? sourceCommit = null, bool allowSpaces = false)
     {
         files = new(StringComparer.Ordinal);
         if (!NuGetNuspecReader.HasBoundedDirectory(bytes.Span, out var count)) return false;
@@ -179,7 +179,7 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
             using var stream = new MemoryStream(bytes.ToArray(), writable: false);
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read, false, Lp01ArchiveIntegrity.Cp437);
             if (archive.Entries.Count != count || archive.Entries.Any(e =>
-                !(SafePath(e.FullName.EndsWith('/') ? e.FullName[..^1] : e.FullName) ||
+                !(SafeArchivePath(e.FullName.EndsWith('/') ? e.FullName[..^1] : e.FullName, allowSpaces) ||
                     e.FullName == "[Content_Types].xml") ||
                 e.FullName.EndsWith('/') && e.Length != 0 ||
                 (e.ExternalAttributes >> 16 & 0xf000) == 0xa000) ||
@@ -199,6 +199,10 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
         catch (IOException) { return false; }
         catch (NotSupportedException) { return false; }
     }
+
+    private static bool SafeArchivePath(string path, bool allowSpaces) => SafePath(path) ||
+        allowSpaces && path.Split('/').All(part => !part.StartsWith(' ') && !part.EndsWith(' ')) &&
+        SafePath(path.Replace(' ', '_'));
 
     private static Lp02Observation? ReadObservation(ReadOnlyMemory<byte> bytes)
     {

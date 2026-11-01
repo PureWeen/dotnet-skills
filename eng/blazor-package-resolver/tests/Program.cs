@@ -25,6 +25,12 @@ if (args is ["lp04"])
     Lp04Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp04"));
     return;
 }
+if (args is ["breadth"])
+{
+    Lp04Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp04"));
+    EvidenceInspectionChecks.Run(fixtureRoot);
+    return;
+}
 var expectedIds = ("LP-01 LP-02 LP-03 LP-04 LP-05 LP-06 LP-07 LP-08 LP-09 LP-10 " +
     "PI-01 PI-02 PI-03 PI-04 PI-05 PI-06 PI-07 PI-08 PI-09 PI-10 PI-11 PI-12 " +
     "SEC-01 SEC-02 SEC-03 SEC-04 SEC-05 SEC-06 SEC-07 SEC-08 SEC-09 " +
@@ -180,6 +186,7 @@ Lp01BoundaryChecks.Run(registry, lp01Directory);
 Lp02Checks.Run(registry, Path.Combine(fixtureRoot, "lp02"));
 Lp03Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp03"));
 Lp04Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp04"));
+EvidenceInspectionChecks.Run(fixtureRoot);
 var lp01Syncfusion = Environment.GetEnvironmentVariable("LP01_SYNCFUSION_NUPKG");
 var lp01Infragistics = Environment.GetEnvironmentVariable("LP01_INFRAGISTICS_NUPKG");
 Check((lp01Syncfusion is null) == (lp01Infragistics is null),
@@ -700,7 +707,10 @@ try
     CliReject("Invalid resolver catalog or replay contract.", "replay", path);
     File.WriteAllText(path, suite.Replace("\"path\": \"owner.txt\"", "\"path\": \"\\u0000\""));
     CliReject("Invalid resolver catalog or replay contract.", "replay", path);
-    CliReject("Usage: blazor-package-resolver [coverage | resolve <request.json> | package <nupkg> | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]", "replay");
+    File.WriteAllText(path, """{"schema_version":2,"inputs":[]}""");
+    CliReject("Invalid resolver catalog or input contract: Unsupported or oversized inspection request.",
+        "inspect", path);
+    CliReject("Usage: blazor-package-resolver [coverage | resolve <request.json> | inspect <inputs.json> | package <nupkg> | replay <cases.json> | acquire-lp02 <nupkg> <new-directory> <archive-project-path> <archive-implementation-path> <rationale>]", "replay");
 }
 finally
 {
@@ -710,7 +720,7 @@ finally
 RequestChecks.Run(registry, fixtureRoot);
 var source = FixtureCorpus.Runtime;
 var allowed = new HashSet<string>(StringComparer.Ordinal)
-    {     "Catalog.cs", "Registry.cs", "Cases.cs", "Program.cs", "Requests.cs",
+    {     "Catalog.cs", "Registry.cs", "Cases.cs", "Program.cs", "Requests.cs", "PackageEvidenceInspection.cs",
       "Lp01LicensePolicyResolver.cs", "Lp01SpdxExpression.cs", "Lp01CaseFold.cs",
       "Lp01ArchiveIntegrity.cs", "AssemblyInfo.cs",
       "Lp02PublicSourceResolver.cs", "Lp02SourceAcquisition.cs",

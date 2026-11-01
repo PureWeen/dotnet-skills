@@ -202,6 +202,16 @@ Read it before invoking `release facts`; it is not a prerequisite for ordinary a
 
 ## Resource limits and cleanup
 
+The optional [eleven-row autofill](eleven-row-autofill.md) performs bounded static collection
+without extracting or executing assessed content. Network requires `--allow-network`; it uses
+`api.nuget.org` or the explicit `--nuget-feed dotnet-public` Azure DevOps mirror, plus
+`codeload.github.com`, with HTTPS certificate validation and no credentials or proxies.
+Only that Azure feed may redirect once to a bounded provider blob; signed queries are not retained.
+Per-attempt/aggregate deadlines, byte limits and actual request-hop records remain enforced.
+Dependencies are explicitly a literal-minimum declaration sample, never a resolved closure.
+Its offline mode accepts retained archives and packages without using network or host caches.
+Transport and admission limitations remain evidence boundaries, not product gaps.
+
 Honor validator ceilings: 256 MiB nupkg, 1 MiB nuspec, 4 MiB authored ledger, 64 MiB serialized
 artifact, and at most 32 supplemental evidence inputs totaling 64 MiB.
 
