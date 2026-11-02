@@ -28,8 +28,6 @@ internal static class Lp03SbomChecks
             Check(process.ExitCode == 0, output.Result + error.Result);
             // Python writes prescribed stimuli/answers only; this calls the actual native resolver.
             var fixture = Path.Combine(root, "cases.json");
-            var first = Replay.Run(fixture, registry);
-            Check(first.SequenceEqual(Replay.Run(fixture, registry)), "Current profile replay determinism");
             var cases = JsonNode.Parse(File.ReadAllBytes(fixture))!["cases"]!.AsArray();
             var positive = cases.Single(c => (string?)c!["case_id"] == "all-mit-no-grants-no-reviews")!;
             var pins = positive["inputs"]!.AsArray();
@@ -40,6 +38,9 @@ internal static class Lp03SbomChecks
                 return new CheckedInput(pin, File.ReadAllBytes(Path.Combine(root, pin.Path)));
             }, StringComparer.Ordinal);
             var mutations = 0;
+            MixedInventoryChecks.Run(registry, checkedInputs);
+            var first = Replay.Run(fixture, registry);
+            Check(first.SequenceEqual(Replay.Run(fixture, registry)), "Current profile replay determinism");
             void Mutate(string role, Action<JsonNode> edit, string branch)
             {
                 var inputs = new Dictionary<string, CheckedInput>(checkedInputs, StringComparer.Ordinal);
@@ -68,7 +69,7 @@ internal static class Lp03SbomChecks
             Mutate("sbom", d => d["packages"]!.AsArray().RemoveAt(1), "closure-unresolved");
             Mutate("sbom", d => d["relationships"]!.AsArray().Add(d["relationships"]![1]!.DeepClone()), "closure-unresolved");
             Mutate("sbom", d => d["packages"]![2]!["name"] = "other", "binding-conflict");
-            Mutate("sbom", d => d["packages"]![2]!["externalRefs"]![0]!["referenceLocator"] = "pkg:npm/example@1.0.0", "closure-unresolved");
+            Mutate("sbom", d => d["packages"]![2]!["externalRefs"]![0]!["referenceLocator"] = "pkg:npm/example@1.0.0", "binding-conflict");
             Mutate("sbom", d => d["relationships"]![2]!["relationshipType"] = "OPTIONAL_DEPENDENCY_OF", "closure-unresolved");
             Mutate("sbom", d => d["documentDescribes"]!.AsArray().Add("SPDXRef-Root"), "closure-unresolved");
             Mutate("sbom", d => d["packages"]![2]!["filesAnalyzed"] = "false", "input-invalid");
@@ -137,7 +138,8 @@ internal static class Lp03SbomChecks
                     Check(result.Decision == "escalated" && result.Applicability == "unknown" &&
                         result.Finding is null && result.RequiredInput == "authoritative-release-inventory" &&
                         result.NextCategory == "dependency-acquisition" &&
-                        result.MissingFact == "Unsupported or malformed root dependency " + refusedAttribute + " declaration.",
+                        result.MissingFact == "Unsupported or malformed root dependency " + refusedAttribute + " declaration. " +
+                            Lp03DependencyLicensesResolver.NpmTrust,
                         label + ": unsupported declaration must be not tested, not a gap or positive.");
                 declarations++;
             }

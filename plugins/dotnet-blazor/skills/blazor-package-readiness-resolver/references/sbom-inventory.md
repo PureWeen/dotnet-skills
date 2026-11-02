@@ -27,10 +27,14 @@ The helper's clearly documented `--release-sbom` is this explicit designation in
 | `assessment` | Schema-2 binding/designation below |
 | `sbom` | Exact raw SPDX JSON, never reformatted before hashing |
 | `policy`, `corpus` | Unchanged LP-01 policy 1.0.0 and SPDX 3.27.0 pinned bytes |
-| `dependency-NNN` | Exact inventoried nupkg at its stable sorted index |
+| `dependency-NNN` | Exact inventoried nupkg or npm tarball at its stable sorted index |
+| `npm-archives` | Optional exact-root/raw-SBOM-bound caller archive designation below |
 
 Sort the admitted distinct NuGet `lowercase-id/version` keys ordinally and assign
-zero-based three-digit roles. Missing members retain their index holes. Supplied
+zero-based three-digit roles, then append npm members ordered by their exact
+`name/version` keys ordinally. Never sort `ecosystem:name@version`: prefix-related
+NuGet IDs would change historical roles (`foo/1.0.0` precedes `foo1/1.0.0`).
+Missing members retain their index holes. Supplied
 extra samples are inspected separately, never added to LP-03 or silently substituted.
 An extra LP-03 dependency role or a bound version mismatch is `binding-conflict`.
 
@@ -57,7 +61,7 @@ it is explicitly refused with a request for a fresh schema-2 packet, not upgrade
 
 `admit-sbom` uses the same checked-input envelope as `inspect`, with only `package`,
 `assessment`, `sbom` (at most three roles). Output is bounded JSON:
-`schema_version: 1`, `producer: sbom-inventory/1.0.0`, original checked `inputs`,
+`schema_version: 2`, `producer: sbom-inventory/2.0.0`, original checked `inputs`,
 and `admission` with disposition/code/detail, both separate states and, on success,
 `inventory`. The inventory retains profile, root/raw digests, namespace, product/root
 SPDX IDs, exact sorted components, relationships and diagnostic observations.
@@ -65,33 +69,44 @@ It does not classify dependency licenses or acquire anything.
 
 ## Narrow supported structural profile
 
-The supported profile is `spdx22-release-nuget-union/1.0.0`, matching retained
+The supported profile is `spdx22-release-nuget-npm-union/1.0.0`, replacing
+`spdx22-release-nuget-union/1.0.0` explicitly rather than silently broadening it. It admits
 SPDX-2.2 JSON, not generic SPDX, CycloneDX or every SBOMTool version.
 
 - Exact top-level keys: `externalDocumentRefs`, `spdxVersion`, `dataLicense`,
   `SPDXID`, `name`, `documentNamespace`, `creationInfo`, `documentDescribes`,
-  `packages`, `relationships`, `files`. Data license CC0-1.0; HTTPS namespace;
+  `packages`, `relationships`, `files`. Data license CC0-1.0; HTTP/HTTPS namespace
+  is an opaque identifier, never fetched; no credentials, fragment or nondefault port;
   document ID `SPDXRef-DOCUMENT`; creation info has `created`, `creators`.
 - No external documents. Exactly one described SWID product whose name,
   version and `pkg:swid/<supplier>/github.com/<root>@v?<version>?tag_id=<uuid>`
-  associate it with the checked root release. A separate exact NuGet root is required.
+  associate it with the checked root release. This form requires a separate exact NuGet root.
+  The alternate `spdx.org` SWID form binds the product itself as root: exact checked
+  name/version, no separate NuGet root, and exactly one associated file named
+  `<id>.<version>.nupkg` (optionally prefixed `./`). Neither form uses vendor,
+  UUID, package-name or member-count allowlists.
 - Package fields: `name`, `SPDXID`, `downloadLocation`, `filesAnalyzed`,
   `licenseConcluded`, `licenseDeclared`, `copyrightText`, `versionInfo`,
   `externalRefs`, `supplier`; optional `hasFiles`, `packageVerificationCode`,
-  `licenseInfoFromFiles`. Each has one PACKAGE-MANAGER/purl external reference.
+  `licenseInfoFromFiles`, `checksums`. Each has one PACKAGE-MANAGER/purl external reference.
   NuGet components require consistent `pkg:nuget/<id>@<version>`, name and version.
+  npm components require consistent `pkg:npm/<name>@<exact-semver>`; scoped names
+  admit literal `@scope/name` or leading `%40scope/name`. Encoded separators,
+  qualifiers/subpaths, ranges, path syntax and noncanonical identities reject.
+  Optional dependency SHA1/SHA256/SHA512 checksums bind the supplied archive bytes;
+  duplicate algorithms or mismatches reject.
 - NuGet IDs normalize ASCII case and use the existing bounded identity profile;
   exact versions have three numeric components (1-5 digits each, no leading zeros
   except zero). Prereleases, floating/ranged/purl-qualified versions are unsupported.
-- SPDX IDs are unique across document/files/packages; canonical NuGet component keys
+- SPDX IDs are unique across document/files/packages; canonical ecosystem/name/version keys
   are unique. Duplicate components are not collapsed. Unknown fields/types,
   conflicting aliases or unresolved references do not admit.
 - Relationships are only one matching document DESCRIBES and package DEPENDS_ON
   edges. Reject duplicate/self/dangling edges; require product-to-NuGet-root
-  association and reachability of **every** package from the product. Traverse
+  association when separate, and reachability of **every** package from the product. Traverse
   the product, not just the NuGet root, whose outgoing edge set may be empty.
 - Include all inventoried dependencies, including SourceLink, ILLink and other
-  build tooling. Only validated product and exact NuGet root are excluded.
+  build tooling and npm members. Only validated product and checked root are excluded.
   A complete admitted release-wide union needs no per-TFM annotations.
 - Every root nuspec dependency group is screened for malformed/ambiguous IDs,
   duplicate declarations/groups, unknown/foreign nodes/attributes and unsupported
@@ -127,7 +142,12 @@ SPDX-2.2 JSON, not generic SPDX, CycloneDX or every SBOMTool version.
 LP-03 calls the **actual shared LP-01 package-expression classifier**, not a second
 LP-03 allowlist or caller-supplied classification. Every alternative of an AND/OR
 expression must satisfy the same pinned LP-01 policy. The dependency's own safe
-nuspec expression suffices; no grant file, reviewer packet or owner approval.
+nuspec expression, or string `license` in the exact npm tarball's root `package.json`,
+suffices; no grant file, reviewer packet or owner approval.
+An npm archive must have one directory root: `package`, or the exact unscoped
+basename of the name in its manifest (including DefinitelyTyped named-root archives).
+Mixed roots, mismatched named roots and case aliases are refused. The manifest's
+full name/version must still match the exact inventoried npm identity.
 The former owner-only `LicenseRef-owner-grant` branch is retired: that expression
 alone does not demonstrate a genuinely private missing fact.
 
@@ -150,17 +170,58 @@ or deprecated licenseUrl-only evidence are not tested, not gaps or owner escalat
 A valid expression plus a deprecated licenseUrl is classified from the expression only.
 Every positive discloses reliance on caller designation and that structure does
 not independently prove completeness or publication.
+Every verified, gap and not-tested finding also states explicitly:
+**npm archive hashes bind caller-designated bytes and do not authenticate publisher archives.**
+A forged-but-self-consistent tarball can therefore classify only its caller-designated
+declaration, never establish registry/publisher authenticity.
+
+## Exact npm archive intake
+
+The optional `npm-archives` role is strict UTF-8 JSON, at most 64 KiB/depth 8:
+
+```json
+{
+  "schema_version": 1,
+  "basis": "caller-designated-exact-npm-archives/1",
+  "root_sha256": "<checked root SHA-256>",
+  "sbom_sha256": "<raw SPDX SHA-256>",
+  "archives": [
+    {"purl": "pkg:npm/%40scope/name@1.2.3", "path": "npm-000.tgz", "sha256": "<archive SHA-256>"}
+  ]
+}
+```
+
+Paths are ordinary strict checked-input-relative paths; no source-only `$` allowance.
+Every designation uniquely names an admitted npm identity. The helper imports designated
+local bytes without inventing HTTP observations or consuming retrieval-record slots;
+missing/oversized archives remain explicit unavailable outcomes. It never downloads npm.
+Registry transport/integrity receipts can be retained separately; the native resolver
+does not authenticate those receipts or the publisher.
+
+The npm-specific profile fully decompresses at most 64 MiB **before** TAR parsing.
+Only one plain, flags-zero gzip member with checked CRC/ISIZE and no trailing data
+is admitted. TAR admits ASCII regular files/directories beneath the single bound root
+(`package/` or the manifest name's unscoped basename),
+at most 4,096 entries; raw header checksum/path/type/length must agree with `TarReader`.
+The node-tar short-USTAR-prefix layout's optional octal access/change timestamps
+are validated separately from path text; they cannot override names, sizes or types.
+PAX/GNU metadata and overrides, links/devices/sparse entries, duplicate/case-aliased
+paths, Windows devices and traversal reject. This deliberate narrowness may leave
+otherwise legitimate npm archives not tested. No extraction or package scripts run.
+Exactly one root `package.json`, at most 1 MiB, must match exact name/version;
+duplicate JSON keys reject. `NOASSERTION`, objects/arrays, URLs and unsupported
+license expressions never become verified.
 
 ## Resource limits
 
 Native admission: raw SBOM 1 MiB; scope 64 KiB; strict UTF-8/no BOM; depth 16/8
 (JSON reader depth), 32,768 JSON values/properties, 16 KiB generic string/property
-byte bound and narrower ASCII field bounds. Max 66 packages (product + root + 64
+byte bound and narrower ASCII field bounds. Max 130 packages (product + root + 128
 dependency versions), 512 relationships, 64 files, 8 external refs per package
 (only one unambiguous purl admitted), 64 `hasFiles`, 16 creators and 1,024 root
 dependency declarations. Recursive duplicate JSON properties reject.
 
-LP-03: 8 MiB/root or dependency nupkg; 64 MiB all checked row bytes; safe ZIP/XML
+LP-03: 8 MiB/root or dependency archive; 64 MiB all checked row bytes; safe ZIP/XML
 profile (4,096 entries, 1 MiB nuspec, existing CRC/alias/path checks and bounded
 expanded data), sequential archive inspection. No assessed restore, network or execution.
 The shared admission also caps the serialized inventory at 240 KiB (headroom for pins

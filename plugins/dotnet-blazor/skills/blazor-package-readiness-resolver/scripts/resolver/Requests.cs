@@ -49,7 +49,7 @@ public static class Requests
         using var document = JsonDocument.Parse(Read(full, 1024 * 1024), new() { MaxDepth = 16 });
         Unique(document.RootElement);
         var request = document.Deserialize<InspectionRequest>(Options);
-        if (request is not { SchemaVersion: 1, Inputs.Count: > 0 and <= 66 })
+        if (request is not { SchemaVersion: 1, Inputs.Count: > 0 and <= 130 })
             throw new InvalidDataException("Unsupported or oversized inspection request.");
         long total = 0;
         var inputs = CheckInputs(Path.GetDirectoryName(full)!, request.Inputs, ref total);
@@ -70,7 +70,7 @@ public static class Requests
         var admission = Spdx22InventoryAdmission.Admit(inputs);
         var result = JsonSerializer.SerializeToUtf8Bytes(new
         {
-            schema_version = 1, producer = "sbom-inventory/1.0.0", inputs = request.Inputs,
+            schema_version = 2, producer = "sbom-inventory/2.0.0", inputs = request.Inputs,
             admission
         }, Options);
         if (result.Length > 256 * 1024) throw new InvalidDataException("SBOM admission output cap.");

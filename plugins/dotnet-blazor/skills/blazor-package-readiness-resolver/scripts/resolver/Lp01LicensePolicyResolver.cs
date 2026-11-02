@@ -264,7 +264,7 @@ public sealed class Lp01LicensePolicyResolver : IDeterministicResolver
             string.Equals(declaration.Groups[2].Value, encoding, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static string Classify(Lp01SpdxExpression expression, Policy policy)
+    internal static string Classify(Lp01SpdxExpression expression, Policy policy)
     {
         var terms = expression.Terms;
         if (terms.Any(id => id.StartsWith("WITH:", StringComparison.Ordinal)))

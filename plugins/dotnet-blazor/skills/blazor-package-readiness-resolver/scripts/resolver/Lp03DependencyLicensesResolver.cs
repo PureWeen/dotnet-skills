@@ -7,12 +7,14 @@ public sealed class Lp03DependencyLicensesResolver : IDeterministicResolver
     internal const string Contract =
         "The caller designates the bound raw SBOM as the authoritative release-wide inventory; " +
         "structural checks do not independently establish completeness or publication. " +
-        "Each included NuGet dependency is classified from its exact checked nupkg declaration " +
+        "Each included dependency is classified from its exact checked nupkg or npm tarball declaration " +
         "using LP-01 policy 1.0.0 and SPDX 3.27.0. No ordinary grant, reviewer or owner approval " +
-        "is required. No legal sufficiency, notice compliance or build correspondence is established.";
+        "is required. No legal sufficiency, notice compliance or build correspondence is established. " + NpmTrust;
+    internal const string NpmTrust =
+        "npm archive hashes bind caller-designated bytes and do not authenticate publisher archives.";
     public string RowId => "LP-03";
     public string ResolverId => "lp03-dependency-licenses";
-    public string Version => "1.2.0";
+    public string Version => "1.3.0";
     internal static bool ValidId(string value) => NuGetPackageIdentity.ValidId(value);
     internal static bool ValidVersion(string value) => NuGetPackageIdentity.ValidVersion(value);
 
@@ -24,7 +26,7 @@ public sealed class Lp03DependencyLicensesResolver : IDeterministicResolver
         // Admission diagnoses legacy scope before optional policy or old protocol roles.
         var admission = Spdx22InventoryAdmission.Admit(inputs);
         if (admission.Code == "input-invalid") return Result(input, admission.Code, admission.Detail);
-        if (inputs.Keys.Any(role => role is not ("package" or "assessment" or "sbom" or "policy" or "corpus") &&
+        if (inputs.Keys.Any(role => role is not ("package" or "assessment" or "sbom" or "policy" or "corpus" or "npm-archives") &&
             !Regex.IsMatch(role, @"\Adependency-[0-9]{3}\z", RegexOptions.CultureInvariant)) ||
             inputs.Values.Sum(value => (long)value.Content.Length) > 64 * 1024 * 1024 ||
             inputs.Any(pair => !Lp02PublicSourceResolver.SafePath(pair.Value.Identity.Path) ||
@@ -38,6 +40,15 @@ public sealed class Lp03DependencyLicensesResolver : IDeterministicResolver
         if (admission.Inventory is not { } inventory)
             return Result(input, admission.Code, admission.Detail);
         var used = new HashSet<string>(["package", "assessment", "sbom", "policy", "corpus"], StringComparer.Ordinal);
+        var npmDigests = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (inputs.TryGetValue("npm-archives", out var npmDesignation))
+        {
+            used.Add("npm-archives");
+            try { npmDigests = NpmPackageEvidence.ReadDesignation(npmDesignation.Content, inventory); }
+            catch (Exception error) when (error is InvalidDataException or System.Text.Json.JsonException or
+                InvalidOperationException or KeyNotFoundException or ArgumentException or System.Text.DecoderFallbackException)
+            { return Result(input, "binding-conflict", "Invalid npm archive designation: " + error.GetType().Name); }
+        }
         var missing = new List<string>();
         var unresolved = new List<string>();
         var incompatible = new List<string>();
@@ -51,14 +62,31 @@ public sealed class Lp03DependencyLicensesResolver : IDeterministicResolver
                 missing.Add(component.Key);
                 continue;
             }
-            var actual = Lp03PackageEvidence.Read(dependency.Content, null);
-            if (actual is null) return Result(input, "input-invalid", "Unsafe exact dependency archive: " + component.Key);
-            if (actual.Id != component.Id || actual.Version != component.Version)
-                return Result(input, "binding-conflict", "SBOM member and exact nupkg identity/version disagree: " + component.Key);
-            var state = Lp01LicensePolicyResolver.InspectPackage(dependency.Content, policy);
-            if (state.Branch == "approved-non-copyleft") continue;
-            if (state.Branch is "copyleft" or "weak-copyleft" or "non-osi") incompatible.Add(component.Key);
-            else unresolved.Add(component.Key + " (" + state.Branch + ")");
+            if (!NpmPackageEvidence.ChecksumsMatch(dependency.Content.Span, component.Checksums))
+                return Result(input, "binding-conflict", "SBOM archive checksum mismatch: " + component.QualifiedKey);
+            string branch;
+            if (component.Ecosystem == "npm")
+            {
+                if (!npmDigests.TryGetValue(component.Key, out var digest) || digest != dependency.Identity.Sha256)
+                    return Result(input, "binding-conflict", "npm archive is not bound by its caller designation: " + component.Key);
+                var actual = NpmPackageEvidence.Read(dependency.Content);
+                if (actual is null) return Result(input, "input-invalid", "Unsafe exact npm dependency archive: " + component.Key);
+                if (actual.Id != component.Id || actual.Version != component.Version)
+                    return Result(input, "binding-conflict", "SBOM member and exact npm identity/version disagree: " + component.Key);
+                branch = NpmPackageEvidence.Classify(actual, policy);
+            }
+            else
+            {
+                var actual = Lp03PackageEvidence.Read(dependency.Content, null);
+                if (actual is null) return Result(input, "input-invalid", "Unsafe exact dependency archive: " + component.Key);
+                if (actual.Id != component.Id || actual.Version != component.Version)
+                    return Result(input, "binding-conflict", "SBOM member and exact nupkg identity/version disagree: " + component.Key);
+                branch = Lp01LicensePolicyResolver.InspectPackage(dependency.Content, policy).Branch;
+            }
+            if (branch == "approved-non-copyleft") continue;
+            var label = component.Ecosystem == "nuget" ? component.Key : component.QualifiedKey;
+            if (branch is "copyleft" or "weak-copyleft" or "non-osi") incompatible.Add(label);
+            else unresolved.Add(label + " (" + branch + ")");
         }
         if (inputs.Keys.Any(role => !used.Contains(role)))
             return Result(input, "binding-conflict", "Extra dependency role is not an admitted SBOM member.");
@@ -68,7 +96,7 @@ public sealed class Lp03DependencyLicensesResolver : IDeterministicResolver
         if (unresolved.Count != 0) return Result(input, "license-evidence-unresolved", "Unsupported or ambiguous exact-package declarations: " + Details(unresolved));
         return Result(input, incompatible.Count != 0 ? "incompatible-dependency-license" : "dependencies-policy-satisfied",
             incompatible.Count != 0 ? Details(incompatible) :
-                $"{inventory.Dependencies.Length} exact NuGet dependency declarations pass; the caller's bound designation supplies authoritative release-wide scope." +
+                $"{inventory.Dependencies.Length} exact dependency declarations pass; the caller's bound designation supplies authoritative release-wide scope." +
                 (inventory.Diagnostics.Length != 0 ? " " + string.Join(" ", inventory.Diagnostics.Take(2)) : ""));
     }
 
@@ -97,6 +125,8 @@ public sealed class Lp03DependencyLicensesResolver : IDeterministicResolver
                 "An exact dependency in the caller-designated release inventory declares an incompatible copyleft or non-OSI license under the pinned policy: " + detail,
             _ => null
         };
+        if (finding is not null) finding += " " + NpmTrust;
+        if (missing is not null) missing += " " + NpmTrust;
         return new(RowId, ResolverId, Version, branch, finding is null ? "escalated" : "deterministic",
             finding is null ? "unknown" : "applicable", input.Inputs,
             input.Inputs.Select(i => $"input:{i.Role}:{i.Sha256}").ToArray(), Contract, finding, missing, required, next);

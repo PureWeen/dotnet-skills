@@ -27,6 +27,7 @@ internal static class EvidenceInspectionChecks
             ("LICENSE.txt", "a named file does not establish a whole-package grant"u8.ToArray()));
         var source = Zip(
             (prefix + "src/example.js", script),
+            (prefix + "src/Comparer$1.ts", "export class Comparer$1 {}"u8.ToArray()),
             (prefix + "samples/Getting Started/Page.razor", "<p>Example</p>"u8.ToArray()),
             (prefix + "assets/Check Box.svg", "<svg/>"u8.ToArray()),
             (prefix + "src/Library.csproj", Encoding.UTF8.GetBytes(
@@ -51,7 +52,7 @@ internal static class EvidenceInspectionChecks
             "The shared default archive profile remains strict; source consumers explicitly admit interior spaces");
         using var document = JsonDocument.Parse(output);
         var result = document.RootElement;
-        Check(result.GetProperty("producer").GetString() == "package-evidence-observations/1.0.0", "Bounded observation profile");
+        Check(result.GetProperty("producer").GetString() == "package-evidence-observations/1.1.0", "Bounded observation profile");
         Check(result.GetProperty("package").GetProperty("id").GetString() == "sample.library" &&
             result.GetProperty("package").GetProperty("declared_dependencies")[0].GetProperty("version").GetString() == "[1.0.0,2.0.0)",
             "Observed identity and original range declaration, not a resolved version");
@@ -161,14 +162,14 @@ internal static class EvidenceInspectionChecks
                 conflicting.RootElement.GetProperty("source").GetProperty("projects").GetArrayLength() == 1 &&
                 conflicting.RootElement.GetProperty("diagnostics").GetArrayLength() == 1,
                 "Conflicting archive prefix retains local observations with an explicit diagnostic, not source authentication");
-        var excessDependencies = Enumerable.Range(0, 65)
+        var excessDependencies = Enumerable.Range(0, 129)
             .Select(index => new PinnedInput($"dependency-{index:000}", $"dependency-{index:000}.bin",
                 Catalog.Digest(dependency))).ToArray();
         changed = new(StringComparer.Ordinal) { ["package"] = inputs["package"] };
         foreach (var pin in excessDependencies) changed.Add(pin.Role, new(pin, dependency));
         Reject(() => PackageEvidenceInspection.Run([pins[0], .. excessDependencies], changed),
-            "The 64-dependency limit is checked before observing packages",
-            "Inspection requires one package, optional source-archive and at most 64 dependency-NNN inputs.");
+            "The 128-dependency limit is checked before observing packages",
+            "Inspection requires one package, optional source-archive and at most 128 NuGet dependency-NNN inputs.");
         var repeatedPin = new PinnedInput("dependency-001", "repeated.bin", Catalog.Digest(dependency));
         changed = new(inputs) { ["dependency-001"] = new(repeatedPin, dependency) };
         Reject(() => PackageEvidenceInspection.Run([.. pins, repeatedPin], changed), "Duplicate dependency identities rejected");
@@ -176,7 +177,8 @@ internal static class EvidenceInspectionChecks
         var unsafePin = pins[1] with { Sha256 = Catalog.Digest(unsafeBytes) };
         changed = new(inputs) { ["source-archive"] = new(unsafePin, unsafeBytes) };
         Reject(() => PackageEvidenceInspection.Run([pins[0], unsafePin, pins[2]], changed), "Unsafe source archive rejected");
-        foreach (var unsafePath in new[] { prefix + "../escape", prefix + "src/ file.cs",
+        foreach (var unsafePath in new[] { prefix + "../escape", prefix + "src/$/../../escape", prefix + "CONIN$.txt",
+            prefix + "src/a$.ts.", prefix + "src/ file.cs",
             prefix + "src/file.cs ", prefix + "src\\escape.cs", prefix + "src/file:stream" })
         {
             var invalid = Zip((unsafePath, "data"u8.ToArray()));

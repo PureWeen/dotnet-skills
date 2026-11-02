@@ -10,12 +10,13 @@ import sys
 import zipfile
 import xml.etree.ElementTree as ET
 
+NPM_TRUST = "npm archive hashes bind caller-designated bytes and do not authenticate publisher archives."
 CONTRACT = (
     "The caller designates the bound raw SBOM as the authoritative release-wide inventory; "
     "structural checks do not independently establish completeness or publication. "
-    "Each included NuGet dependency is classified from its exact checked nupkg declaration "
+    "Each included dependency is classified from its exact checked nupkg or npm tarball declaration "
     "using LP-01 policy 1.0.0 and SPDX 3.27.0. No ordinary grant, reviewer or owner approval "
-    "is required. No legal sufficiency, notice compliance or build correspondence is established.")
+    "is required. No legal sufficiency, notice compliance or build correspondence is established. " + NPM_TRUST)
 LEGACY = "The supplied LP-03 assessment uses legacy schema 1; re-admit a schema-2 release-wide SBOM packet."
 FIXED = {
     "missing-package": ("The exact root package is missing.", "package", "package-acquisition"),
@@ -51,7 +52,11 @@ def result(branch, pins, detail=None):
         finding = "An exact dependency in the caller-designated release inventory declares an incompatible copyleft or non-OSI license under the pinned policy: " + detail
     elif detail is not None:
         missing = detail
-    return dict(row_id="LP-03", resolver_id="lp03-dependency-licenses", resolver_version="1.2.0",
+    if finding is not None:
+        finding += " " + NPM_TRUST
+    if missing is not None:
+        missing += " " + NPM_TRUST
+    return dict(row_id="LP-03", resolver_id="lp03-dependency-licenses", resolver_version="1.3.0",
                 branch_id=branch, decision="deterministic" if positive or negative else "escalated",
                 applicability="applicable" if positive or negative else "unknown", inputs=pins,
                 evidence_references=[f"input:{p['role']}:{p['sha256']}" for p in pins],
@@ -121,7 +126,7 @@ def specimens(policy, catalog):
         if mutate:
             mutate(packet)
         cases.append((name, packet, branch, detail))
-    success = "1 exact NuGet dependency declarations pass; the caller's bound designation supplies authoritative release-wide scope."
+    success = "1 exact dependency declarations pass; the caller's bound designation supplies authoritative release-wide scope."
     add("all-mit-no-grants-no-reviews", "dependencies-policy-satisfied", success)
     for file_name, extra in (
         ("./example.controls.1.0.0.nupkg",
@@ -179,7 +184,7 @@ def specimens(policy, catalog):
     d = sbom(); d["packages"].append(copy.deepcopy(d["packages"][-1]))
     add("duplicate-id", "closure-unresolved", "Duplicate SPDX package ID.", document=d)
     d = sbom(); extra = copy.deepcopy(d["packages"][-1]); extra["SPDXID"] += "-extra"; d["packages"].append(extra)
-    add("duplicate-component", "closure-unresolved", "Duplicate canonical NuGet component: example.dependency/1.0.0", document=d)
+    add("duplicate-component", "closure-unresolved", "Duplicate canonical component: nuget:example.dependency/1.0.0", document=d)
     d = sbom(); d["relationships"][-1]["relatedSpdxElement"] = "DocumentRef-external:node"
     add("dangling-edge", "closure-unresolved", "Unsupported or unresolved dependency relationship.", document=d)
     d = sbom(); d["relationships"].pop()
@@ -189,7 +194,7 @@ def specimens(policy, catalog):
     add("oversized-sbom", "input-invalid", "JSON byte limit/BOM.", mutate=lambda p: (
         p.update(sbom=b" " * (1024 * 1024 + 1)), change_scope(p, lambda s: s.update(sbom_sha256=digest(p["sbom"])))))
     add("empty-inventory", "dependencies-policy-satisfied",
-        "0 exact NuGet dependency declarations pass; the caller's bound designation supplies authoritative release-wide scope.",
+        "0 exact dependency declarations pass; the caller's bound designation supplies authoritative release-wide scope.",
         document=sbom(()), mutate=lambda p: p.pop("dependency-000"))
     malformed = ('<dependencies><group targetFramework="net8.0"><dependency id="example.dependency" version="1.0.0"/></group>'
                  '<group targetFramework="net9.0"><dependency version="1.0.0"/></group></dependencies>')

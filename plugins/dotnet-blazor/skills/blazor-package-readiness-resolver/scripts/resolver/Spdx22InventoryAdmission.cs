@@ -5,9 +5,12 @@ using System.Xml.Linq;
 
 namespace BlazorPackageResolver;
 
-internal sealed record InventoryComponent(string SpdxId, string Id, string Version, string Purl)
+internal sealed record InventoryChecksum(string Algorithm, string Value);
+internal sealed record InventoryComponent(string SpdxId, string Id, string Version, string Purl,
+    string Ecosystem = "nuget", InventoryChecksum[]? Checksums = null)
 {
     public string Key => Id + "/" + Version;
+    internal string QualifiedKey => Ecosystem + ":" + Key;
 }
 internal sealed record InventoryEdge(string From, string To);
 internal sealed record ReleaseInventory(string Profile, string RootId, string RootVersion,
@@ -20,7 +23,12 @@ internal sealed record InventoryAdmission(string Disposition, string Code, strin
 internal static class Spdx22InventoryAdmission
 {
     internal const int SbomLimit = 1024 * 1024;
-    internal const string Profile = "spdx22-release-nuget-union/1.0.0";
+    internal const string Profile = "spdx22-release-nuget-npm-union/1.0.0";
+    internal const int ComponentLimit = 128;
+    // Keep the entire historical NuGet id/version key order, including prefix-related IDs.
+    internal static InventoryComponent[] Ordered(IEnumerable<InventoryComponent> values) =>
+        values.OrderBy(c => c.Ecosystem == "nuget" ? 0 : 1)
+            .ThenBy(c => c.Key, StringComparer.Ordinal).ToArray();
     internal const string DesignationBasis = "caller-authoritative-release-inventory/1";
     internal const string LegacyScope =
         "The supplied LP-03 assessment uses legacy schema 1; re-admit a schema-2 release-wide SBOM packet.";
@@ -106,7 +114,9 @@ internal static class Spdx22InventoryAdmission
         Check(Text(doc, "SPDXID") == "SPDXRef-DOCUMENT" && Text(doc, "dataLicense") == "CC0-1.0",
             "unsupported", "closure-unresolved", "Unsupported SPDX document identity/data license.");
         var ns = Text(doc, "documentNamespace", 2048);
-        Check(Uri.TryCreate(ns, UriKind.Absolute, out var uri) && uri.Scheme == "https",
+        Check(Uri.TryCreate(ns, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" &&
+            uri.Host.Length > 0 && uri.UserInfo.Length == 0 && uri.Fragment.Length == 0 &&
+            uri.IsDefaultPort && !ns.Any(char.IsWhiteSpace),
             "unsupported", "closure-unresolved", "Unsupported document namespace.");
         var creation = doc.GetProperty("creationInfo");
         Fields(creation, "created creators");
@@ -120,7 +130,7 @@ internal static class Spdx22InventoryAdmission
         var described = Array(doc.GetProperty("documentDescribes"), 1);
         Check(described.Length == 1, "unsupported", "closure-unresolved", "Exactly one release product must be described.");
         var productId = ElementId(Scalar(described[0], 256));
-        var packages = Array(doc.GetProperty("packages"), 66);
+        var packages = Array(doc.GetProperty("packages"), ComponentLimit + 2);
         var files = Array(doc.GetProperty("files"), 64);
         var elements = new HashSet<string>(StringComparer.Ordinal) { "SPDXRef-DOCUMENT" };
         var fileMap = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
@@ -146,10 +156,11 @@ internal static class Spdx22InventoryAdmission
         var nodes = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
         var components = new Dictionary<string, InventoryComponent>(StringComparer.Ordinal);
         JsonElement? product = null;
+        var productAsRoot = false;
         foreach (var item in packages)
         {
             Fields(item, "name SPDXID downloadLocation filesAnalyzed licenseConcluded licenseDeclared copyrightText versionInfo externalRefs supplier",
-                "hasFiles packageVerificationCode licenseInfoFromFiles");
+                "hasFiles packageVerificationCode licenseInfoFromFiles checksums");
             var id = ElementId(Text(item, "SPDXID"));
             Check(elements.Add(id) && nodes.TryAdd(id, item), "unsupported", "closure-unresolved", "Duplicate SPDX package ID.");
             Check(item.GetProperty("filesAnalyzed").ValueKind is JsonValueKind.True or JsonValueKind.False,
@@ -176,34 +187,80 @@ internal static class Spdx22InventoryAdmission
             var v = Text(item, "versionInfo");
             if (id == productId)
             {
-                var match = Regex.Match(purl, @"\Apkg:swid/[^/?#]+/github\.com/([A-Za-z0-9.-]+)@(v?[0-9.]+)\?tag_id=[a-fA-F0-9-]{36}\z", RegexOptions.CultureInvariant);
+                var match = Regex.Match(purl, @"\Apkg:swid/([A-Za-z0-9._%-]+)/(github\.com|spdx\.org)/([A-Za-z0-9.-]+)@(v?[0-9.]+)\?tag_id=([a-fA-F0-9-]{36})\z", RegexOptions.CultureInvariant);
                 Check(match.Success, "unsupported", "closure-unresolved", "Unsupported described product representation.");
+                var supplier = Uri.UnescapeDataString(match.Groups[1].Value);
+                Check(supplier.All(c => c is >= ' ' and <= '~' && c is not ('/' or '\\' or '%' or ':' or '?' or '#')) &&
+                    Guid.TryParseExact(match.Groups[5].Value, "D", out _),
+                    "unsupported", "closure-unresolved", "Unsupported SWID supplier or tag identity.");
                 Check(name == rootId && (v.StartsWith('v') ? v[1..] : v) == rootVersion &&
-                    match.Groups[1].Value.ToLowerInvariant() == rootId &&
-                    (match.Groups[2].Value.StartsWith('v') ? match.Groups[2].Value[1..] : match.Groups[2].Value) == rootVersion,
+                    match.Groups[3].Value.ToLowerInvariant() == rootId &&
+                    (match.Groups[4].Value.StartsWith('v') ? match.Groups[4].Value[1..] : match.Groups[4].Value) == rootVersion,
                     "conflict", "binding-conflict", "Described product identifies another root release.");
+                productAsRoot = match.Groups[2].Value == "spdx.org";
                 product = item;
             }
             else
             {
                 var match = Regex.Match(purl, @"\Apkg:nuget/([A-Za-z0-9.-]+)@([0-9.]+)\z", RegexOptions.CultureInvariant);
-                Check(match.Success && NuGetPackageIdentity.ValidId(name) && NuGetPackageIdentity.ValidVersion(v),
-                    "unsupported", "closure-unresolved", "Unsupported exact NuGet identity: " + name);
-                Check(match.Groups[1].Value.ToLowerInvariant() == name && match.Groups[2].Value == v,
-                    "conflict", "binding-conflict", "NuGet purl/name/version disagree.");
-                var component = new InventoryComponent(id, name, v, purl);
-                Check(components.TryAdd(component.Key, component), "unsupported", "closure-unresolved", "Duplicate canonical NuGet component: " + component.Key);
+                string ecosystem;
+                if (purl.StartsWith("pkg:npm/", StringComparison.Ordinal))
+                {
+                    Check(NpmPackageIdentity.TryParsePurl(purl, out var npmName, out var npmVersion),
+                        "unsupported", "closure-unresolved", "Unsupported exact npm identity.");
+                    Check(Text(item, "name") == npmName && v == npmVersion,
+                        "conflict", "binding-conflict", "npm purl/name/version disagree.");
+                    name = npmName;
+                    ecosystem = "npm";
+                }
+                else
+                {
+                    Check(match.Success && NuGetPackageIdentity.ValidId(name) && NuGetPackageIdentity.ValidVersion(v),
+                        "unsupported", "closure-unresolved", "Unsupported exact NuGet identity: " + name);
+                    Check(match.Groups[1].Value.ToLowerInvariant() == name && match.Groups[2].Value == v,
+                        "conflict", "binding-conflict", "NuGet purl/name/version disagree.");
+                    ecosystem = "nuget";
+                }
+                var checksums = new List<InventoryChecksum>();
+                if (item.TryGetProperty("checksums", out var declaredChecksums))
+                    foreach (var checksum in Array(declaredChecksums, 8))
+                    {
+                        Fields(checksum, "algorithm checksumValue");
+                        var algorithm = Text(checksum, "algorithm");
+                        var value = Text(checksum, "checksumValue");
+                        var length = algorithm switch { "SHA256" => 64, "SHA512" => 128, "SHA1" => 40, _ => 0 };
+                        Check(length > 0 && value.Length == length && value.All(c => c is >= '0' and <= '9' or >= 'a' and <= 'f') &&
+                            checksums.All(c => c.Algorithm != algorithm), "unsupported", "closure-unresolved", "Unsupported/duplicate archive checksum.");
+                        checksums.Add(new(algorithm, value));
+                    }
+                var component = new InventoryComponent(id, name, v, purl, ecosystem, checksums.ToArray());
+                Check(components.TryAdd(component.QualifiedKey, component), "unsupported", "closure-unresolved", "Duplicate canonical component: " + component.QualifiedKey);
             }
             if (item.TryGetProperty("hasFiles", out var hasFiles))
                 foreach (var reference in Array(hasFiles, 64))
                     Check(fileMap.ContainsKey(Scalar(reference, 256)), "unsupported", "closure-unresolved", "Unresolved hasFiles reference.");
         }
-        Check(!components.Values.Any(c => c.Id == rootId && c.Version != rootVersion),
+        Check(!components.Values.Any(c => c.Ecosystem == "nuget" && c.Id == rootId && c.Version != rootVersion),
             "conflict", "binding-conflict", "Wrong or ambiguous NuGet root version.");
-        Check(product is not null && components.TryGetValue(rootId + "/" + rootVersion, out _),
-            "unsupported", "closure-unresolved", "Missing described product or exact NuGet root.");
-        var root = components[rootId + "/" + rootVersion];
-        Check(components.Values.Count(c => c.Id == rootId) == 1, "conflict", "binding-conflict", "Wrong or ambiguous NuGet root version.");
+        var rootKey = "nuget:" + rootId + "/" + rootVersion;
+        Check(product is not null, "unsupported", "closure-unresolved", "Missing described product.");
+        InventoryComponent root;
+        if (productAsRoot)
+        {
+            Check(!components.ContainsKey(rootKey), "conflict", "binding-conflict", "Product-as-root conflicts with a separate NuGet root.");
+            Check(product!.Value.TryGetProperty("hasFiles", out var rootFiles) &&
+                rootFiles.EnumerateArray().Count(reference => fileMap.TryGetValue(reference.GetString()!, out var file) &&
+                    string.Equals(Text(file, "fileName", 1024).StartsWith("./", StringComparison.Ordinal) ?
+                        Text(file, "fileName", 1024)[2..] : Text(file, "fileName", 1024), rootId + "." + rootVersion + ".nupkg",
+                        StringComparison.OrdinalIgnoreCase)) == 1,
+                "unsupported", "closure-unresolved", "Product-as-root requires one exact root archive file association.");
+            root = new(productId, rootId, rootVersion, "");
+        }
+        else
+        {
+            Check(components.TryGetValue(rootKey, out _), "unsupported", "closure-unresolved", "Missing described product or exact NuGet root.");
+            root = components[rootKey];
+        }
         var edges = new List<InventoryEdge>();
         var unique = new HashSet<string>(StringComparer.Ordinal);
         var describes = 0;
@@ -226,7 +283,7 @@ internal static class Spdx22InventoryAdmission
                 edges.Add(new(from, to));
             }
         }
-        Check(describes == 1 && edges.Contains(new(productId, root.SpdxId)),
+        Check(describes == 1 && (productAsRoot || edges.Contains(new(productId, root.SpdxId))),
             "unsupported", "closure-unresolved", "Missing product-to-root association.");
         var reached = new HashSet<string>(StringComparer.Ordinal);
         var pending = new Stack<string>([productId]);
@@ -234,9 +291,9 @@ internal static class Spdx22InventoryAdmission
             if (reached.Add(id))
                 foreach (var edge in edges.Where(e => e.From == id)) pending.Push(edge.To);
         Check(reached.SetEquals(nodes.Keys), "unsupported", "closure-unresolved", "Orphan or incomplete package inventory.");
-        components.Remove(root.Key);
-        Check(components.Count <= 64, "unsupported", "closure-unresolved", "Dependency component cap.");
-        CheckRootDependencies(package, components.Values.Select(c => c.Id).ToHashSet(StringComparer.Ordinal));
+        if (!productAsRoot) components.Remove(rootKey);
+        Check(components.Count <= ComponentLimit, "unsupported", "closure-unresolved", "Dependency component cap.");
+        CheckRootDependencies(package, components.Values.Where(c => c.Ecosystem == "nuget").Select(c => c.Id).ToHashSet(StringComparer.Ordinal));
         var diagnostics = new List<string>();
         foreach (var file in files)
         {
@@ -250,7 +307,7 @@ internal static class Spdx22InventoryAdmission
                         "; published " + Text(checksum, "checksumValue") + "; assessed " + packageSha + ". PI-10 is separately assessed.");
         }
         return new(Profile, rootId, rootVersion, packageSha, sbomSha, ns, productId, root.SpdxId,
-            components.Values.OrderBy(c => c.Key, StringComparer.Ordinal).ToArray(),
+            Ordered(components.Values),
             edges.OrderBy(e => e.From, StringComparer.Ordinal).ThenBy(e => e.To, StringComparer.Ordinal).ToArray(), diagnostics.ToArray());
     }
 

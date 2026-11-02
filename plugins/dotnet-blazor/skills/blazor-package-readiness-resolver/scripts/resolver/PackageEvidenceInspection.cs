@@ -48,8 +48,8 @@ public static class PackageEvidenceInspection
         if (!inputs.TryGetValue("package", out var package) ||
             inputs.Keys.Any(role => role is not ("package" or "source-archive") &&
                 !Regex.IsMatch(role, @"\Adependency-[0-9]{3}\z", RegexOptions.CultureInvariant)) ||
-            inputs.Count(role => role.Key.StartsWith("dependency-", StringComparison.Ordinal)) > 64)
-            throw new InvalidDataException("Inspection requires one package, optional source-archive and at most 64 dependency-NNN inputs.");
+            inputs.Count(role => role.Key.StartsWith("dependency-", StringComparison.Ordinal)) > 128)
+            throw new InvalidDataException("Inspection requires one package, optional source-archive and at most 128 NuGet dependency-NNN inputs.");
         var diagnostics = new List<string>();
         var rootFiles = Archive(package);
         var root = ObservePackage(package, rootFiles);
@@ -101,7 +101,7 @@ public static class PackageEvidenceInspection
                     pair.Key.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)))
             .OrderBy(pair => pair.Key, StringComparer.Ordinal)
             .Select(pair => ObserveAssembly(pair.Key, pair.Value)).ToArray();
-        var result = new Inspection(1, "package-evidence-observations/1.0.0", pins,
+        var result = new Inspection(1, "package-evidence-observations/1.1.0", pins,
             root, Entries(rootFiles), dependencies, source, matches.ToArray(), assemblies, diagnostics.ToArray(),
             [
                 "Local checked bytes only; input hashes do not authenticate acquisition, source publication, reviewer authority or completeness.",
