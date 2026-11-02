@@ -718,6 +718,10 @@ ATTRIBUTION = {
         "per-entry-compiled-build-and-text-blob-or-verified-transform-or-upstream-byte-maps", "source-owner"),
 }
 
+ATTRIBUTION_LIMIT = (
+    "This package-only resolver accepts no source/provenance maps and performs no builds or transforms. "
+    "Retain the inventory for a separate attribution assessment against paragraph 29; no currently supported packet can verify these candidates.")
+
 # Path, uncompressed size, SHA-256: independently inventoried from the two
 # pinned retained archives, not from a prior assessment verdict.
 SYNC_CODE = (
@@ -1459,10 +1463,13 @@ def result(inputs, branch, records=(), pointers=(), viewed=False):
         applicability = "unknown" if branch in STRUCTURAL else "applicable"
         evidence = [] if branch == "missing-package" else ["package:archive"]
         missing, required, category = (STRUCTURAL if branch in STRUCTURAL else ATTRIBUTION)[branch]
+        if branch in ATTRIBUTION:
+            missing += " " + ATTRIBUTION_LIMIT
+            required, category = "separate-attribution-assessment-outside-current-resolver", "assessment-limitation"
         finding = None
         evidence_contract = contract(records, viewed=viewed) if records and branch not in STRUCTURAL else None
     require(set(evidence) <= set(pointers), f"Invalid evidence pointer for {branch}")
-    return dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.0.0",
+    return dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.0.1",
                 branch_id=branch, decision=decision, applicability=applicability,
                 inputs=inputs, evidence_references=evidence, evidence_contract=evidence_contract,
                 finding=finding, missing_fact=missing, required_input=required,
@@ -1852,6 +1859,32 @@ def check_negative_bindings():
             all(f"{vendor['binding']}: retained archive identity mismatch" in run.stderr
                 for vendor in VENDORS), "Wrong-existing packages were not rejected for both bindings.")
     print("Both missing, misspelled and wrong-existing retained bindings rejected.")
+
+
+def mapping_results():
+    return [
+        dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.0.1",
+             branch_id="provenance-attributed", decision="deterministic", applicability="applicable",
+             inputs=[], evidence_references=["package:archive", "package:nuspec/metadata",
+                                             "package:nuspec/repository", "release-package:archive",
+                                             "provenance-bundle:statement",
+                                             "provenance-attestation:verification",
+                                             "source-archive:archive"],
+             evidence_contract="Verified SLSA v1 GitHub Actions build provenance.",
+             finding=("All packaged executable and script payloads are attributed to the declared "
+                      "public repository commit via verified GitHub Actions SLSA v1 build provenance "
+                      "and payload-identical release package equivalence."),
+             missing_fact=None, required_input=None, next_category=None),
+        dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.0.1",
+             branch_id="provenance-unverified", decision="escalated", applicability="applicable",
+             inputs=[], evidence_references=["package:archive"],
+             evidence_contract="SLSA v1 build provenance verification did not establish release-commit attribution.",
+             finding=None,
+             missing_fact=("Supplied build provenance inputs did not establish complete release-commit "
+                           "attribution for the packaged executable/code payloads."),
+             required_input="valid-slsa-v1-build-provenance-and-matching-release-package",
+             next_category="evidence-repair"),
+    ]
 
 
 def main():

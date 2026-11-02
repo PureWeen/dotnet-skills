@@ -73,6 +73,7 @@ internal static class Lp10BoundaryChecks
         Console.WriteLine($"LP-10 supplemental checked-byte, culture and resource checks: {ids.Length * 2} cases passed.");
         CheckCrcCorruption(registry);
         CheckOracleProbes(registry, suite);
+        CheckProvenance(registry);
         CheckRetained(registry, Path.Combine(directory, "acceptance.json"));
     }
 
@@ -356,6 +357,209 @@ internal static class Lp10BoundaryChecks
                 $"Exact retained LP-10 candidate inventory: {item.CaseId}");
             Console.WriteLine($"LP-10 {item.CaseId}: {candidateCount} pinned candidates; mixed escalation matched.");
         }
+    }
+
+    private static void CheckProvenance(Registry registry)
+    {
+        const string commit = "1111111111111111111111111111111111111111";
+        const string repoUrl = "https://github.com/example/controls";
+        var nuspec = Encoding.UTF8.GetBytes(
+            "<package><metadata><id>Example.Controls</id><version>1.0.0</version>" +
+            $"<repository type=\"git\" url=\"{repoUrl}\" commit=\"{commit}\"/></metadata></package>");
+        var matchedJs = "export const x = 1;"u8.ToArray();
+        var builtJs = "export const built = 2;"u8.ToArray();
+
+        static byte[] BuildZip(params (string Name, byte[] Bytes)[] entries)
+        {
+            using var ms = new MemoryStream();
+            using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                foreach (var (name, content) in entries)
+                {
+                    using var stream = zip.CreateEntry(name, CompressionLevel.NoCompression).Open();
+                    stream.Write(content);
+                }
+            }
+            return ms.ToArray();
+        }
+
+        var pkgBytes = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("wwwroot/matched.js", matchedJs),
+            ("staticwebassets/built.js", builtJs),
+            (".signature.p7s", "nuget-repository-signature"u8.ToArray()));
+        var releaseBytes = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("wwwroot/matched.js", matchedJs),
+            ("staticwebassets/built.js", builtJs),
+            (".signature.p7s", "author-release-signature"u8.ToArray()));
+        var sourceBytes = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/wwwroot/matched.js", matchedJs),
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\"}"u8.ToArray()),
+            ($"controls-{commit}/package-lock.json", "{\"name\":\"controls\",\"lockfileVersion\":3}"u8.ToArray()),
+            ($"controls-{commit}/src/index.ts", "export const built: number = 2;"u8.ToArray()));
+
+        var releaseSha = Catalog.Digest(releaseBytes);
+        var statementJson = JsonSerializer.Serialize(new
+        {
+            _type = "https://in-toto.io/Statement/v1",
+            subject = new[] { new { name = "Example.Controls.1.0.0.nupkg", digest = new { sha256 = releaseSha } } },
+            predicateType = "https://slsa.dev/provenance/v1",
+            predicate = new
+            {
+                buildDefinition = new
+                {
+                    buildType = "https://actions.github.io/buildtypes/workflow/v1",
+                    externalParameters = new
+                    {
+                        workflow = new { repository = repoUrl, path = ".github/workflows/release.yml", @ref = "refs/heads/main" }
+                    },
+                    internalParameters = new { github = new { event_name = "workflow_dispatch", runner_environment = "github-hosted" } },
+                    resolvedDependencies = new[]
+                    {
+                        new { uri = $"git+{repoUrl}@refs/heads/main", digest = new { gitCommit = commit } }
+                    }
+                },
+                runDetails = new
+                {
+                    builder = new
+                    {
+                        id = "https://github.com/example/controls/.github/workflows/release.yml@refs/heads/main",
+                        version = new { runner_environment = "github-hosted" }
+                    }
+                }
+            }
+        });
+        var bundleBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+        {
+            mediaType = "application/vnd.dev.sigstore.bundle.v0.3+json",
+            verificationMaterial = new
+            {
+                certificate = new { rawBytes = "dGVzdA==" },
+                tlogEntries = new[] { new { logIndex = "12345" } }
+            },
+            dsseEnvelope = new
+            {
+                payloadType = "application/vnd.in-toto+json",
+                payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(statementJson)),
+                signatures = new[] { new { sig = "dGVzdA==" } }
+            }
+        }));
+
+        byte[] BuildAttestation(byte[] pkg, byte[] rel, byte[] bnd, byte[] src,
+            string runnerEnv = "github-hosted", string certCommit = commit)
+        {
+            using var stmtDoc = JsonDocument.Parse(statementJson);
+            return Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+            {
+                schema_version = 1,
+                producer = "lp10-gh-attestation-verify/1.0.0",
+                package_sha256 = Catalog.Digest(pkg),
+                release_package_sha256 = Catalog.Digest(rel),
+                provenance_bundle_sha256 = Catalog.Digest(bnd),
+                source_archive_sha256 = Catalog.Digest(src),
+                verification = new[]
+                {
+                    new
+                    {
+                        verificationResult = new
+                        {
+                            mediaType = "application/vnd.dev.sigstore.verificationresult+json;version=0.1",
+                            verifiedTimestamps = new[] { new { type = "Tlog", timestamp = "2026-01-01T00:00:00Z" } },
+                            signature = new
+                            {
+                                certificate = new
+                                {
+                                    issuer = "https://token.actions.githubusercontent.com",
+                                    runnerEnvironment = runnerEnv,
+                                    sourceRepositoryVisibilityAtSigning = "public",
+                                    sourceRepositoryURI = repoUrl,
+                                    sourceRepositoryDigest = certCommit,
+                                    buildConfigDigest = certCommit,
+                                    buildConfigURI = $"{repoUrl}/.github/workflows/release.yml@refs/heads/main"
+                                }
+                            },
+                            statement = stmtDoc.RootElement
+                        }
+                    }
+                }
+            }));
+        }
+
+        CaseResult Dispatch(byte[] pkg, byte[] rel, byte[] bnd, byte[] att, byte[] src, bool dropSource = false)
+        {
+            var roles = new List<(string Role, string Path, byte[] Bytes)>
+            {
+                ("package", "package.nupkg", pkg),
+                ("release-package", "release.nupkg", rel),
+                ("provenance-bundle", "bundle.json", bnd),
+                ("provenance-attestation", "attestation.json", att)
+            };
+            if (!dropSource)
+                roles.Add(("source-archive", "source.zip", src));
+            var pins = roles.Select(r => new PinnedInput(r.Role, r.Path, Catalog.Digest(r.Bytes))).ToList();
+            var map = roles.ToDictionary(r => r.Role, r => new CheckedInput(
+                new PinnedInput(r.Role, r.Path, Catalog.Digest(r.Bytes)), r.Bytes), StringComparer.Ordinal);
+            return registry.Dispatch(new ResolverCase("lp10-provenance-check", "LP-10", pins, map));
+        }
+
+        var validAtt = BuildAttestation(pkgBytes, releaseBytes, bundleBytes, sourceBytes);
+        var positive = Dispatch(pkgBytes, releaseBytes, bundleBytes, validAtt, sourceBytes);
+        Check(positive.BranchId == "provenance-attributed" &&
+            positive.Decision == "deterministic" &&
+            positive.Applicability == "applicable" &&
+            positive.Finding is not null &&
+            positive.Finding.Contains("SLSA v1 build provenance and source correspondence verified", StringComparison.Ordinal),
+            $"Valid SLSA v1 provenance inputs must resolve to provenance-attributed (got {positive.BranchId}: {positive.MissingFact}).");
+
+        var missingRole = Dispatch(pkgBytes, releaseBytes, bundleBytes, validAtt, sourceBytes, dropSource: true);
+        Check(missingRole.BranchId == "provenance-unverified" && missingRole.Decision == "escalated",
+            "Missing provenance role must fail closed to provenance-unverified.");
+
+        var selfHosted = Dispatch(pkgBytes, releaseBytes, bundleBytes,
+            BuildAttestation(pkgBytes, releaseBytes, bundleBytes, sourceBytes, runnerEnv: "self-hosted"), sourceBytes);
+        Check(selfHosted.BranchId == "provenance-unverified" && selfHosted.Decision == "escalated",
+            "Self-hosted runner provenance must fail closed to provenance-unverified.");
+
+        var wrongCommit = Dispatch(pkgBytes, releaseBytes, bundleBytes,
+            BuildAttestation(pkgBytes, releaseBytes, bundleBytes, sourceBytes, certCommit: new string('2', 40)), sourceBytes);
+        Check(wrongCommit.BranchId == "provenance-unverified" && wrongCommit.Decision == "escalated",
+            "Mismatched certificate commit must fail closed to provenance-unverified.");
+
+        var tamperedRelease = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("wwwroot/matched.js", "export const x = 999;"u8.ToArray()),
+            ("staticwebassets/built.js", builtJs));
+        var payloadDiff = Dispatch(pkgBytes, tamperedRelease, bundleBytes,
+            BuildAttestation(pkgBytes, tamperedRelease, bundleBytes, sourceBytes), sourceBytes);
+        Check(payloadDiff.BranchId == "provenance-unverified" && payloadDiff.Decision == "escalated",
+            "Release package payload mismatch must fail closed to provenance-unverified.");
+
+        var sourceMissingWorkflow = BuildZip(
+            ($"controls-{commit}/Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/wwwroot/matched.js", matchedJs),
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\"}"u8.ToArray()),
+            ($"controls-{commit}/package-lock.json", "{\"name\":\"controls\",\"lockfileVersion\":3}"u8.ToArray()),
+            ($"controls-{commit}/src/index.ts", "export const built: number = 2;"u8.ToArray()));
+        var missingWorkflow = Dispatch(pkgBytes, releaseBytes, bundleBytes,
+            BuildAttestation(pkgBytes, releaseBytes, bundleBytes, sourceMissingWorkflow), sourceMissingWorkflow);
+        Check(missingWorkflow.BranchId == "provenance-unverified" && missingWorkflow.Decision == "escalated",
+            "Source archive missing the attested workflow file must fail closed to provenance-unverified.");
+
+        var sourceMissingLockfile = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/wwwroot/matched.js", matchedJs),
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\"}"u8.ToArray()),
+            ($"controls-{commit}/src/index.ts", "export const built: number = 2;"u8.ToArray()));
+        var missingLockfile = Dispatch(pkgBytes, releaseBytes, bundleBytes,
+            BuildAttestation(pkgBytes, releaseBytes, bundleBytes, sourceMissingLockfile), sourceMissingLockfile);
+        Check(missingLockfile.BranchId == "provenance-unverified" && missingLockfile.Decision == "escalated",
+            "Source archive missing a JS lockfile when staticwebassets scripts exist must fail closed to provenance-unverified.");
+
+        Console.WriteLine("LP-10 SLSA v1 build provenance positive and negative checks: 7 cases passed.");
     }
 
     private static void Check(bool success, string reason)

@@ -36,7 +36,7 @@ public sealed class Registry
             "LP-07" => new RegistryEntry(id, "implemented", "lp07-repository-commit", "1.0.0"),
             "LP-08" => new RegistryEntry(id, "implemented", "lp08-authors", "1.0.0"),
             "LP-09" => new RegistryEntry(id, "implemented", "lp09-project-url", "1.0.0"),
-            "LP-10" => new RegistryEntry(id, "implemented", "lp10-binary-attribution", "1.0.0"),
+            "LP-10" => new RegistryEntry(id, "implemented", "lp10-binary-attribution", "1.0.1"),
             "PI-01" => new RegistryEntry(id, "implemented", "pi01-strong-name", "1.1.0"),
             _ => new RegistryEntry(id, "tbd")
         }), [new Lp01LicensePolicyResolver(), new Lp02PublicSourceResolver(), new Lp03DependencyLicensesResolver(),

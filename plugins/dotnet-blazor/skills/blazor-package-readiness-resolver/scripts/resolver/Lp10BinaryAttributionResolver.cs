@@ -1,6 +1,8 @@
 using System.Buffers.Binary;
 using System.Globalization;
 using System.IO.Compression;
+using System.Reflection.Metadata;
+using System.Reflection.PortableExecutable;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -32,6 +34,9 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         "Checked code candidates (exact bytes hashed; locator snippets are display-only): ";
     private const string CandidateSuffix =
         ". These checked bytes do not establish ownership, release-commit correspondence or upstream.";
+    internal const string AttributionLimit =
+        "This package-only resolver accepts no source/provenance maps and performs no builds or transforms. " +
+        "Retain the inventory for a separate attribution assessment against paragraph 29; no currently supported packet can verify these candidates.";
 
     private static readonly HashSet<string> KnownNamespaces = new(StringComparer.Ordinal)
     {
@@ -76,23 +81,33 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
 
     public string RowId => "LP-10";
     public string ResolverId => "lp10-binary-attribution";
-    public string Version => "1.0.0";
+    public string Version => "1.0.1";
+
+    private const int ProvenanceLimit = 4 * 1024 * 1024;
+    private const string ProvenanceProducer = "lp10-gh-attestation-verify/1.0.0";
+    private static readonly string[] ProvenanceRoles =
+        ["package", "release-package", "provenance-bundle", "provenance-attestation", "source-archive"];
 
     public CaseResult Resolve(ResolverCase input)
     {
         if (input.Inputs.Count == 0)
             return Result(input, "missing-package", []);
-        if (input.Inputs.Count != 1 || input.Inputs[0].Role != "package" ||
-            !input.CheckedInputs.TryGetValue("package", out var package))
+        if (!input.CheckedInputs.TryGetValue("package", out var package))
             throw new InvalidDataException("LP-10 requires exactly one checked package input.");
         var scanned = ScanArchive(package.Content);
-        return Result(input, scanned.Branch, scanned.Records);
+        if (input.Inputs.Count == 1)
+        {
+            if (input.Inputs[0].Role != "package")
+                throw new InvalidDataException("LP-10 requires exactly one checked package input.");
+            return Result(input, scanned.Branch, scanned.Records);
+        }
+        return ResolveProvenance(input, package, scanned.Branch, scanned.Records);
     }
 
     private static CaseResult Result(ResolverCase input, string branch, List<EntryRecord> records)
     {
         if (branch == "no-code-payload")
-            return new("LP-10", "lp10-binary-attribution", "1.0.0", branch,
+            return new("LP-10", "lp10-binary-attribution", "1.0.1", branch,
                 "deterministic", "applicable", input.Inputs,
                 ["package:archive", "package:nuspec/metadata"], NoCodeContract,
                 NoCodeFinding, null, null, null);
@@ -124,24 +139,492 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             "incomplete-inventory" => ("A required entry or build XML exceeds inspection limits or cannot be safely parsed; the package inventory is incomplete.",
                 "bounded-safely-inspectable-package", "package-owner"),
             "unsupported-executable-content" => ("An executable-looking payload or active build/markup construct cannot be safely classified for attribution.",
-                "safely-inspectable-payload-and-per-entry-source-map", "package-owner"),
+                "separate-attribution-assessment-outside-current-resolver", "assessment-limitation"),
             "compiled-attribution-unverified" => ("Packaged compiled code lacks verified per-entry ownership and correspondence to public release-commit builds or a referenced NuGet/npm upstream.",
-                "per-entry-owner-and-public-release-commit-build-or-upstream-byte-map", "source-owner"),
+                "separate-attribution-assessment-outside-current-resolver", "assessment-limitation"),
             "text-code-attribution-unverified" => ("Packaged executable source-form text lacks verified per-entry ownership and exact release-commit blob correspondence, a pinned reproducible build/transform, or referenced-upstream byte correspondence.",
-                "per-entry-owner-and-public-release-commit-blob-or-verified-transform-or-upstream-byte-map", "source-owner"),
+                "separate-attribution-assessment-outside-current-resolver", "assessment-limitation"),
             "mixed-code-attribution-unverified" => ("Packaged compiled code and executable source-form text each lack verified per-entry source or referenced-upstream correspondence.",
-                "per-entry-compiled-build-and-text-blob-or-verified-transform-or-upstream-byte-maps", "source-owner"),
+                "separate-attribution-assessment-outside-current-resolver", "assessment-limitation"),
             _ => throw new InvalidDataException($"Unknown LP-10 branch: {branch}")
         };
         var structural = branch is "missing-package" or "unreadable-package" or "unsafe-archive" or
             "ambiguous-nuspec" or "missing-nuspec" or "missing-root-nuspec" or "unsafe-nuspec" or
             "invalid-xml" or "foreign-root" or "invalid-metadata" or "ambiguous-metadata" or
             "incomplete-inventory";
-        return new("LP-10", "lp10-binary-attribution", "1.0.0", branch, "escalated",
+        if (branch is "unsupported-executable-content" or "compiled-attribution-unverified" or
+            "text-code-attribution-unverified" or "mixed-code-attribution-unverified")
+            missing += " " + AttributionLimit;
+        return new("LP-10", "lp10-binary-attribution", "1.0.1", branch, "escalated",
             structural ? "unknown" : "applicable", input.Inputs,
             branch == "missing-package" ? [] : ["package:archive"],
             structural || records.Count == 0 ? null : CandidateContract(records),
             null, missing, required, category);
+    }
+
+    private static CaseResult ResolveProvenance(ResolverCase input, CheckedInput package,
+        string branch, List<EntryRecord> records)
+    {
+        if (branch is not ("compiled-attribution-unverified" or "text-code-attribution-unverified" or
+            "mixed-code-attribution-unverified"))
+            return Result(input, branch, records);
+
+        CaseResult Unverified(string detail) =>
+            new("LP-10", "lp10-binary-attribution", "1.0.1", "provenance-unverified", "escalated",
+                "applicable", input.Inputs,
+                input.Inputs.Select(item => $"input:{item.Role}:{item.Sha256}")
+                    .Distinct(StringComparer.Ordinal).ToArray(),
+                CandidateContract(records), null,
+                $"Supplied SLSA v1 build provenance and source correspondence packet could not be verified ({detail}); packaged code attribution remains unverified.",
+                "verified-slsa-provenance-and-source-correspondence-packet", "provenance-investigation");
+
+        if (input.Inputs.Count != ProvenanceRoles.Length ||
+            input.Inputs.Select(item => item.Role).Distinct(StringComparer.Ordinal).Count() != ProvenanceRoles.Length ||
+            input.Inputs.Any(item => !ProvenanceRoles.Contains(item.Role, StringComparer.Ordinal) ||
+                !Lp02PublicSourceResolver.SafePath(item.Path)) ||
+            !input.CheckedInputs.TryGetValue("release-package", out var releasePackage) ||
+            !input.CheckedInputs.TryGetValue("provenance-bundle", out var provenanceBundle) ||
+            !input.CheckedInputs.TryGetValue("provenance-attestation", out var provenanceAttestation) ||
+            !input.CheckedInputs.TryGetValue("source-archive", out var sourceArchive))
+            return Unverified("incomplete or unsupported provenance input roles");
+
+        var (pkgState, declaration) = Lp02PublicSourceResolver.InspectPackage(package.Content);
+        if (pkgState != "ready" || declaration is null ||
+            !Lp02PublicSourceResolver.TryRepository(declaration.RepositoryUrl, declaration.Commit,
+                out var repository, out _))
+            return Unverified("package lacks a canonical GitHub repository URL and 40-hex commit declaration");
+
+        var releaseScanned = ScanArchive(releasePackage.Content);
+        if (releaseScanned.Branch != branch ||
+            CandidateContract(releaseScanned.Records) != CandidateContract(records) ||
+            !Lp02PublicSourceResolver.TryArchive(package.Content, out var packageEntries) ||
+            !Lp02PublicSourceResolver.TryArchive(releasePackage.Content, out var releaseEntries))
+            return Unverified("attested release package code inventory does not match the inspected package");
+
+        var pkgNonSig = packageEntries.Where(kv =>
+            !kv.Key.Equals(".signature.p7s", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        var relNonSig = releaseEntries.Where(kv =>
+            !kv.Key.Equals(".signature.p7s", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        if (pkgNonSig.Count == 0 || pkgNonSig.Count != relNonSig.Count ||
+            !pkgNonSig.All(kv => relNonSig.TryGetValue(kv.Key, out var relBytes) &&
+                kv.Value.AsSpan().SequenceEqual(relBytes)))
+            return Unverified("non-signature archive entries differ between the inspected package and attested release package");
+
+        if (!TryVerifyProvenanceBundle(provenanceBundle.Content, releasePackage.Identity.Sha256,
+                repository, declaration.Commit, out var workflowPath))
+            return Unverified("Sigstore SLSA v1 provenance bundle does not bind the release package digest, GitHub-hosted workflow or declared commit");
+
+        if (!TryVerifyProvenanceAttestation(provenanceAttestation.Content, package.Identity.Sha256,
+                releasePackage.Identity.Sha256, provenanceBundle.Identity.Sha256,
+                sourceArchive.Identity.Sha256, repository, declaration.Commit, workflowPath))
+            return Unverified("verified attestation receipt does not bind the provenance bundle, Fulcio OIDC certificate, transparency log or declared commit");
+
+        if (!Lp02PublicSourceResolver.TryArchive(sourceArchive.Content, out var sourceFiles,
+                declaration.Commit, sourceMembers: true) || sourceFiles.Count == 0)
+            return Unverified("source archive is unreadable or outside the bounded GitHub source profile");
+
+        var rootPrefix = repository.Split('/')[^1] + "-" + declaration.Commit + "/";
+        if (sourceFiles.Keys.Any(path => !path.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)) ||
+            !sourceFiles.Keys.Any(path => path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) ||
+            !sourceFiles.ContainsKey(rootPrefix + workflowPath))
+            return Unverified("source archive does not match the declared repository/commit root, attested workflow path or C# project layout");
+
+        var sourceDigests = sourceFiles.Values.Select(bytes => Catalog.Digest(bytes)).ToHashSet(StringComparer.Ordinal);
+        var hasWebBuildTree = sourceFiles.Keys.Any(path =>
+                path.EndsWith("/package.json", StringComparison.OrdinalIgnoreCase)) &&
+            sourceFiles.Keys.Any(path =>
+                path.EndsWith("/package-lock.json", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith("/yarn.lock", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith("/pnpm-lock.yaml", StringComparison.OrdinalIgnoreCase)) &&
+            sourceFiles.Keys.Any(path =>
+                path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) ||
+                path.EndsWith(".js", StringComparison.OrdinalIgnoreCase));
+
+        var compiledCount = 0;
+        var exactSourceTextCount = 0;
+        var builtWebAssetTextCount = 0;
+        foreach (var record in records.Where(item => item.Classification != "passive"))
+        {
+            if (record.Classification == "compiled")
+            {
+                if (record.Reason != "pe-signature" ||
+                    sourceDigests.Contains(record.Sha256) ||
+                    !packageEntries.TryGetValue(record.Path, out var dllBytes) ||
+                    !VerifyAssemblyMetadataConsistency(dllBytes, repository, declaration.Commit))
+                    return Unverified($"compiled candidate {record.Path} has conflicting PE repository metadata or matches a prebuilt binary in source");
+                compiledCount++;
+            }
+            else if (record.Classification == "text")
+            {
+                if (sourceDigests.Contains(record.Sha256))
+                    exactSourceTextCount++;
+                else if (record.Reason == "executable-source-text" &&
+                    record.Path.StartsWith("staticwebassets/", StringComparison.OrdinalIgnoreCase) &&
+                    (record.Path.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
+                     record.Path.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase)) &&
+                    hasWebBuildTree)
+                    builtWebAssetTextCount++;
+                else
+                    return Unverified($"text candidate {record.Path} lacks exact source-blob or attested web-asset build correspondence");
+            }
+            else
+                return Unverified($"candidate {record.Path} has unsupported classification {record.Classification}");
+        }
+
+        if (compiledCount + exactSourceTextCount + builtWebAssetTextCount == 0)
+            return Unverified("no non-passive code candidates were evaluated");
+
+        var finding =
+            $"SLSA v1 build provenance and source correspondence verified for {declaration.Id} {declaration.Version} " +
+            $"at repository {repository} commit {declaration.Commit}: verified by gh attestation verify (Sigstore Tlog + Fulcio OIDC " +
+            $"issuer https://token.actions.githubusercontent.com on github-hosted runner, receipt bound by SHA-256) binding release package SHA-256 " +
+            $"{releasePackage.Identity.Sha256} to workflow {workflowPath}@{declaration.Commit}; all {pkgNonSig.Count} non-signature " +
+            $"archive entries in package {package.Identity.Sha256} match the attested release package byte-for-byte; and all " +
+            $"{compiledCount + exactSourceTextCount + builtWebAssetTextCount} non-passive code candidates ({compiledCount} compiled PE/CLI " +
+            $"assemblies with consistent metadata and no prebuilt source-tree binary, {exactSourceTextCount} exact source-blob text " +
+            $"matches, {builtWebAssetTextCount} workflow-built staticwebassets scripts) correspond to the attested commit.";
+        return new("LP-10", "lp10-binary-attribution", "1.0.1", "provenance-attributed",
+            "deterministic", "applicable", input.Inputs,
+            input.Inputs.Select(item => $"input:{item.Role}:{item.Sha256}").ToArray(),
+            CandidateContract(records), finding, null, null, null);
+    }
+
+    internal sealed record VerifiedProvenanceContext(
+        Lp02Package Declaration,
+        string Repository,
+        string WorkflowPath,
+        string ReleasePackageSha256,
+        string RootPrefix,
+        Dictionary<string, byte[]> PackageEntries,
+        Dictionary<string, byte[]> SourceFiles);
+
+    internal static bool TryVerifyProvenanceContext(ResolverCase input, CheckedInput package,
+        out VerifiedProvenanceContext? context, out string error)
+    {
+        context = null;
+        error = "";
+        var lp10Result = new Lp10BinaryAttributionResolver().Resolve(input with { RowId = "LP-10" });
+        if (lp10Result.BranchId != "provenance-attributed")
+        {
+            error = lp10Result.MissingFact ?? $"LP-10 provenance check returned {lp10Result.BranchId}";
+            return false;
+        }
+        var releasePackage = input.CheckedInputs["release-package"];
+        var provenanceBundle = input.CheckedInputs["provenance-bundle"];
+        var sourceArchive = input.CheckedInputs["source-archive"];
+        var (_, declaration) = Lp02PublicSourceResolver.InspectPackage(package.Content);
+        if (declaration is null ||
+            !Lp02PublicSourceResolver.TryRepository(declaration.RepositoryUrl, declaration.Commit, out var repository, out _) ||
+            !TryVerifyProvenanceBundle(provenanceBundle.Content, releasePackage.Identity.Sha256, repository, declaration.Commit, out var workflowPath) ||
+            !Lp02PublicSourceResolver.TryArchive(package.Content, out var packageEntries) ||
+            !Lp02PublicSourceResolver.TryArchive(sourceArchive.Content, out var sourceFiles, declaration.Commit, sourceMembers: true))
+        {
+            error = "failed to reconstruct verified provenance context";
+            return false;
+        }
+        var rootPrefix = repository.Split('/')[^1] + "-" + declaration.Commit + "/";
+        context = new VerifiedProvenanceContext(declaration, repository, workflowPath,
+            releasePackage.Identity.Sha256, rootPrefix, packageEntries, sourceFiles);
+        return true;
+    }
+
+    private static string NormalizeRepoUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "";
+        var trimmed = value.Trim().TrimEnd('/');
+        return trimmed.EndsWith(".git", StringComparison.OrdinalIgnoreCase)
+            ? trimmed[..^4] : trimmed;
+    }
+
+    private static bool TryVerifyProvenanceBundle(ReadOnlyMemory<byte> content, string releaseSha256,
+        string expectedRepository, string expectedCommit, out string workflowPath)
+    {
+        workflowPath = "";
+        if (content.Length is <= 0 or > ProvenanceLimit)
+            return false;
+        try
+        {
+            _ = StrictUtf8.GetCharCount(content.Span);
+            using var doc = JsonDocument.Parse(content, new JsonDocumentOptions { MaxDepth = 32 });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            var bundles = new List<JsonElement>();
+            if (doc.RootElement.TryGetProperty("attestations", out var attArray) &&
+                attArray.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var item in attArray.EnumerateArray())
+                    if (item.ValueKind == JsonValueKind.Object &&
+                        item.TryGetProperty("bundle", out var inner) &&
+                        inner.ValueKind == JsonValueKind.Object)
+                        bundles.Add(inner);
+            }
+            else
+                bundles.Add(doc.RootElement);
+
+            foreach (var bundle in bundles)
+            {
+                if (!bundle.TryGetProperty("mediaType", out var mediaType) ||
+                    mediaType.ValueKind != JsonValueKind.String ||
+                    !(mediaType.GetString()?.StartsWith("application/vnd.dev.sigstore.bundle", StringComparison.Ordinal) ?? false) ||
+                    !bundle.TryGetProperty("verificationMaterial", out var vm) ||
+                    vm.ValueKind != JsonValueKind.Object ||
+                    !vm.TryGetProperty("certificate", out var cert) ||
+                    cert.ValueKind != JsonValueKind.Object ||
+                    !cert.TryGetProperty("rawBytes", out var rawCert) ||
+                    rawCert.ValueKind != JsonValueKind.String ||
+                    string.IsNullOrWhiteSpace(rawCert.GetString()) ||
+                    Convert.FromBase64String(rawCert.GetString()!).Length == 0 ||
+                    !vm.TryGetProperty("tlogEntries", out var tlogs) ||
+                    tlogs.ValueKind != JsonValueKind.Array ||
+                    tlogs.GetArrayLength() == 0 ||
+                    !tlogs[0].TryGetProperty("logIndex", out var logIndex) ||
+                    logIndex.ValueKind != JsonValueKind.String ||
+                    string.IsNullOrWhiteSpace(logIndex.GetString()) ||
+                    !bundle.TryGetProperty("dsseEnvelope", out var dsse) ||
+                    dsse.ValueKind != JsonValueKind.Object ||
+                    !dsse.TryGetProperty("payloadType", out var payloadType) ||
+                    payloadType.GetString() != "application/vnd.in-toto+json" ||
+                    !dsse.TryGetProperty("signatures", out var sigs) ||
+                    sigs.ValueKind != JsonValueKind.Array ||
+                    sigs.GetArrayLength() == 0 ||
+                    !sigs[0].TryGetProperty("sig", out var sig) ||
+                    sig.ValueKind != JsonValueKind.String ||
+                    string.IsNullOrWhiteSpace(sig.GetString()) ||
+                    Convert.FromBase64String(sig.GetString()!).Length == 0 ||
+                    !dsse.TryGetProperty("payload", out var payloadB64) ||
+                    payloadB64.ValueKind != JsonValueKind.String ||
+                    string.IsNullOrWhiteSpace(payloadB64.GetString()))
+                    continue;
+
+                var payloadBytes = Convert.FromBase64String(payloadB64.GetString()!);
+                _ = StrictUtf8.GetCharCount(payloadBytes);
+                using var stmtDoc = JsonDocument.Parse(payloadBytes, new JsonDocumentOptions { MaxDepth = 32 });
+                var stmt = stmtDoc.RootElement;
+                if (stmt.ValueKind != JsonValueKind.Object ||
+                    !stmt.TryGetProperty("_type", out var stmtType) ||
+                    stmtType.GetString() != "https://in-toto.io/Statement/v1" ||
+                    !stmt.TryGetProperty("predicateType", out var predType) ||
+                    predType.GetString() != "https://slsa.dev/provenance/v1" ||
+                    !stmt.TryGetProperty("subject", out var subjects) ||
+                    subjects.ValueKind != JsonValueKind.Array ||
+                    !subjects.EnumerateArray().Any(sub =>
+                        sub.ValueKind == JsonValueKind.Object &&
+                        sub.TryGetProperty("digest", out var dig) &&
+                        dig.ValueKind == JsonValueKind.Object &&
+                        dig.TryGetProperty("sha256", out var shaProp) &&
+                        string.Equals(shaProp.GetString(), releaseSha256, StringComparison.OrdinalIgnoreCase)) ||
+                    !stmt.TryGetProperty("predicate", out var pred) ||
+                    pred.ValueKind != JsonValueKind.Object ||
+                    !pred.TryGetProperty("buildDefinition", out var buildDef) ||
+                    buildDef.ValueKind != JsonValueKind.Object ||
+                    !buildDef.TryGetProperty("buildType", out var buildType) ||
+                    buildType.GetString() != "https://actions.github.io/buildtypes/workflow/v1" ||
+                    !buildDef.TryGetProperty("internalParameters", out var internalParams) ||
+                    internalParams.ValueKind != JsonValueKind.Object ||
+                    !internalParams.TryGetProperty("github", out var githubParams) ||
+                    githubParams.ValueKind != JsonValueKind.Object ||
+                    !githubParams.TryGetProperty("runner_environment", out var runnerEnv) ||
+                    runnerEnv.GetString() != "github-hosted" ||
+                    !buildDef.TryGetProperty("externalParameters", out var externalParams) ||
+                    externalParams.ValueKind != JsonValueKind.Object ||
+                    !externalParams.TryGetProperty("workflow", out var workflow) ||
+                    workflow.ValueKind != JsonValueKind.Object ||
+                    !workflow.TryGetProperty("repository", out var wfRepo) ||
+                    !string.Equals(NormalizeRepoUrl(wfRepo.GetString()), expectedRepository, StringComparison.OrdinalIgnoreCase) ||
+                    !workflow.TryGetProperty("path", out var wfPathProp) ||
+                    wfPathProp.ValueKind != JsonValueKind.String ||
+                    !(wfPathProp.GetString() is { } wfPath &&
+                      wfPath.StartsWith(".github/workflows/", StringComparison.Ordinal) &&
+                      !wfPath.Contains("..", StringComparison.Ordinal) &&
+                      Lp02PublicSourceResolver.SafePath(wfPath)) ||
+                    !buildDef.TryGetProperty("resolvedDependencies", out var deps) ||
+                    deps.ValueKind != JsonValueKind.Array ||
+                    !deps.EnumerateArray().Any(dep =>
+                        dep.ValueKind == JsonValueKind.Object &&
+                        dep.TryGetProperty("digest", out var depDig) &&
+                        depDig.ValueKind == JsonValueKind.Object &&
+                        depDig.TryGetProperty("gitCommit", out var gitCommit) &&
+                        string.Equals(gitCommit.GetString(), expectedCommit, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                workflowPath = wfPath;
+                return true;
+            }
+            return false;
+        }
+        catch (Exception ex) when (ex is JsonException or FormatException or DecoderFallbackException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryVerifyProvenanceAttestation(ReadOnlyMemory<byte> content,
+        string packageSha256, string releaseSha256, string bundleSha256, string sourceSha256,
+        string expectedRepository, string expectedCommit, string workflowPath)
+    {
+        if (content.Length is <= 0 or > ProvenanceLimit)
+            return false;
+        try
+        {
+            _ = StrictUtf8.GetCharCount(content.Span);
+            using var doc = JsonDocument.Parse(content, new JsonDocumentOptions { MaxDepth = 32 });
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object ||
+                !root.TryGetProperty("schema_version", out var schemaVer) ||
+                schemaVer.ValueKind != JsonValueKind.Number ||
+                schemaVer.GetInt32() != 1 ||
+                !root.TryGetProperty("producer", out var producer) ||
+                producer.GetString() != ProvenanceProducer ||
+                !root.TryGetProperty("package_sha256", out var pkgSha) ||
+                pkgSha.GetString() != packageSha256 ||
+                !root.TryGetProperty("release_package_sha256", out var relSha) ||
+                relSha.GetString() != releaseSha256 ||
+                !root.TryGetProperty("provenance_bundle_sha256", out var bndSha) ||
+                bndSha.GetString() != bundleSha256 ||
+                !root.TryGetProperty("source_archive_sha256", out var srcSha) ||
+                srcSha.GetString() != sourceSha256 ||
+                !root.TryGetProperty("verification", out var verArray) ||
+                verArray.ValueKind != JsonValueKind.Array ||
+                verArray.GetArrayLength() == 0)
+                return false;
+
+            var expectedConfigPrefix = expectedRepository + "/" + workflowPath + "@";
+            foreach (var entry in verArray.EnumerateArray())
+            {
+                if (entry.ValueKind != JsonValueKind.Object ||
+                    !entry.TryGetProperty("verificationResult", out var vr) ||
+                    vr.ValueKind != JsonValueKind.Object ||
+                    !vr.TryGetProperty("mediaType", out var mediaType) ||
+                    !(mediaType.GetString()?.StartsWith("application/vnd.dev.sigstore.verificationresult", StringComparison.Ordinal) ?? false) ||
+                    !vr.TryGetProperty("verifiedTimestamps", out var timestamps) ||
+                    timestamps.ValueKind != JsonValueKind.Array ||
+                    !timestamps.EnumerateArray().Any(ts =>
+                        ts.ValueKind == JsonValueKind.Object &&
+                        ts.TryGetProperty("type", out var tsType) &&
+                        tsType.GetString() == "Tlog") ||
+                    !vr.TryGetProperty("signature", out var sig) ||
+                    sig.ValueKind != JsonValueKind.Object ||
+                    !sig.TryGetProperty("certificate", out var cert) ||
+                    cert.ValueKind != JsonValueKind.Object ||
+                    !cert.TryGetProperty("issuer", out var issuer) ||
+                    issuer.GetString() != "https://token.actions.githubusercontent.com" ||
+                    !cert.TryGetProperty("runnerEnvironment", out var runnerEnv) ||
+                    runnerEnv.GetString() != "github-hosted" ||
+                    !cert.TryGetProperty("sourceRepositoryVisibilityAtSigning", out var visibility) ||
+                    visibility.GetString() != "public" ||
+                    !cert.TryGetProperty("sourceRepositoryURI", out var repoUri) ||
+                    !string.Equals(NormalizeRepoUrl(repoUri.GetString()), expectedRepository, StringComparison.OrdinalIgnoreCase) ||
+                    !cert.TryGetProperty("sourceRepositoryDigest", out var repoDigest) ||
+                    !string.Equals(repoDigest.GetString(), expectedCommit, StringComparison.OrdinalIgnoreCase) ||
+                    !cert.TryGetProperty("buildConfigDigest", out var configDigest) ||
+                    !string.Equals(configDigest.GetString(), expectedCommit, StringComparison.OrdinalIgnoreCase) ||
+                    !cert.TryGetProperty("buildConfigURI", out var configUri) ||
+                    !(configUri.GetString()?.StartsWith(expectedConfigPrefix, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    !vr.TryGetProperty("statement", out var stmt) ||
+                    stmt.ValueKind != JsonValueKind.Object ||
+                    !stmt.TryGetProperty("predicateType", out var predType) ||
+                    predType.GetString() != "https://slsa.dev/provenance/v1" ||
+                    !stmt.TryGetProperty("subject", out var subjects) ||
+                    subjects.ValueKind != JsonValueKind.Array ||
+                    !subjects.EnumerateArray().Any(sub =>
+                        sub.ValueKind == JsonValueKind.Object &&
+                        sub.TryGetProperty("digest", out var dig) &&
+                        dig.ValueKind == JsonValueKind.Object &&
+                        dig.TryGetProperty("sha256", out var shaProp) &&
+                        string.Equals(shaProp.GetString(), releaseSha256, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+                return true;
+            }
+            return false;
+        }
+        catch (Exception ex) when (ex is JsonException or DecoderFallbackException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool VerifyAssemblyMetadataConsistency(byte[] bytes, string expectedRepository, string expectedCommit)
+    {
+        var inspected = Pi01PeInspector.Inspect(bytes);
+        if (inspected.State is not ("unsigned" or "delay-signed" or "public-signed" or "verified-signed"))
+            return false;
+        try
+        {
+            using var pe = new PEReader(new MemoryStream(bytes, writable: false));
+            var metadata = pe.GetMetadataReader();
+            var definition = metadata.GetAssemblyDefinition();
+            if (string.IsNullOrWhiteSpace(metadata.GetString(definition.Name)))
+                return false;
+            foreach (var handle in definition.GetCustomAttributes())
+            {
+                var attribute = metadata.GetCustomAttribute(handle);
+                EntityHandle type;
+                BlobHandle signature;
+                string constructor;
+                if (attribute.Constructor.Kind == HandleKind.MemberReference)
+                {
+                    var member = metadata.GetMemberReference((MemberReferenceHandle)attribute.Constructor);
+                    type = member.Parent;
+                    signature = member.Signature;
+                    constructor = metadata.GetString(member.Name);
+                }
+                else if (attribute.Constructor.Kind == HandleKind.MethodDefinition)
+                {
+                    var method = metadata.GetMethodDefinition((MethodDefinitionHandle)attribute.Constructor);
+                    type = method.GetDeclaringType();
+                    signature = method.Signature;
+                    constructor = metadata.GetString(method.Name);
+                }
+                else continue;
+
+                var (space, name) = type.Kind switch
+                {
+                    HandleKind.TypeReference => (metadata.GetTypeReference((TypeReferenceHandle)type).Namespace,
+                        metadata.GetTypeReference((TypeReferenceHandle)type).Name),
+                    HandleKind.TypeDefinition => (metadata.GetTypeDefinition((TypeDefinitionHandle)type).Namespace,
+                        metadata.GetTypeDefinition((TypeDefinitionHandle)type).Name),
+                    _ => (default(StringHandle), default(StringHandle))
+                };
+                if (constructor != ".ctor" || metadata.GetString(space) != "System.Reflection")
+                    continue;
+                var attributeName = metadata.GetString(name);
+                var shape = metadata.GetBlobBytes(signature).AsSpan();
+                var isInfoVer = attributeName == "AssemblyInformationalVersionAttribute" &&
+                    shape.SequenceEqual(new byte[] { 0x20, 1, 1, 0x0e });
+                var isRepoMeta = attributeName == "AssemblyMetadataAttribute" &&
+                    shape.SequenceEqual(new byte[] { 0x20, 2, 1, 0x0e, 0x0e });
+                if (!isInfoVer && !isRepoMeta)
+                    continue;
+                var reader = metadata.GetBlobReader(attribute.Value);
+                if (reader.ReadUInt16() != 1)
+                    return false;
+                var first = reader.ReadSerializedString();
+                if (isInfoVer && first is not null)
+                {
+                    var plus = first.IndexOf('+');
+                    if (plus >= 0 && !string.Equals(first[(plus + 1)..], expectedCommit, StringComparison.OrdinalIgnoreCase))
+                        return false;
+                }
+                else if (isRepoMeta)
+                {
+                    var second = reader.ReadSerializedString();
+                    if (first == "RepositoryCommit" && !string.IsNullOrWhiteSpace(second) &&
+                        !string.Equals(second.Trim(), expectedCommit, StringComparison.OrdinalIgnoreCase))
+                        return false;
+                    if (first == "RepositoryUrl" && !string.IsNullOrWhiteSpace(second) &&
+                        !string.Equals(NormalizeRepoUrl(second), expectedRepository, StringComparison.OrdinalIgnoreCase))
+                        return false;
+                }
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is BadImageFormatException or InvalidOperationException or ArgumentException)
+        {
+            return false;
+        }
     }
 
     private sealed record EntryRecord(string Path, long SizeBytes, string Sha256,
