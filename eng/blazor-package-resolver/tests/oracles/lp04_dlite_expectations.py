@@ -9,6 +9,10 @@ CONTRACT = (
     "Package-byte classification under bundled-web-assets/1, not a legal determination. "
     "Only the assessed nupkg is inspected; no origin, SBOM, applicability or notice conclusion is inferred. "
     "Other representations were not assessed. Legacy notice-coverage-v1 deciding packets are retired.")
+PROVENANCE_CONTRACT = (
+    "Checked package and SLSA v1 build provenance packet under bundled-web-assets/1. "
+    "Positive notice coverage requires verified SLSA v1 provenance and complete source/lockfile notice verification; "
+    "unresolved outcomes remain not tested.")
 EMPTY = "No JS/CSS assets detected in the supported package layouts; other representations were not assessed."
 FIXED = {
     "missing-package": ("The exact root package is missing.", "package", "package-acquisition"),
@@ -81,10 +85,31 @@ def legacy_delta(suite):
 
 
 def mapping_results():
+    surf = inventory([("wwwroot/x.js", b"x")])
     return ([result(branch, []) for branch in FIXED] +
             [result("no-supported-layout-assets", [], inventory([])),
-             result("origin-review-missing", [], inventory([("wwwroot/x.js", b"x")])),
-             result("surface-unsupported", [], inventory([], ["tools/x.js"]))])
+             result("origin-review-missing", [], surf),
+             result("surface-unsupported", [], inventory([], ["tools/x.js"])),
+             dict(row_id="LP-04", resolver_id="lp04-notice-coverage", resolver_version="2.0.0",
+                  branch_id="provenance-notices-verified", decision="deterministic", applicability="applicable",
+                  inputs=[], evidence_references=["input:package:" + "0" * 64],
+                  evidence_contract=PROVENANCE_CONTRACT,
+                  finding=("bundled-web-assets/1: 1 assets (.js=1, .mjs=0, .cjs=0, .css=0, .map=0), 1 bytes; "
+                           f"inventory SHA-256 {surf['inventory_sha256']}. SLSA v1 build provenance and web-asset "
+                           "notice coverage verified."),
+                  missing_fact=None, required_input=None, next_category=None,
+                  bundled_web_assets=surf),
+             dict(row_id="LP-04", resolver_id="lp04-notice-coverage", resolver_version="2.0.0",
+                  branch_id="provenance-notices-unverified", decision="escalated", applicability="unknown",
+                  inputs=[], evidence_references=["input:package:" + "0" * 64],
+                  evidence_contract=PROVENANCE_CONTRACT, finding=None,
+                  missing_fact=("bundled-web-assets/1: 1 assets (.js=1, .mjs=0, .cjs=0, .css=0, .map=0), 1 bytes; "
+                                f"inventory SHA-256 {surf['inventory_sha256']}. Supplied SLSA v1 build provenance and "
+                                "web-asset notice packet could not verify notice coverage; web-asset origin and "
+                                "notice obligations remain unverified."),
+                  required_input="verified-slsa-provenance-and-web-asset-notice-coverage",
+                  next_category="notice-investigation",
+                  bundled_web_assets=surf)])
 
 
 def main():

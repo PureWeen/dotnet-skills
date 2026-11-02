@@ -114,6 +114,8 @@ public static class EvidenceProtocolValidator
             records,
             protocols);
         RequireProtocolForOutcomeRow(
+            root,
+            input,
             assessment,
             records,
             protocols,
@@ -122,6 +124,8 @@ public static class EvidenceProtocolValidator
             "complete",
             "incomplete");
         RequireProtocolForOutcomeRow(
+            root,
+            input,
             assessment,
             records,
             protocols,
@@ -1297,6 +1301,8 @@ public static class EvidenceProtocolValidator
     }
 
     private static void RequireProtocolForOutcomeRow(
+        string root,
+        InputManifest input,
         ReadinessAssessment assessment,
         IReadOnlyDictionary<string, EvidenceRecord> records,
         IReadOnlyDictionary<string, ParsedProtocol> protocols,
@@ -1338,9 +1344,99 @@ public static class EvidenceProtocolValidator
         var expectedResult = row.Status == "verified" ? verifiedResult : gapResult;
         if (!matching.Any(protocol => protocol.Result == expectedResult))
         {
+            if (rowId == "LP-04" && row.Status == "verified" &&
+                row.EvidenceIds.Any(id =>
+                    records.TryGetValue(id, out var rec) &&
+                    rec.Applicability.Scope == row.Scope &&
+                    HasVerifiedLp04ProvenanceResolverResult(root, input, rec)))
+            {
+                return;
+            }
+
             throw new DeterministicValidationException(
                 $"Row '{rowId}' status '{row.Status}' requires structured '{method}' evidence with result '{expectedResult}'.");
         }
+    }
+
+    private static bool HasVerifiedLp04ProvenanceResolverResult(
+        string root,
+        InputManifest input,
+        EvidenceRecord record)
+    {
+        if (record.Provenance.Kind != EvidenceIdentity.ReviewerGeneratedAnalysis ||
+            record.Provenance.Method != "eleven-row-handoff/2.1.0" ||
+            record.Claim != "The retained resolver result for LP-04 has branch provenance-notices-verified and decision deterministic.")
+        {
+            return false;
+        }
+
+        var bytes = ReadProtocolBytes(root, input, record);
+        using var document = StrictJson.Parse(
+            bytes,
+            ResourceLimits.SupplementalInputAggregateBytes,
+            "eleven-row resolver results");
+        var rootElem = document.RootElement;
+        if (rootElem.ValueKind != JsonValueKind.Object ||
+            ContractJson.Int32(rootElem, "schema_version") != 1 ||
+            !rootElem.TryGetProperty("cases", out var casesElem) ||
+            casesElem.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+
+        var expectedRoles = new[]
+        {
+            "package",
+            "release-package",
+            "provenance-bundle",
+            "provenance-attestation",
+            "source-archive"
+        };
+        foreach (var caseElem in casesElem.EnumerateArray())
+        {
+            if (caseElem.ValueKind != JsonValueKind.Object ||
+                !caseElem.TryGetProperty("case_id", out var caseIdProp) ||
+                caseIdProp.GetString() != "eleven-lp-04" ||
+                !caseElem.TryGetProperty("result", out var res) ||
+                res.ValueKind != JsonValueKind.Object)
+            {
+                continue;
+            }
+
+            if (ContractJson.String(res, "row_id") != "LP-04" ||
+                ContractJson.String(res, "resolver_id") != "lp04-notice-coverage" ||
+                ContractJson.String(res, "resolver_version") != "2.0.0" ||
+                ContractJson.String(res, "branch_id") != "provenance-notices-verified" ||
+                ContractJson.String(res, "decision") != "deterministic" ||
+                ContractJson.String(res, "applicability") != "applicable" ||
+                !res.TryGetProperty("inputs", out var inputsElem) ||
+                inputsElem.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+
+            var pins = inputsElem.EnumerateArray().ToArray();
+            if (pins.Length != expectedRoles.Length)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < expectedRoles.Length; i++)
+            {
+                if (pins[i].ValueKind != JsonValueKind.Object ||
+                    ContractJson.String(pins[i], "role") != expectedRoles[i])
+                {
+                    return false;
+                }
+            }
+
+            return string.Equals(
+                ContractJson.String(pins[0], "sha256"),
+                input.Package.NupkgDigest.Value,
+                StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private static void ValidateToolchainRows(

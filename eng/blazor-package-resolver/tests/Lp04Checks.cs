@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Text;
+using System.Text.Json;
 using BlazorPackageResolver;
 
 internal static class Lp04Checks
@@ -171,7 +172,224 @@ internal static class Lp04Checks
         var mismatch = new Lp04NoticeCoverageResolver().Resolve(new("bad", "LP-04", [badPin],
             new Dictionary<string, CheckedInput> { ["package"] = new(badPin, empty) }));
         Check(mismatch.BranchId == "input-invalid", "digest mismatch");
+        CheckProvenance(registry, Check);
         Replay.Run(Path.Combine(fixture, "cases.json"), registry);
         Console.WriteLine($"LP-04 D-lite: {assertions} assertions and frozen v2 result replays passed; v1 deciding tests retired.");
+    }
+
+    private static void CheckProvenance(Registry registry, Action<bool, string> check)
+    {
+        const string commit = "1111111111111111111111111111111111111111";
+        const string repoUrl = "https://github.com/example/controls";
+        var nuspec = Encoding.UTF8.GetBytes(
+            "<package><metadata><id>Example.Controls</id><version>1.0.0</version>" +
+            $"<repository type=\"git\" url=\"{repoUrl}\" commit=\"{commit}\"/></metadata></package>");
+        var licenseBytes = "MIT License\nCopyright (c) 2026 Example Corp.\nPermission is hereby granted..."u8.ToArray();
+        var scriptBytes = "export function greet() { return 'hi'; }\n"u8.ToArray();
+        var bundleCssBytes = "div[b-1234567890] { color: red; }\n"u8.ToArray();
+
+        static byte[] BuildZip(params (string Name, byte[] Bytes)[] entries)
+        {
+            using var ms = new MemoryStream();
+            using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+            {
+                foreach (var (name, content) in entries)
+                {
+                    using var stream = zip.CreateEntry(name, CompressionLevel.NoCompression).Open();
+                    stream.Write(content);
+                }
+            }
+            return ms.ToArray();
+        }
+
+        static (byte[] Bundle, byte[] Attestation) MakeProvenance(byte[] pkg, byte[] rel, byte[] src)
+        {
+            var relSha = Catalog.Digest(rel);
+            var stmtJson = JsonSerializer.Serialize(new
+            {
+                _type = "https://in-toto.io/Statement/v1",
+                subject = new[] { new { name = "Example.Controls.1.0.0.nupkg", digest = new { sha256 = relSha } } },
+                predicateType = "https://slsa.dev/provenance/v1",
+                predicate = new
+                {
+                    buildDefinition = new
+                    {
+                        buildType = "https://actions.github.io/buildtypes/workflow/v1",
+                        externalParameters = new
+                        {
+                            workflow = new { repository = repoUrl, path = ".github/workflows/release.yml", @ref = "refs/heads/main" }
+                        },
+                        internalParameters = new { github = new { event_name = "workflow_dispatch", runner_environment = "github-hosted" } },
+                        resolvedDependencies = new[]
+                        {
+                            new { uri = $"git+{repoUrl}@refs/heads/main", digest = new { gitCommit = commit } }
+                        }
+                    }
+                }
+            });
+            var bnd = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+            {
+                mediaType = "application/vnd.dev.sigstore.bundle.v0.3+json",
+                verificationMaterial = new
+                {
+                    certificate = new { rawBytes = "dGVzdA==" },
+                    tlogEntries = new[] { new { logIndex = "12345" } }
+                },
+                dsseEnvelope = new
+                {
+                    payloadType = "application/vnd.in-toto+json",
+                    payload = Convert.ToBase64String(Encoding.UTF8.GetBytes(stmtJson)),
+                    signatures = new[] { new { sig = "dGVzdA==" } }
+                }
+            }));
+            using var stmtDoc = JsonDocument.Parse(stmtJson);
+            var att = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+            {
+                schema_version = 1,
+                producer = "lp10-gh-attestation-verify/1.0.0",
+                package_sha256 = Catalog.Digest(pkg),
+                release_package_sha256 = relSha,
+                provenance_bundle_sha256 = Catalog.Digest(bnd),
+                source_archive_sha256 = Catalog.Digest(src),
+                verification = new[]
+                {
+                    new
+                    {
+                        verificationResult = new
+                        {
+                            mediaType = "application/vnd.dev.sigstore.verificationresult+json;version=0.1",
+                            verifiedTimestamps = new[] { new { type = "Tlog", timestamp = "2026-01-01T00:00:00Z" } },
+                            signature = new
+                            {
+                                certificate = new
+                                {
+                                    issuer = "https://token.actions.githubusercontent.com",
+                                    runnerEnvironment = "github-hosted",
+                                    sourceRepositoryVisibilityAtSigning = "public",
+                                    sourceRepositoryURI = repoUrl,
+                                    sourceRepositoryDigest = commit,
+                                    buildConfigDigest = commit,
+                                    buildConfigURI = $"{repoUrl}/.github/workflows/release.yml@refs/heads/main"
+                                }
+                            },
+                            statement = stmtDoc.RootElement
+                        }
+                    }
+                }
+            }));
+            return (bnd, att);
+        }
+
+        CaseResult Dispatch5(byte[] pkg, byte[] rel, byte[] bnd, byte[] att, byte[] src)
+        {
+            var roles = new (string Role, string Path, byte[] Bytes)[]
+            {
+                ("package", "package.nupkg", pkg),
+                ("release-package", "release.nupkg", rel),
+                ("provenance-bundle", "bundle.json", bnd),
+                ("provenance-attestation", "attestation.json", att),
+                ("source-archive", "source.zip", src)
+            };
+            var pins = roles.Select(r => new PinnedInput(r.Role, r.Path, Catalog.Digest(r.Bytes))).ToList();
+            var checkedMap = roles.ToDictionary(
+                r => r.Role,
+                r => new CheckedInput(new PinnedInput(r.Role, r.Path, Catalog.Digest(r.Bytes)), r.Bytes),
+                StringComparer.Ordinal);
+            return registry.Dispatch(new ResolverCase("lp04-prov", "LP-04", pins, checkedMap));
+        }
+
+        // Mode B positive: first-party source script + Razor .bundle.scp.css + repo notice
+        var modeBPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE.txt", licenseBytes),
+            ("staticwebassets/scripts/app.js", scriptBytes),
+            ("staticwebassets/Example.Controls.abc123.bundle.scp.css", bundleCssBytes));
+        var modeBSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/.github/THIRD-PARTY-NOTICES.md", "# Third-Party Notices\nNo bundled runtime npm deps.\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/src/Components/Button.razor.css", "div { color: red; }\n"u8.ToArray()),
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"devDependencies\":{\"eslint\":\"^9.0.0\"}}"u8.ToArray()));
+        var (modeBBnd, modeBAtt) = MakeProvenance(modeBPkg, modeBPkg, modeBSrc);
+        var modeBRes = Dispatch5(modeBPkg, modeBPkg, modeBBnd, modeBAtt, modeBSrc);
+        check(modeBRes.BranchId == "provenance-notices-verified" && modeBRes.Decision == "deterministic" &&
+            modeBRes.Applicability == "applicable" && modeBRes.BundledWebAssets!.Assets.Count == 2,
+            "LP-04 Mode B first-party source + Razor bundle CSS verified");
+
+        // Mode B negative: foreign @license or (c) banner in shipped JS
+        var foreignJs = "/*! (c) 2025 Other Author | Licensed under MIT */\nexport const x = 1;\n"u8.ToArray();
+        var badModeBPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE.txt", licenseBytes),
+            ("staticwebassets/scripts/app.js", foreignJs));
+        var badModeBSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/.github/THIRD-PARTY-NOTICES.md", "# Notices\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", foreignJs));
+        var (badModeBBnd, badModeBAtt) = MakeProvenance(badModeBPkg, badModeBPkg, badModeBSrc);
+        var badModeBRes = Dispatch5(badModeBPkg, badModeBPkg, badModeBBnd, badModeBAtt, badModeBSrc);
+        check(badModeBRes.BranchId == "provenance-notices-unverified" && badModeBRes.Decision == "escalated",
+            "LP-04 Mode B rejects foreign (c) / Licensed under banner");
+
+        // Mode B negative: unrelated CSS smuggled in .bundle.scp.css
+        var smuggledCssPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE.txt", licenseBytes),
+            ("staticwebassets/scripts/app.js", scriptBytes),
+            ("staticwebassets/Example.Controls.abc123.bundle.scp.css", "body[b-1234567890] { display: flex; }\n"u8.ToArray()));
+        var (smuggledBnd, smuggledAtt) = MakeProvenance(smuggledCssPkg, smuggledCssPkg, modeBSrc);
+        var smuggledRes = Dispatch5(smuggledCssPkg, smuggledCssPkg, smuggledBnd, smuggledAtt, modeBSrc);
+        check(smuggledRes.BranchId == "provenance-notices-unverified" && smuggledRes.Decision == "escalated",
+            "LP-04 Mode B rejects .bundle.scp.css that does not match source .razor.css");
+
+        // Mode A positive: bundled npm web build with full THIRD-PARTY-LICENSES.md covering lock closure
+        var tplBytes = Encoding.UTF8.GetBytes(
+            "# Licenses\n\n## lit-html - 3.3.3 (BSD-3-Clause)\n\n" +
+            "Copyright 2017 Google LLC\n" +
+            "Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n" +
+            "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED.\n");
+        var modeAPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", tplBytes),
+            ("staticwebassets/bundle.js", "/** @license Copyright 2017 Google LLC */\nexport const y = 2;\n"u8.ToArray()));
+        var modeASrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/index.ts", "export const y: number = 2;\n"u8.ToArray()),
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"u8.ToArray()),
+            ($"controls-{commit}/package-lock.json",
+                "{\"name\":\"controls\",\"lockfileVersion\":3,\"packages\":{\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}},\"node_modules/lit-html\":{\"version\":\"3.3.3\"}}}"u8.ToArray()));
+        var (modeABnd, modeAAtt) = MakeProvenance(modeAPkg, modeAPkg, modeASrc);
+        var modeARes = Dispatch5(modeAPkg, modeAPkg, modeABnd, modeAAtt, modeASrc);
+        check(modeARes.BranchId == "provenance-notices-verified" && modeARes.Decision == "deterministic" &&
+            modeARes.BundledWebAssets!.Assets.Count == 1,
+            "LP-04 Mode A bundled npm notice coverage verified");
+
+        // Mode A negative: truncated one-liner license stub in THIRD-PARTY-LICENSES.md
+        var stubTpl = "# Licenses\n\n## lit-html - 3.3.3 (BSD-3-Clause)\n\nCopyright 2017 Google LLC\nRedistribution and use...\n"u8.ToArray();
+        var stubModeAPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", stubTpl),
+            ("staticwebassets/bundle.js", "export const y = 2;\n"u8.ToArray()));
+        var (stubModeABnd, stubModeAAtt) = MakeProvenance(stubModeAPkg, stubModeAPkg, modeASrc);
+        var stubModeARes = Dispatch5(stubModeAPkg, stubModeAPkg, stubModeABnd, stubModeAAtt, modeASrc);
+        check(stubModeARes.BranchId == "provenance-notices-unverified" && stubModeARes.Decision == "escalated",
+            "LP-04 Mode A rejects truncated license stub in THIRD-PARTY-LICENSES.md");
+
+        // Mode A negative: missing dependency entry in THIRD-PARTY-LICENSES.md
+        var incompleteTpl = "# Licenses\n\n## other-pkg - 1.0.0 (MIT)\n\nCopyright 2026 Other\nPermission is hereby granted...\n"u8.ToArray();
+        var badModeAPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", incompleteTpl),
+            ("staticwebassets/bundle.js", "export const y = 2;\n"u8.ToArray()));
+        var (badModeABnd, badModeAAtt) = MakeProvenance(badModeAPkg, badModeAPkg, modeASrc);
+        var badModeARes = Dispatch5(badModeAPkg, badModeAPkg, badModeABnd, badModeAAtt, modeASrc);
+        check(badModeARes.BranchId == "provenance-notices-unverified" && badModeARes.Decision == "escalated",
+            "LP-04 Mode A rejects incomplete THIRD-PARTY-LICENSES.md");
     }
 }

@@ -22,9 +22,13 @@ public sealed record CaseResult(
     public void Validate(ResolverCase input, IDeterministicResolver? handler = null)
     {
         if (BundledWebAssets is not null &&
-            (RowId != "LP-04" || ResolverVersion != "2.0.0" || Decision != "escalated" ||
-             Applicability != "unknown" || BranchId is not ("surface-unsupported" or
-                 "no-supported-layout-assets" or "origin-review-missing")))
+            (RowId != "LP-04" || ResolverVersion != "2.0.0" ||
+             (BranchId is "surface-unsupported" or "no-supported-layout-assets" or "origin-review-missing" or "provenance-notices-unverified" &&
+              (Decision != "escalated" || Applicability != "unknown")) ||
+             (BranchId == "provenance-notices-verified" &&
+              (Decision != "deterministic" || Applicability != "applicable")) ||
+             BranchId is not ("surface-unsupported" or "no-supported-layout-assets" or
+                 "origin-review-missing" or "provenance-notices-verified" or "provenance-notices-unverified")))
             throw new InvalidDataException("Bundled web assets belong only to LP-04 D-lite surface results.");
         if (RowId != input.RowId || Inputs is null || !Inputs.SequenceEqual(input.Inputs) ||
             Inputs.Any(item => item is null || string.IsNullOrWhiteSpace(item.Role) ||
