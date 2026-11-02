@@ -186,14 +186,19 @@ def archive_inventory(data, source=False):
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         require(len(archive.infolist()) == count, "Ambiguous or unsupported ZIP directory.")
         for entry in archive.infolist():
-            name = entry.filename.rstrip("/") if entry.is_dir() else entry.filename
-            allowed = r"[A-Za-z0-9._ /-]+" if source else r"[A-Za-z0-9._/-]+"
+            name = (entry.filename[:-1] if source else entry.filename.rstrip("/")) if entry.is_dir() else entry.filename
+            allowed = r"[A-Za-z0-9._$ /-]+" if source else r"[A-Za-z0-9._/-]+"
             require(entry.orig_filename == entry.filename and name and
                     (re.fullmatch(allowed, name, re.ASCII) or name == "[Content_Types].xml") and
                     all(part and part not in (".", "..") and part == part.strip() for part in name.split("/")) and
                     len(name) <= 1024 and name.lower() not in folded and
                     stat.S_IFMT(entry.external_attr >> 16) != stat.S_IFLNK and not entry.flag_bits & 1,
                     "Unsafe, duplicate, linked or encrypted ZIP entry.")
+            if source:
+                require(len(name) <= 256 and all(not part.endswith(".") and not re.fullmatch(
+                    r"(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CONIN\$|CONOUT\$|CLOCK\$)",
+                    part.split(".")[0], re.I | re.ASCII) for part in name.split("/")),
+                    "Unsafe source member Windows name or length.")
             folded.add(name.lower())
             total += entry.file_size
             require(total <= 64 * MIB and entry.file_size <= 64 * MIB and

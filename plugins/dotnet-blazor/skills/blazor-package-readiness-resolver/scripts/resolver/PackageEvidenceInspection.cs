@@ -67,7 +67,7 @@ public static class PackageEvidenceInspection
         {
             var (_, declaration) = Lp02PublicSourceResolver.InspectPackage(package.Content);
             if (!Lp02PublicSourceResolver.TryArchive(archive.Content, out var files, declaration?.Commit,
-                    allowSpaces: true))
+                    sourceMembers: true))
                 throw new InvalidDataException("Source archive is outside the bounded safe archive profile.");
             bool? rootMatches = null;
             if (declaration is not null && Lp02PublicSourceResolver.TryRepository(

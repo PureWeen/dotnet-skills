@@ -218,7 +218,7 @@ def build():
         ) if branch == "public-source-observed" else None
         references = [f"input:{item['role']}:{item['sha256']}" for item in inputs]
         result = {
-            "row_id": "LP-02", "resolver_id": "lp02-public-source", "resolver_version": "1.1.0",
+            "row_id": "LP-02", "resolver_id": "lp02-public-source", "resolver_version": "1.2.0",
             "branch_id": branch, "decision": "deterministic" if finding else "escalated",
             "applicability": "applicable" if finding else "unknown", "inputs": copy.deepcopy(inputs),
             "evidence_references": references, "evidence_contract": CONTRACT, "finding": finding,
@@ -246,7 +246,7 @@ def build():
             "case_id": f"lp02-retained-{vendor['vendor']}",
             "row_id": "LP-02", "inputs": [identity],
             "expected": {
-                "row_id": "LP-02", "resolver_id": "lp02-public-source", "resolver_version": "1.1.0",
+                "row_id": "LP-02", "resolver_id": "lp02-public-source", "resolver_version": "1.2.0",
                 "branch_id": "observation-missing", "decision": "escalated", "applicability": "unknown",
                 "inputs": [identity], "evidence_references": [reference], "evidence_contract": CONTRACT,
                 "finding": None, "missing_fact": MISSING["observation-missing"],

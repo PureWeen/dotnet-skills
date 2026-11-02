@@ -51,8 +51,8 @@ public static class Lp02SourceAcquisition
         if (state != "ready" || package is null ||
             !Lp02PublicSourceResolver.TryRepository(package.RepositoryUrl, package.Commit, out var repository, out var url))
             throw new InvalidDataException("LP-02 acquisition requires a supported exact package declaration.");
-        if (!Lp02PublicSourceResolver.SafePath(projectPath) ||
-            !Lp02PublicSourceResolver.SafePath(implementationPath) ||
+        if (!Lp02PublicSourceResolver.SafeSourceMemberPath(projectPath) ||
+            !Lp02PublicSourceResolver.SafeSourceMemberPath(implementationPath) ||
             projectPath == implementationPath || string.IsNullOrWhiteSpace(rationale) ||
             rationale.Length > 1000 || rationale.Any(c => c is < ' ' or > '~'))
             throw new InvalidDataException("LP-02 requires two safe selected paths and a short ASCII mapping rationale.");
@@ -104,7 +104,7 @@ public static class Lp02SourceAcquisition
         catch (OperationCanceledException) { result = "unavailable"; archive = null; }
         if (result == "unavailable" && status == 200) status = null;
         var inventory = new List<Lp02SourceFile>();
-        if (archive is not null && Lp02PublicSourceResolver.TryArchive(archive, out var files, package.Commit, allowSpaces: true))
+        if (archive is not null && Lp02PublicSourceResolver.TryArchive(archive, out var files, package.Commit, sourceMembers: true))
         {
             foreach (var (kind, path) in new[] { ("project", projectPath), ("implementation", implementationPath) })
             {

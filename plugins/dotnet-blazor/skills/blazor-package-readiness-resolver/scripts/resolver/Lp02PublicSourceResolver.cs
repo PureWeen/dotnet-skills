@@ -43,7 +43,7 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
 
     public string RowId => "LP-02";
     public string ResolverId => "lp02-public-source";
-    public string Version => "1.1.0";
+    public string Version => "1.2.0";
 
     public CaseResult Resolve(ResolverCase input)
     {
@@ -79,7 +79,7 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
             return Result("observation-missing");
         if (record.CaptureReceipt!.Sha256 != source.Identity.Sha256)
             return Result("observation-binding-conflict");
-        if (!TryArchive(source.Content, out var files, declaration.Commit, allowSpaces: true) || files.Count == 0)
+        if (!TryArchive(source.Content, out var files, declaration.Commit, sourceMembers: true) || files.Count == 0)
             return Result("observation-invalid");
         var root = repository.Split('/')[^1] + "-" + declaration.Commit;
         if (files.Keys.Any(path => !path.StartsWith(root + "/", StringComparison.OrdinalIgnoreCase)))
@@ -168,7 +168,7 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
         RelativePath.IsMatch(path) && !path.Split('/').Any(p => p is "." or "..");
 
     internal static bool TryArchive(ReadOnlyMemory<byte> bytes, out Dictionary<string, byte[]> files,
-        string? sourceCommit = null, bool allowSpaces = false)
+        string? sourceCommit = null, bool sourceMembers = false)
     {
         files = new(StringComparer.Ordinal);
         if (!NuGetNuspecReader.HasBoundedDirectory(bytes.Span, out var count)) return false;
@@ -177,10 +177,13 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
             using var stream = new MemoryStream(bytes.ToArray(), writable: false);
             using var archive = new ZipArchive(stream, ZipArchiveMode.Read, false, Lp01ArchiveIntegrity.Cp437);
             if (archive.Entries.Count != count || archive.Entries.Any(e =>
-                !(SafeArchivePath(e.FullName.EndsWith('/') ? e.FullName[..^1] : e.FullName, allowSpaces) ||
+                !((sourceMembers ? SafeSourceMemberPath(e.FullName.EndsWith('/') ? e.FullName[..^1] : e.FullName) :
+                    SafePath(e.FullName.EndsWith('/') ? e.FullName[..^1] : e.FullName)) ||
                     e.FullName == "[Content_Types].xml") ||
                 e.FullName.EndsWith('/') && e.Length != 0 ||
                 (e.ExternalAttributes >> 16 & 0xf000) == 0xa000) ||
+                sourceMembers && archive.Entries.Select(e => Lp01CaseFold.Fold(e.FullName.TrimEnd('/')))
+                    .Distinct(StringComparer.Ordinal).Count() != archive.Entries.Count ||
                 !Lp01ArchiveIntegrity.Validate(bytes.Span, archive.Entries,
                     sourceCommit is not null && archive.Comment.Length > 0 ? Encoding.ASCII.GetBytes(sourceCommit) : []))
                 return false;
@@ -198,9 +201,12 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
         catch (NotSupportedException) { return false; }
     }
 
-    private static bool SafeArchivePath(string path, bool allowSpaces) => SafePath(path) ||
-        allowSpaces && path.Split('/').All(part => !part.StartsWith(' ') && !part.EndsWith(' ')) &&
-        SafePath(path.Replace(' ', '_'));
+    internal static bool SafeSourceMemberPath(string? path) => path is { Length: > 0 and <= 256 } &&
+        Regex.IsMatch(path, @"\A[A-Za-z0-9_.$ -]+(?:/[A-Za-z0-9_.$ -]+)*\z", RegexOptions.CultureInvariant) &&
+        path.Split('/').All(part => part is not ("." or "..") && !part.StartsWith(' ') &&
+            !part.EndsWith(' ') && !part.EndsWith('.') && !Regex.IsMatch(part.Split('.')[0],
+                @"\A(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9]|CONIN\$|CONOUT\$|CLOCK\$)\z",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
 
     private static Lp02Observation? ReadObservation(ReadOnlyMemory<byte> bytes)
     {
@@ -235,7 +241,7 @@ public sealed class Lp02PublicSourceResolver : IDeterministicResolver
                 return record.CaptureReceipt is null && record.SourceInventory.Length == 0 ? record : null;
             if (record.CaptureReceipt is not { Role: "source-archive" } capture || !IsDigest(capture.Sha256) ||
                 record.SourceInventory.Any(f => f is null || f.Kind is not ("project" or "implementation") ||
-                    !SafePath(f.Path) || !IsDigest(f.Sha256)) ||
+                    !SafeSourceMemberPath(f.Path) || !IsDigest(f.Sha256)) ||
                 record.SourceInventory.Select(f => f.Path).Distinct(StringComparer.OrdinalIgnoreCase).Count() !=
                     record.SourceInventory.Length ||
                 record.SourceInventory.Select(f => f.Kind).Distinct(StringComparer.Ordinal).Count() !=
