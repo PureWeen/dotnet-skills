@@ -55,7 +55,8 @@ Eligibility/budget skips are diagnostics, not fictional
 requests. Attempts are projected through typed `add-retrieval`; acquisition failure is never
 a product `gap`, closed-source inference or success-shaped fallback.
 
-Collection supports at most 64 distinct dependency versions, 8 MiB per nupkg, 64 MiB source
+Collection supports at most 128 distinct dependency versions with a release SBOM
+(64 without), 8 MiB per package archive, 64 MiB source
 and 256 MiB checked bytes, including retained invalid/partial outcomes and supplied row packets.
 Raw local SBOM intake is capped at 1 MiB and consumes the same retrieval-record/byte budgets;
 native admission request/result/scope bytes are counted too. LP-03 has a stricter 64 MiB row cap.
@@ -73,13 +74,16 @@ Preserve all literal declarations, including unfollowed groups, in the inspectio
 One successful single-hop anonymous codeload capture produces a pinned LP-02
 `source-observation` from its actual request UTC and checked archive digest. A local
 source import, offline mode, failed fetch or budget skip never creates that observation.
-LP-02 `lp02-public-source/1.1.0` verifies availability at the exact package-declared
+LP-02 `lp02-public-source/1.2.0` verifies availability at the exact package-declared
 repository/revision with a checked nonempty root-bound archive. Project type,
 PackageId, conditional settings and inherited build files are not requirements.
 The package declaration supplies the association, not independent source relevance,
 binary-to-commit correspondence or branch/tag membership.
-Source archive paths may contain interior ASCII spaces (for example `Check Box.svg`);
-traversal, leading/trailing spaces, links and platform syntax still reject.
+Only source archive member paths may contain interior ASCII spaces and literal `$`
+(for example `Comparer$1.ts`); package and checked-input paths remain strict.
+Traversal, leading/trailing spaces or dots, Windows reserved names, duplicate/case
+collisions, links, drive/UNC/colon syntax and oversized members still reject.
+Archive names are never shell arguments.
 No restored graph, grant/review, notice map, owner approval or
 compiled-build correspondence is fabricated. Frozen LP-01 policy 1.0.0/SPDX 3.27.0 are bundled
 byte-exact reference assets, not owner approval or new license policy.
@@ -88,18 +92,20 @@ With `--release-sbom`, the helper first retains raw bytes/digest and calls the s
 `admit-sbom`, never a second Python SPDX parser. Supported SPDX-2.2 structure and the caller's
 separate bound designation must both admit. Every root nuspec dependency group is screened,
 including malformed identities in an otherwise nonempty inventory. No per-TFM gate is imposed.
-All inventoried exact NuGet versions, including SourceLink/ILLink tooling, count.
+All inventoried exact NuGet and npm versions, including build tooling, count.
 The helper selects only admitted members for LP-03, preserving sorted role indices/holes;
 extra supplied samples remain available to inspection but are not LP-03 members.
 When acquisition is authorized, only missing exact SBOM-listed versions are fetched anonymously
-from nuget.org's flat container: no minimum sampling, index lookup, retries, range solving,
-alternate-version or feed fallback. Explicit `dotnet-public` selection therefore leaves missing
-SBOM members unresolved with a diagnostic; it does not secretly switch feeds.
+from the selected `--nuget-feed` flat container: no minimum sampling, index lookup,
+retries, range solving, alternate-version or feed fallback. `dotnet-public` never
+falls back to `api.nuget.org`. All members, including missing/oversized outcomes,
+are retained in `inventory_member_outcomes` with their exact acquisition attempts.
 Native admission failures do not trigger dependency acquisition. Local SBOM/source/nupkg imports
 never fabricate anonymous observations. Missing bytes stay `not tested`; synthetic mocked successes
 are not real package acquisition claims.
 
-LP-03 `lp03-dependency-licenses/1.2.0` classifies exact members' own nuspec expressions through
+LP-03 `lp03-dependency-licenses/1.3.0` classifies exact members' own nuspec expressions or
+npm tarball `package.json` string licenses through
 the actual pinned LP-01 classifier. All allowed AND/OR alternatives pass without ordinary grants,
 reviews or owner approval. Missing/ambiguous/file-only/URL-only/NOASSERTION declarations stay
 `not tested`; positive copyleft/non-OSI declarations support `gap` only after complete evidence
@@ -107,6 +113,19 @@ gates. The former owner-only branch is retired. Positive findings disclose calle
 Raw checksum mismatches remain separate diagnostics, not a PI-10 result. PI-06/PI-07 remain
 unassigned. The complete shipped schema/bounds are in the sibling resolver's
 `references/sbom-inventory.md`.
+
+Use `--npm-archives <manifest.json>` only with `--release-sbom` for caller-designated
+pre-downloaded exact tarballs. The root/raw-SBOM-bound manifest and every imported byte
+are retained. Native roles preserve the historical ordinal NuGet `id/version` order,
+then npm `name/version` order; missing members keep holes. Local npm imports share
+byte/component caps, not the 64 retrieval-record budget; `npm_evidence_imports` records
+their outcomes. No npm requests, extraction, scripts or reconstructed CDN packages.
+All LP-03 outcomes explicitly state: npm archive hashes bind caller-designated bytes
+and do not authenticate publisher archives. Unknown license evidence stays not tested.
+LP-03 observations label inspection license groups as NuGet-only and report inventory
+and missing-byte counts separately for NuGet and npm. An npm candidate counts as retained
+only when its member outcome matches a checksum-matched import's path and digest.
+These import counts do not classify npm licenses; that decision comes from the native resolver.
 
 Optional `--row-packets <resolve-request.json>` consumes explicitly supplied checked evidence
 for these same rows. It rechecks/copies exact pins and the root digest; no expected-answer
@@ -127,7 +146,7 @@ bundle, emits `decisions.json`, applies it and canonicalizes. Raw archives remai
 pinned; registering three documents does not pretend 50 dependency archives are individually
 confirmed source artifacts.
 
-`scripts/eleven_rows.py` owns the explicit 171 `(row, branch)` mappings. Bundled resolver source
+`scripts/eleven_rows.py` owns the explicit 175 `(row, branch)` mappings. Bundled resolver source
 and data fingerprints are checked before collection; a changed file inventory, unknown branch,
 version, decision, applicability or input binding fails closed pending mapping review.
 `verified`, `gap` and `not applicable` require the appropriate direct deterministic branch;
@@ -142,26 +161,30 @@ named candidates and exact source-byte matches without an owner-authority missin
 sentence. File-only and missing-license branches still require owner evidence; the separate
 `owner-evidence-accepted` branch and all other branch statuses are unchanged.
 LP-04 accepts only `lp04-notice-coverage/2.0.0`: its default request passes package
-bytes only, without TFM/all-root-entry scope. All six reasons (`missing-package`,
+bytes only, without TFM/all-root-entry scope. All six D-lite reasons (`missing-package`,
 `input-invalid`, `legacy-protocol`, `surface-unsupported`, `no-supported-layout-assets`,
-`origin-review-missing`) map to `not tested`, with substantive missing-fact/action follow-up.
+`origin-review-missing`) map to `not tested`, with substantive missing-fact/action follow-up;
+when `--release-nupkg`, `--provenance-bundle`, and `--source-archive` are supplied, autofill passes
+the 5-input SLSA v1 packet to LP-04 as well as LP-10, mapping `provenance-notices-verified` to
+`verified` and `provenance-notices-unverified` to `not tested`.
 The complete bounded `bundled_web_assets` inventory is checked and retained in `results.json`;
 the observation gives suffix counts, bytes and inventory digest, never truncated asset lists.
 An empty scan states: "No JS/CSS assets detected in the supported package layouts; other
 representations were not assessed." It is not proof of no web code or universal N/A.
-No origin, SBOM, applicability or notice conclusion is inferred. V1 packets are refused,
-not converted; npm admission, review protocols, verified/gap and validator-v2 machinery
-are deferred. See the sibling resolver's `references/lp04-notices.md`.
+V1 packets are refused, not converted. See the sibling resolver's `references/lp04-notices.md`.
 
-LP-01, LP-02 and PI-01 accept only resolver version `1.1.0`; LP-03 accepts `1.2.0`;
-the remaining rows retain `1.0.0`. LP-01 and PI-01 recognize the empty nuspec namespace and
+LP-01 and PI-01 accept only `1.1.0`; LP-02 accepts `1.2.0`, LP-03 `1.3.0`,
+LP-04 `2.0.0` and LP-10 `1.0.1`; other rows retain `1.0.0`.
+LP-10's single-input package-only path requires a separate attribution assessment; when `--release-nupkg` and `--provenance-bundle` are supplied with `--source-archive`, autofill verifies the SLSA v1 bundle with `gh attestation verify` and resolves `provenance-attributed` or `provenance-unverified`. LP-01 and PI-01 recognize the empty nuspec namespace and
 all six official NuGet schema namespaces (2010/07, 2011/08, 2011/10, 2012/06,
 2013/01 and 2013/05). Metadata must still match its root namespace; LP-01 also
 requires the license element to match. The collector recognizes the same namespace
 set, including 2011/10; unknown namespaces remain unsupported.
-Handoff producer `eleven-row-handoff/2.0.0` rejects older saved states rather than
+Handoff producer `eleven-row-handoff/2.1.0` rejects older saved states rather than
 silently reinterpreting their row decisions. Preserve old captures; make a fresh run
 or explicitly supply already checked acquisition packets to evaluate the new contract.
+This is a minor additive intake/profile extension: the handoff envelope is unchanged;
+existing producer/version pinning already requires fresh captures, so no major bump is needed.
 Observations preserve literal small license texts/headings and repository declarations,
 root/dependency/source notice-candidate facts for other rows, plus per-PE declared
 assembly metadata and signing fields. LP-04 uses only its bounded package inventory. Candidate text

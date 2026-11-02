@@ -56,10 +56,12 @@ def frozen_results():
                      [built[item] for item in value] if kind == "a" else value)
     from oracles.lp03_sbom_expectations import mapping_results
     from oracles.lp04_dlite_expectations import mapping_results as lp04_results
+    from oracles.lp10_expectations import mapping_results as lp10_results
     return ([case["expected"] for kind, index in store["files"].values() if kind in ("j", "u")
              for case in built[index].get("cases", []) if "expected" in case and
              not (case["expected"]["row_id"] == "LP-04" and
-                  case["expected"]["resolver_version"] == "1.0.0")] + mapping_results() + lp04_results())
+                  case["expected"]["resolver_version"] == "1.0.0")] +
+            mapping_results() + lp04_results() + lp10_results())
 
 
 def empty_observations():
@@ -104,7 +106,7 @@ class SbomCollectionTests(unittest.TestCase):
             raw.write_bytes(encoded(sbom(("example.dependency", "z.dependency"))))
             supplied = root / "supplied.nupkg"
             supplied.write_bytes(package("z.dependency"))
-            components = [{"id": name, "version": "1.0.0", "key": name + "/1.0.0"}
+            components = [{"id": name, "version": "1.0.0", "key": name + "/1.0.0", "ecosystem": "nuget"}
                           for name in ("example.dependency", "z.dependency")]
             def admit(request, output):
                 pins = tool.load(request)["inputs"]
@@ -112,10 +114,10 @@ class SbomCollectionTests(unittest.TestCase):
                 assessment = tool.load(capture / "lp-03-scope.json")
                 self.assertEqual(assessment["designation"]["sbom_sha256"], tool.sha(raw.read_bytes()))
                 self.assertEqual(assessment["designation"]["basis"], "caller-authoritative-release-inventory/1")
-                tool.dump(output, {"schema_version": 1, "producer": "sbom-inventory/1.0.0", "inputs": pins,
+                tool.dump(output, {"schema_version": 2, "producer": "sbom-inventory/2.0.0", "inputs": pins,
                                   "admission": {"disposition": "admitted", "structural_admission": "admitted",
                                     "designation_admission": "designated", "inventory": {
-                                        "profile": "spdx22-release-nuget-union/1.0.0", "dependencies": components}}})
+                                        "profile": "spdx22-release-nuget-npm-union/1.0.0", "dependencies": components}}})
             collector = tool.Collector(root, capture, 64, False, admit=admit)
             collector.collect(main, tool.package_metadata(main.read_bytes()), None, [supplied], release_sbom=raw)
             _, request = tool.requests(root, capture, main, tool.package_metadata(main.read_bytes()), collector, None)
@@ -130,7 +132,7 @@ class SbomCollectionTests(unittest.TestCase):
 
     def test_sbom_import_and_exact_download_share_retrieval_and_byte_budgets(self):
         from oracles.lp03_sbom_expectations import encoded, sbom
-        for budget, feed, expected in ((1, "nuget.org", 0), (2, "nuget.org", 1), (64, "dotnet-public", 0)):
+        for budget, feed, expected in ((1, "nuget.org", 0), (2, "nuget.org", 1), (64, "dotnet-public", 2)):
             with self.subTest(budget=budget, feed=feed), tempfile.TemporaryDirectory(prefix="sbom-budget-") as directory:
                 root = Path(directory)
                 capture = root / "capture"
@@ -141,11 +143,11 @@ class SbomCollectionTests(unittest.TestCase):
                 raw.write_bytes(encoded(sbom(("microsoft.sourcelink.github", "z.tool"))))
                 calls = []
                 def admit(request, output):
-                    tool.dump(output, {"schema_version": 1, "producer": "sbom-inventory/1.0.0",
+                    tool.dump(output, {"schema_version": 2, "producer": "sbom-inventory/2.0.0",
                         "inputs": tool.load(request)["inputs"], "admission": {
                             "disposition": "admitted", "structural_admission": "admitted", "designation_admission": "designated",
-                            "inventory": {"profile": "spdx22-release-nuget-union/1.0.0",
-                              "dependencies": [{"id": name, "version": "1.0.0"} for name in ("microsoft.sourcelink.github", "z.tool")]}}})
+                            "inventory": {"profile": "spdx22-release-nuget-npm-union/1.0.0",
+                              "dependencies": [{"id": name, "version": "1.0.0", "ecosystem": "nuget"} for name in ("microsoft.sourcelink.github", "z.tool")]}}})
                 def transport(url, destination, maximum, seconds):
                     calls.append(url)
                     destination.write_bytes(b"partial")
@@ -158,6 +160,9 @@ class SbomCollectionTests(unittest.TestCase):
                 self.assertEqual(collector.dependencies, {})
                 if calls:
                     self.assertIn("/microsoft.sourcelink.github/1.0.0/", calls[0])
+                    self.assertTrue(all(url.startswith(tool.NUGET_FEEDS[feed]) for url in calls))
+                    if feed == "dotnet-public":
+                        self.assertTrue(all("api.nuget.org" not in url for url in calls))
 
     def test_unsupported_inventory_never_triggers_transport(self):
         with tempfile.TemporaryDirectory(prefix="sbom-unsupported-") as directory:
@@ -168,7 +173,7 @@ class SbomCollectionTests(unittest.TestCase):
             main.write_bytes(package())
             raw.write_bytes(b'{"spdxVersion":"SPDX-2.3"}')
             def admit(request, output):
-                tool.dump(output, {"schema_version": 1, "producer": "sbom-inventory/1.0.0",
+                tool.dump(output, {"schema_version": 2, "producer": "sbom-inventory/2.0.0",
                     "inputs": tool.load(request)["inputs"], "admission": {
                         "disposition": "unsupported", "detail": "Unsupported format.", "inventory": None}})
             transport = mock.Mock(side_effect=AssertionError("Unsupported SBOM must not fetch."))
@@ -178,13 +183,104 @@ class SbomCollectionTests(unittest.TestCase):
             self.assertEqual(collector.records[0]["method"], "local-file")
             self.assertFalse(collector.records[0]["request_sent"])
 
+    def test_source_only_dollar_members_preserve_path_guards(self):
+        names = ["repo/src/Comparer$1.ts", "repo/src/Event Args$2.ts"]
+        data = archive({name: b"retained source bytes, never executed" for name in names})
+        self.assertEqual(tool.archive_inventory(data, source=True), names)
+        with self.assertRaises(ValueError):
+            tool.archive_inventory(data)
+        for path in ("repo/$/../../escape", "repo/CONIN$.txt", "repo/a$.", "repo//",
+                     "C:/repo/a$.ts", "//host/a$.ts", "repo/a$:stream"):
+            with self.subTest(path=path), self.assertRaises(ValueError):
+                tool.archive_inventory(archive({path: b""}), source=True)
+        for pair in (("repo/a$.ts", "repo/A$.ts"), ("repo/a$/", "repo/a$")):
+            with self.subTest(pair=pair), self.assertRaises(ValueError):
+                tool.archive_inventory(archive(dict.fromkeys(pair, b"")), source=True)
+
+    def test_npm_imports_bind_local_bytes_without_retrieval_claims(self):
+        for mode in ("retained", "hash-conflict", "missing", "oversized"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="npm-intake-") as directory:
+                root = Path(directory)
+                capture = root / "capture"
+                capture.mkdir()
+                supplied = root / "supplied"
+                supplied.mkdir()
+                content = b"exact caller-designated archive bytes"
+                if mode != "missing":
+                    (supplied / "npm.tgz").write_bytes(content if mode != "oversized" else b"x" * (tool.PACKAGE_LIMIT + 1))
+                packet = {"schema_version": 1, "basis": "caller-designated-exact-npm-archives/1",
+                    "root_sha256": "a" * 64, "sbom_sha256": "b" * 64, "archives": [{
+                        "purl": "pkg:npm/%40scope/foo@1.0.0", "path": "npm.tgz",
+                        "sha256": "0" * 64 if mode == "hash-conflict" else tool.sha(content)}]}
+                manifest = supplied / "npm-archives.json"
+                tool.dump(manifest, packet)
+                inventory = {"root_sha256": "a" * 64, "sbom_sha256": "b" * 64,
+                    "dependencies": [{"ecosystem": "npm", "id": "@scope/foo", "version": "1.0.0"}]}
+                collector = tool.Collector(root, capture, 0, False)
+                collector.import_npm_packet(manifest, inventory)
+                self.assertEqual(collector.records, [])
+                self.assertEqual((capture / "npm-archives.json").read_bytes(), manifest.read_bytes())
+                result = collector.npm_imports[0]
+                self.assertFalse(result["request_sent"])
+                self.assertEqual(result["result"], mode if mode in ("retained", "hash-conflict") else "missing-or-unsupported")
+                self.assertEqual(bool(collector.npm_dependencies), mode in ("retained", "hash-conflict"))
+
+
+    def test_provenance_inputs_require_all_three_artifacts_and_source_archive(self):
+        with tempfile.TemporaryDirectory(prefix="provenance-helper-") as directory:
+            root = Path(directory)
+            capture = root / "capture"
+            capture.mkdir()
+            main = capture / "package.nupkg"
+            main.write_bytes(package())
+            metadata = tool.package_metadata(main.read_bytes())
+            package_pin = tool.pin(capture, main, "package")
+            source = root / "source.zip"
+            source.write_bytes(archive({"controls-" + "1" * 40 + "/Controls.csproj": b"<Project/>"}))
+            release = root / "release.nupkg"
+            release.write_bytes(main.read_bytes())
+            bundle = root / "provenance.sigstore.json"
+            bundle.write_bytes(b'{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json"}')
+            collector = tool.Collector(root, capture, 10, False)
+            collector.collect(main, metadata, source, [])
+            with self.assertRaisesRegex(ValueError, "Both --release-nupkg and --provenance-bundle are required"):
+                tool.provenance_inputs(capture, package_pin, metadata, collector,
+                                       unittest.mock.Mock(release_nupkg=release, provenance_bundle=None))
+            mock_completed = unittest.mock.Mock(
+                returncode=0, stdout='[{"verificationResult":{}}]', stderr="")
+            with unittest.mock.patch.object(tool.subprocess, "run", return_value=mock_completed) as mocked_run:
+                provenance = tool.provenance_inputs(
+                    capture, package_pin, metadata, collector,
+                    unittest.mock.Mock(release_nupkg=release, provenance_bundle=bundle))
+                mocked_run.assert_called_once()
+            _, request = tool.requests(root, capture, main, metadata, collector, None, provenance)
+            lp10 = next(c for c in request["cases"] if c["row_id"] == "LP-10")
+            self.assertEqual([p["role"] for p in lp10["inputs"]],
+                             ["package", "release-package", "provenance-bundle",
+                              "provenance-attestation", "source-archive"])
+            capture2 = root / "capture2"
+            capture2.mkdir()
+            main2 = capture2 / "package.nupkg"
+            main2.write_bytes(main.read_bytes())
+            row_packets = root / "row-packets.json"
+            row_packets.write_text(json.dumps({"schema_version": 1, "cases": [
+                {"case_id": "eleven-lp-10", "row_id": "LP-10", "inputs": [
+                    {"role": "package", "path": "package.nupkg", "sha256": package_pin["sha256"]},
+                    {"role": "release-package", "path": "../release.nupkg", "sha256": package_pin["sha256"]},
+                ]}
+            ]}), encoding="utf-8")
+            collector2 = tool.Collector(root, capture2, 10, False)
+            collector2.collect(main2, metadata, source, [])
+            with self.assertRaisesRegex(ValueError, "LP-10 provenance packets must be admitted via --release-nupkg and --provenance-bundle"):
+                tool.requests(root, capture2, main2, metadata, collector2, row_packets, [])
+
 
 class MappingTests(unittest.TestCase):
     def test_all_171_branches_and_frozen_decision_boundaries(self):
         results = frozen_results()
         observed = {(r["row_id"], r["branch_id"]) for r in results}
         self.assertEqual(set(rows.MAPPING), observed)
-        self.assertEqual(len(observed), 171)
+        self.assertEqual(len(observed), 175)
         self.assertGreaterEqual(len(results), 870)
         def display_safe(text):
             return (len(text.encode("utf-8")) <= 4096 and unicodedata.normalize("NFC", text) == text and
@@ -221,6 +317,9 @@ class MappingTests(unittest.TestCase):
                     self.assertIsNone(row["assessment_follow_up"])
             self.assertEqual(row["not_applicable_rationale"] is not None, status == "A")
             self.assertIn(text, row["observation"])
+            if value["row_id"] == "LP-03":
+                self.assertIn("npm archive hashes bind caller-designated bytes and do not authenticate publisher archives.",
+                              row["observation"])
             self.assertEqual(output["completion_state"], "incomplete")
 
     def test_result_mutations_fail_closed(self):
@@ -234,7 +333,7 @@ class MappingTests(unittest.TestCase):
                 rows.checked_result(value, original["inputs"])
 
     def test_versions_are_admitted_only_for_their_reviewed_contracts(self):
-        versions = {"LP-01": "1.1.0", "LP-02": "1.1.0", "LP-03": "1.2.0", "LP-04": "2.0.0", "PI-01": "1.1.0"}
+        versions = {"LP-01": "1.1.0", "LP-02": "1.2.0", "LP-03": "1.3.0", "LP-04": "2.0.0", "LP-10": "1.0.1", "PI-01": "1.1.0"}
         for row in rows.ROWS:
             original = next(value for value in frozen_results() if value["row_id"] == row)
             self.assertEqual(original["resolver_version"], versions.get(row, "1.0.0"))
@@ -242,6 +341,63 @@ class MappingTests(unittest.TestCase):
             value["resolver_version"] = "1.1.0" if row == "LP-03" or row not in versions else "1.0.0"
             with self.subTest(row=row), self.assertRaisesRegex(ValueError, "version"):
                 rows.checked_result(value, original["inputs"])
+
+    def test_lp03_mixed_observations_keep_ecosystems_and_imports_distinct(self):
+        facts = empty_observations()
+        facts["supplied_dependencies"] = [
+            {"id": "Lib", "version": "1.0.0", "license_declarations": [{"type": "expression", "value": "MIT"}]}]
+        dependencies = [{"ecosystem": ecosystem, "key": name + "/1.0.0"}
+                        for ecosystem, name in (("nuget", "lib"), ("npm", "lib"), ("npm", "@scope/foo"))]
+        acquisition = {"sbom_admission": {"admission": {"inventory": {
+            "sbom_sha256": "a" * 64, "dependencies": dependencies, "diagnostics": []}}},
+            "npm_evidence_imports": [], "inventory_member_outcomes": []}
+        for index, name in enumerate(("lib", "@scope/foo")):
+            path, digest = f"npm-{index:03}.tgz", str(index + 1) * 64
+            acquisition["npm_evidence_imports"].append({
+                "result": "retained", "retained_path": path,
+                "actual_sha256": digest, "expected_sha256": digest})
+            acquisition["inventory_member_outcomes"].append({
+                "ecosystem": "npm", "id": name, "version": "1.0.0", "result": "retained",
+                "retained_path": path, "sha256": digest})
+        observation = rows.partial_facts("LP-03", facts, acquisition)
+        self.assertIn("1 supplied exact NuGet dependency versions", observation)
+        self.assertIn("3 inventoried exact dependency versions (1 NuGet, 2 npm)", observation)
+        self.assertIn("1 retained NuGet matches, 2 retained checksum-matched npm archive candidates", observation)
+        self.assertIn('missing {"nuget":[],"npm":[]}', observation)
+        self.assertIn("npm import counts do not classify licenses", observation)
+        self.assertNotIn("3 inventoried exact NuGet", observation)
+
+    def test_lp03_unchecked_or_conflicting_npm_imports_stay_missing(self):
+        facts = empty_observations()
+        facts["supplied_dependencies"] = [
+            {"id": "Lib", "version": "1.0.0", "license_declarations": []}]
+        inventory = {"sbom_sha256": "a" * 64, "diagnostics": [], "dependencies": [
+            {"ecosystem": ecosystem, "key": "lib/1.0.0"} for ecosystem in ("nuget", "npm")]}
+        for mode in ("absent", "hash-conflict", "missing-or-unsupported", "digest-mismatch", "path-mismatch"):
+            acquisition = {"sbom_admission": {"admission": {"inventory": inventory}},
+                "inventory_member_outcomes": [{"ecosystem": "npm", "id": "lib", "version": "1.0.0",
+                    "result": "retained", "retained_path": "npm-000.tgz", "sha256": "b" * 64}]}
+            if mode != "absent":
+                acquisition["npm_evidence_imports"] = [{
+                    "result": mode if mode in ("hash-conflict", "missing-or-unsupported") else "retained",
+                    "retained_path": "other.tgz" if mode == "path-mismatch" else "npm-000.tgz",
+                    "actual_sha256": "b" * 64,
+                    "expected_sha256": ("c" if mode == "digest-mismatch" else "b") * 64}]
+            with self.subTest(mode=mode):
+                observation = rows.partial_facts("LP-03", facts, acquisition)
+                self.assertIn("1 retained NuGet matches, 0 retained checksum-matched npm archive candidates", observation)
+                self.assertIn('missing {"nuget":[],"npm":["lib/1.0.0"]}', observation)
+
+    def test_lp03_nuget_only_observations_preserve_case_insensitive_matching(self):
+        facts = empty_observations()
+        facts["supplied_dependencies"] = [
+            {"id": "Lib", "version": "1.0.0", "license_declarations": []}]
+        acquisition = {"sbom_admission": {"admission": {"inventory": {
+            "sbom_sha256": "a" * 64, "diagnostics": [],
+            "dependencies": [{"ecosystem": "nuget", "key": "lib/1.0.0"}]}}}}
+        observation = rows.partial_facts("LP-03", facts, acquisition)
+        self.assertIn("1 inventoried exact dependency versions (1 NuGet, 0 npm)", observation)
+        self.assertIn('missing {"nuget":[],"npm":[]}', observation)
 
     def test_partial_observations_preserve_notices_stylesheets_and_each_assembly(self):
         facts = empty_observations()
@@ -280,13 +436,17 @@ class MappingTests(unittest.TestCase):
         notice = rows.partial_facts("LP-04", facts, {})
         self.assertEqual(notice, "")
         attribution = rows.partial_facts("LP-10", facts, {})
+        verified_attribution = rows.partial_facts("LP-10", facts, {}, "provenance-attributed")
         signing = rows.partial_facts("PI-01", facts, {})
         for assembly in facts["assembly_candidates"]:
             self.assertIn(assembly["path"], attribution)
+            self.assertIn(assembly["path"], verified_attribution)
             self.assertIn(assembly["path"], signing)
             self.assertIn(assembly["state"], signing)
         self.assertIn("1.2.3", attribution)
         self.assertIn(repository["url"], attribution)
+        self.assertIn("the deciding resolver separately evaluates any supplied SLSA v1 build provenance packet", verified_attribution)
+        self.assertNotIn("separately evaluates any supplied SLSA v1 build provenance packet", attribution)
         self.assertIn('"public_key_length":null', signing)
         self.assertIn("does not sign the contained DLLs", signing)
         facts["source"] = None

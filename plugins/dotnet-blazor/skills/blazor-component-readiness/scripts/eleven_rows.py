@@ -4,7 +4,7 @@ import json
 import re
 import unicodedata
 
-VERSION = "eleven-row-handoff/2.0.0"
+VERSION = "eleven-row-handoff/2.1.0"
 ROWS = tuple(f"LP-{number:02}" for number in range(1, 11)) + ("PI-01",)
 RESOLVERS = dict(zip(ROWS, (
     "lp01-license-policy", "lp02-public-source", "lp03-dependency-licenses",
@@ -14,8 +14,9 @@ RESOLVERS = dict(zip(ROWS, (
 )))
 STATUSES = {"V": "verified", "G": "gap", "N": "not tested",
             "O": "owner evidence required", "A": "not applicable"}
-RESOLVER_VERSIONS = {row: "2.0.0" if row == "LP-04" else "1.2.0" if row == "LP-03" else
-                     "1.1.0" if row in ("LP-01", "LP-02", "PI-01") else "1.0.0" for row in ROWS}
+RESOLVER_VERSIONS = {row: "2.0.0" if row == "LP-04" else "1.3.0" if row == "LP-03" else
+                     "1.2.0" if row == "LP-02" else "1.0.1" if row == "LP-10" else
+                     "1.1.0" if row in ("LP-01", "PI-01") else "1.0.0" for row in ROWS}
 
 # Each entry is (explicit branches, status, smallest next action). Unknown keys are errors.
 GROUPS = {
@@ -62,12 +63,14 @@ GROUPS = {
         ("license-evidence-unresolved", "N", "Obtain unambiguous supported exact-package license declaration evidence."),
     ),
     "LP-04": (
+        ("provenance-notices-verified", "V", ""),
         ("missing-package", "N", "Obtain the exact assessed package bytes for a bounded web-asset scan."),
         ("input-invalid", "N", "Obtain a complete safely inspectable package within the supported bounds."),
         ("legacy-protocol", "N", "Remove retired v1 packet roles and rerun the package-only inventory."),
         ("surface-unsupported", "N", "Assess the listed unsupported representations separately to establish their origin and notice obligations."),
         ("no-supported-layout-assets", "N", "Establish whether the requirement applies by assessing other representations or obtaining explicit applicability evidence."),
         ("origin-review-missing", "N", "Review the retained assets to establish origin and any resulting notice obligations."),
+        ("provenance-notices-unverified", "N", "Verify SLSA v1 build provenance, web-asset origins, and required third-party notices for all shipped web assets."),
     ),
     "LP-05": (
         ("expression", "V", ""),
@@ -97,16 +100,14 @@ GROUPS = {
          "Obtain exact-case unambiguous supported NuGet projectUrl metadata."),
     ),
     "LP-10": (
-        ("no-code-payload", "V", ""),
+        ("no-code-payload provenance-attributed", "V", ""),
         ("missing-package unreadable-package unsafe-archive ambiguous-nuspec missing-nuspec missing-root-nuspec "
          "unsafe-nuspec invalid-xml foreign-root invalid-metadata ambiguous-metadata incomplete-inventory", "N",
          "Obtain a complete safely inspectable exact package inventory."),
-        ("unsupported-executable-content", "N", "Obtain supported safe classification and per-entry attribution."),
-        ("compiled-attribution-unverified", "N",
-         "Obtain per-entry ownership and public release-commit build or referenced-upstream byte mappings."),
-        ("text-code-attribution-unverified", "N",
-         "Obtain per-entry ownership and exact public-commit blob, verified transform or upstream byte mappings."),
-        ("mixed-code-attribution-unverified", "N", "Obtain both compiled-build and executable-text per-entry attribution maps."),
+        ("unsupported-executable-content compiled-attribution-unverified text-code-attribution-unverified mixed-code-attribution-unverified", "N",
+         "Retain the inventory for a separate attribution assessment against paragraph 29. This package-only resolver accepts no source/provenance maps and performs no builds or transforms; no currently supported packet can verify these candidates."),
+        ("provenance-unverified", "N",
+         "Supply a complete SLSA v1 build provenance and source correspondence packet that binds the attested release package, commit and code candidates."),
     ),
     "PI-01": (
         ("verified-signed no-assemblies", "V", ""),
@@ -134,8 +135,8 @@ def mapping():
                 if key in result:
                     raise ValueError(f"Duplicate mapping: {key}")
                 result[key] = (status, action)
-    if len(result) != 171:
-        raise ValueError("The reviewed mapping must contain exactly 171 row/branch pairs.")
+    if len(result) != 175:
+        raise ValueError("The reviewed mapping must contain exactly 175 row/branch pairs.")
     return result
 
 
@@ -173,7 +174,8 @@ def checked_result(value, pins):
             decision == "deterministic" and not references and not value["evidence_contract"]):
         raise ValueError("Resolver evidence contract is missing or malformed.")
     surface_branch = row == "LP-04" and branch in (
-        "surface-unsupported", "no-supported-layout-assets", "origin-review-missing")
+        "surface-unsupported", "no-supported-layout-assets", "origin-review-missing",
+        "provenance-notices-verified", "provenance-notices-unverified")
     if ("bundled_web_assets" in value) != surface_branch:
         raise ValueError("Unexpected or missing LP-04 bounded inventory.")
     if surface_branch:
@@ -207,7 +209,7 @@ def checked_web_assets(inventory, branch):
             unsupported != sorted(set(unsupported), key=ordinal) or
             hashlib.sha256(canonical.encode("utf-8")).hexdigest() != inventory["inventory_sha256"] or
             (branch == "surface-unsupported") != bool(unsupported) or
-            branch == "origin-review-missing" and not assets or
+            branch in ("origin-review-missing", "provenance-notices-verified", "provenance-notices-unverified") and not assets or
             branch == "no-supported-layout-assets" and assets):
         raise ValueError("LP-04 inventory digest, ordering or branch is inconsistent.")
 
@@ -271,15 +273,29 @@ def partial_facts(row, facts, acquisition, branch=None):
         summary = "No helper-admitted caller-designated inventory in acquisition; declaration samples alone do not establish completeness."
         if inventory is not None:
             retained = {p["id"].lower() + "/" + p["version"] for p in facts["supplied_dependencies"]}
-            keys = {p["key"] for p in inventory["dependencies"]}
+            nuget_keys = {p["key"] for p in inventory["dependencies"] if p["ecosystem"] == "nuget"}
+            npm_keys = {p["key"] for p in inventory["dependencies"] if p["ecosystem"] == "npm"}
+            imports = {(p["retained_path"], p["actual_sha256"])
+                       for p in acquisition.get("npm_evidence_imports", [])
+                       if p["result"] == "retained" and p["actual_sha256"] == p["expected_sha256"]}
+            npm_retained = {p["id"] + "/" + p["version"]
+                            for p in acquisition.get("inventory_member_outcomes", [])
+                            if p["ecosystem"] == "npm" and p["result"] == "retained" and
+                            (p["retained_path"], p["sha256"]) in imports}
+            missing = {"nuget": sorted(nuget_keys - retained), "npm": sorted(npm_keys - npm_retained)}
+            extra = {"nuget": sorted(retained - nuget_keys), "npm": sorted(npm_retained - npm_keys)}
             summary = (f"Caller-designated authoritative release-wide SBOM SHA-256 {inventory['sbom_sha256']}; "
-                       f"{len(keys)} inventoried exact NuGet versions, {len(keys & retained)} retained matches; "
-                       f"missing {excerpt(sorted(keys - retained), 'acquisition#/sbom_admission', 650)}; "
-                       f"extra samples {excerpt(sorted(retained - keys), 'observations#/supplied_dependencies', 250)}. "
+                       f"{len(nuget_keys) + len(npm_keys)} inventoried exact dependency versions "
+                       f"({len(nuget_keys)} NuGet, {len(npm_keys)} npm); "
+                       f"{len(nuget_keys & retained)} retained NuGet matches, "
+                       f"{len(npm_keys & npm_retained)} retained checksum-matched npm archive candidates; "
+                       f"missing {excerpt(missing, 'acquisition#/inventory_member_outcomes', 650)}; "
+                       f"extra samples {excerpt(extra, 'observations#/supplied_dependencies', 250)}. "
+                       "npm import counts do not classify licenses; the native LP-03 result supplies that decision. "
                        "Structure does not independently prove completeness or publication. "
                        f"SBOM file-checksum diagnostics (separate from PI-10): "
                        f"{excerpt(inventory['diagnostics'], 'acquisition#/sbom_admission/admission/inventory/diagnostics', 400)}.")
-        return (f"{len(licenses)} supplied exact dependency versions; license declarations by group "
+        return (f"{len(licenses)} supplied exact NuGet dependency versions; license declarations by group "
                 f"{excerpt(groups, 'observations#/supplied_dependencies', 2100)}. "
                 f"Root grouped ranges {excerpt(root['declared_dependencies'], 'observations#/package/declared_dependencies', 650)}. "
                 + summary)
@@ -289,9 +305,13 @@ def partial_facts(row, facts, acquisition, branch=None):
                   f"{excerpt(matches, 'observations#/exact_source_matches', 1400)}. ")
         assemblies = [{key: item[key] for key in ("path", "name", "version", "informational_versions", "repository_metadata")}
                       for item in facts["assembly_candidates"]]
+        limitation = (
+            "Exact text matches and declared assembly attributes alone do not establish ownership, referenced-upstream identity or compiled-build correspondence; the deciding resolver separately evaluates any supplied SLSA v1 build provenance packet."
+            if MAPPING.get((row, branch), ("N", ""))[0] == "V"
+            else "Exact text matches and declared assembly attributes do not establish ownership, referenced-upstream identity or compiled-build correspondence.")
         return (common + f"{len(assemblies)} PE/CLI candidates with declared assembly metadata "
                 f"{excerpt(assemblies, 'observations#/assembly_candidates', 1700)}. "
-                "Exact text matches and declared assembly attributes do not establish ownership, referenced-upstream identity or compiled-build correspondence.")
+                + limitation)
     if row == "PI-01":
         assemblies = [{key: item[key] for key in ("path", "state", "public_key_length",
                       "strong_name_signed_flag", "strong_name_signature_size")}

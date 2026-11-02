@@ -186,6 +186,9 @@ With the sibling available, use the shipped
 Supply retained source/dependencies, or replace `--offline` with explicitly authorized
 `--allow-network` collection. Use `--nuget-feed dotnet-public` for the public Azure DevOps mirror
 when nuget.org is blocked. The script runs both offline tools and produces evidence-bound
+rows. With an explicitly designated `--release-sbom`, optional `--npm-archives` imports
+hash-bound exact tarballs; hashes bind caller bytes, not publisher authenticity.
+Source-only archive members may contain `$`; package/input paths remain strict. It produces
 LP-01 through LP-10 and PI-01 rows without model translation. Continue the other 49 rows on
 its incomplete draft, preserve its eleven decisions, and run its `check` before final validation.
 These are static package facts, not component evidence or a complete report. Missing owner,

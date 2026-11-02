@@ -10,7 +10,8 @@ public static class ReaderCommand
 
     public static int Run(IReadOnlyList<string> args, TextWriter output)
     {
-        if (args.Count == 0 || args[0] is "--help" or "-h")
+        if (args.Count == 0 || args[0] is "--help" or "-h" ||
+            (args.Count == 2 && args[0] is ("render" or "verify") && args[1] is ("--help" or "-h")))
         {
             output.WriteLine("""
                 Deterministic partner-preview reader (does not alter canonical revisions)

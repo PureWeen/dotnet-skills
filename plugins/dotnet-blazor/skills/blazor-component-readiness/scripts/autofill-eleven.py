@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Collect bounded static inputs and produce a resumable eleven-row package draft; no model calls."""
 import argparse
+import base64
 from collections import deque
 from datetime import datetime, timezone
 import hashlib
@@ -366,6 +367,8 @@ class Collector:
         self.source = None
         self.sbom, self.sbom_admission, self.admit = None, None, admit
         self.admission_paths = {}
+        self.npm_dependencies, self.npm_imports = {}, []
+        self.npm_designation = None
 
     def obtain(self, subject, name, maximum, url=None, local=None, identity=None, kind=None):
         if self.remaining == 0:
@@ -384,6 +387,8 @@ class Collector:
                   "method": "local-file" if local is not None else "direct-download" if subject == "source" else "package-feed",
                   "attempted_at_utc": utc(), "request_sent": local is None, "bytes_received": 0,
                   "retained_path": None, "sha256": None}
+        if identity is not None:
+            record["identity"] = {"id": identity[0], "version": identity[1]}
         self.remaining -= 1
         try:
             if local is not None:
@@ -418,8 +423,9 @@ class Collector:
         finally:
             self.records.append(record)
 
-    def collect(self, package, metadata, source, supplied, source_allowed=True, release_sbom=None):
-        require(len(supplied) <= 64, "At most 64 explicitly supplied dependency files.")
+    def collect(self, package, metadata, source, supplied, source_allowed=True, release_sbom=None, npm_archives=None):
+        require(len(supplied) <= (128 if release_sbom else 64), "Explicit dependency file cap.")
+        require(npm_archives is None or release_sbom is not None, "npm archive packets require --release-sbom.")
         self.total = package.stat().st_size
         if not source_allowed:
             require(source is None, "A retained source archive conflicts with the confirmed closed-source boundary.")
@@ -460,8 +466,8 @@ class Collector:
                 result = self.capture / "sbom-admission.json"
                 self.admit(request, result)
                 self.sbom_admission = load(result, 256 * 1024)
-                require(self.sbom_admission["schema_version"] == 1 and
-                        self.sbom_admission["producer"] == "sbom-inventory/1.0.0" and
+                require(self.sbom_admission["schema_version"] == 2 and
+                        self.sbom_admission["producer"] == "sbom-inventory/2.0.0" and
                         self.sbom_admission["inputs"] == pins, "Native SBOM admission bindings differ.")
                 self.admission_paths = {"sbom_admission_request": request, "sbom_admission": result}
                 self.total += sum(path.stat().st_size for path in (scope, request, result))
@@ -470,21 +476,26 @@ class Collector:
                 if admission["disposition"] == "admitted":
                     require(admission["structural_admission"] == "admitted" and
                             admission["designation_admission"] == "designated" and
-                            admission["inventory"]["profile"] == "spdx22-release-nuget-union/1.0.0",
+                            admission["inventory"]["profile"] == "spdx22-release-nuget-npm-union/1.0.0",
                             "Unexpected native inventory profile/designation.")
                     for component in admission["inventory"]["dependencies"]:
+                        if component["ecosystem"] == "npm":
+                            continue
+                        require(component["ecosystem"] == "nuget", "Unknown native inventory ecosystem.")
                         identity = component["id"], component["version"]
                         require(ID.fullmatch(identity[0]) and VER.fullmatch(identity[1]), "Invalid native component key.")
                         if identity in self.dependencies or not self.online:
                             continue
-                        if self.nuget_feed != "nuget.org" or len(self.dependencies) >= 64:
-                            self.diagnostics.append(f"No SBOM-member request for {identity[0]}/{identity[1]}: nuget.org-only feed or dependency cap.")
+                        if len(self.dependencies) >= 128:
+                            self.diagnostics.append(f"No SBOM-member request for {identity[0]}/{identity[1]}: dependency cap.")
                             continue
                         package_id, version = identity
-                        url = f"{NUGET_FEEDS['nuget.org']}/{package_id}/{version}/{package_id}.{version}.nupkg"
+                        url = f"{NUGET_FEEDS[self.nuget_feed]}/{package_id}/{version}/{package_id}.{version}.nupkg"
                         item = self.obtain("package", f"sbom-{len(self.records):03}.nupkg", PACKAGE_LIMIT, url=url, identity=identity)
                         if item:
                             self.dependencies[identity] = item
+                    if npm_archives is not None:
+                        self.import_npm_packet(npm_archives, admission["inventory"])
                 else:
                     self.diagnostics.append("SBOM not admitted: " + admission["detail"])
             return self.report()
@@ -534,10 +545,73 @@ class Collector:
                     edge["limitation"] = "Exact candidate not retained; see attempt records or offline boundary."
         return self.report()
 
+    def import_npm_packet(self, manifest, inventory):
+        manifest = regular(manifest)
+        raw = read(manifest, 65536)
+        packet = json.loads(raw, object_pairs_hook=unique)
+        require(set(packet) == {"schema_version", "basis", "root_sha256", "sbom_sha256", "archives"} and
+                packet["schema_version"] == 1 and packet["basis"] == "caller-designated-exact-npm-archives/1" and
+                packet["root_sha256"] == inventory["root_sha256"] and packet["sbom_sha256"] == inventory["sbom_sha256"] and
+                isinstance(packet["archives"], list) and len(packet["archives"]) <= 128,
+                "Invalid npm archive packet/root/SBOM binding.")
+        members = {}
+        for component in inventory["dependencies"]:
+            if component["ecosystem"] == "npm":
+                name, version = component["id"], component["version"]
+                members[f"pkg:npm/{name}@{version}"] = (name, version)
+                if name.startswith("@"):
+                    members[f"pkg:npm/%40{name[1:]}@{version}"] = (name, version)
+        self.npm_designation = self.capture / "npm-archives.json"
+        write(self.npm_designation, raw)
+        self.total += len(raw)
+        seen = set()
+        for number, item in enumerate(packet["archives"]):
+            require(set(item) == {"purl", "path", "sha256"} and item["purl"] in members and
+                    isinstance(item["sha256"], str) and DIGEST.fullmatch(item["sha256"]),
+                    "Unknown or malformed npm archive pin.")
+            identity = members[item["purl"]]
+            require(identity not in seen, "Duplicate canonical npm archive pin.")
+            seen.add(identity)
+            path = beneath(manifest.parent, item["path"])
+            outcome = {"purl": item["purl"], "path": item["path"], "expected_sha256": item["sha256"],
+                       "actual_sha256": None, "retained_path": None, "bytes": 0,
+                       "method": "local-checked-evidence", "request_sent": False, "result": "missing"}
+            self.npm_imports.append(outcome)
+            try:
+                content = read(path, min(PACKAGE_LIMIT, TOTAL_LIMIT - self.total))
+                retained = self.capture / f"npm-{number:03}.tgz"
+                write(retained, content)
+                self.total += len(content)
+                outcome.update(actual_sha256=sha(content), bytes=len(content),
+                               retained_path=retained.relative_to(self.root).as_posix(),
+                               result="retained" if sha(content) == item["sha256"] else "hash-conflict")
+                self.npm_dependencies[identity] = (retained, {"id": identity[0], "version": identity[1]})
+            except (OSError, ValueError):
+                outcome["result"] = "missing-or-unsupported"
+        require(self.total <= TOTAL_LIMIT, "npm packet exceeds total checked-byte budget.")
+
+    def member_outcomes(self):
+        if not self.sbom_admission or self.sbom_admission["admission"]["disposition"] != "admitted":
+            return []
+        outcomes = []
+        for component in self.sbom_admission["admission"]["inventory"]["dependencies"]:
+            identity = component["id"], component["version"]
+            ecosystem = component["ecosystem"]
+            item = (self.dependencies if ecosystem == "nuget" else self.npm_dependencies).get(identity)
+            records = [r for r in self.records if r.get("identity") == {"id": identity[0], "version": identity[1]}]
+            outcomes.append({"ecosystem": ecosystem, "id": identity[0], "version": identity[1],
+                             "result": "retained" if item else records[-1]["result"] if records else "not-retained",
+                             "retained_path": item[0].relative_to(self.root).as_posix() if item else None,
+                             "sha256": sha(read(item[0], PACKAGE_LIMIT)) if item else None,
+                             "attempts": records, "nuget_feed": self.nuget_feed if ecosystem == "nuget" else None})
+        return outcomes
+
     def report(self):
         return {"schema_version": 1, "producer": VERSION, "mode": "network" if self.online else "offline",
                 "nuget_feed": self.nuget_feed,
                 "sbom_admission": self.sbom_admission,
+                "npm_evidence_imports": self.npm_imports,
+                "inventory_member_outcomes": self.member_outcomes(),
                 "attempts": self.records, "declaration_sample_edges": self.edges,
                 "diagnostics": self.diagnostics,
                 "limitations": [("Caller designation supplies authoritative release-wide inventory scope; structural admission does not independently prove completeness or publication."
@@ -663,7 +737,69 @@ def assert_manifest_package(manifest, package, metadata):
             "Package differs from the confirmed exact identity.")
 
 
-def requests(root, capture, package, metadata, collector, supplied_request):
+def provenance_inputs(capture, package_pin, metadata, collector, args):
+    release_nupkg = getattr(args, "release_nupkg", None)
+    provenance_bundle = getattr(args, "provenance_bundle", None)
+    if not (release_nupkg or provenance_bundle):
+        return []
+    require(release_nupkg and provenance_bundle,
+            "Both --release-nupkg and --provenance-bundle are required when supplying LP-10 build provenance.")
+    require(collector.source is not None,
+            "A retained source archive is required when supplying LP-10 build provenance.")
+    release_copy = capture / "release-package.nupkg"
+    write(release_copy, read(regular(release_nupkg), PACKAGE_LIMIT))
+    bundle_source = regular(provenance_bundle)
+    bundle_doc = load(bundle_source, 4 * MIB)
+    bundle_copy = capture / "provenance-bundle.json"
+    if isinstance(bundle_doc, dict) and isinstance(bundle_doc.get("attestations"), list):
+        selected = None
+        for item in bundle_doc["attestations"]:
+            if not isinstance(item, dict) or not isinstance(item.get("bundle"), dict):
+                continue
+            dsse = item["bundle"].get("dsseEnvelope")
+            if isinstance(dsse, dict) and isinstance(dsse.get("payload"), str):
+                try:
+                    stmt = json.loads(base64.b64decode(dsse["payload"]).decode("utf-8"))
+                except Exception:
+                    stmt = {}
+                if stmt.get("predicateType") == "https://slsa.dev/provenance/v1":
+                    selected = item["bundle"]
+                    break
+        require(selected is not None, "No SLSA v1 provenance bundle found in attestations document.")
+        dump(bundle_copy, selected)
+    else:
+        require(isinstance(bundle_doc, dict), "Provenance bundle must be a JSON object.")
+        write(bundle_copy, read(bundle_source, 4 * MIB))
+    codeload = source_url(metadata)
+    require(codeload is not None, "LP-10 provenance verification requires a canonical GitHub repository and 40-hex commit.")
+    owner_repo = "/".join(codeload.split("/")[3:5])
+    env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GH_HOST", "GITHUB_TOKEN")}
+    cmd = ["gh", "attestation", "verify", str(release_copy), "-b", str(bundle_copy),
+           "--repo", owner_repo, "--predicate-type", "https://slsa.dev/provenance/v1", "--format", "json"]
+    completed = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60, check=False)
+    if completed.returncode != 0:
+        raise ToolFailure(f"gh attestation verify failed ({completed.returncode}): {completed.stderr.strip()}")
+    verification = json.loads(completed.stdout)
+    require(isinstance(verification, list) and len(verification) > 0,
+            "gh attestation verify returned an empty verification result.")
+    release_pin = pin(capture, release_copy, "release-package")
+    bundle_pin = pin(capture, bundle_copy, "provenance-bundle")
+    source_pin = pin(capture, collector.source, "source-archive")
+    attestation_copy = capture / "provenance-attestation.json"
+    dump(attestation_copy, {
+        "schema_version": 1,
+        "producer": "lp10-gh-attestation-verify/1.0.0",
+        "package_sha256": package_pin["sha256"],
+        "release_package_sha256": release_pin["sha256"],
+        "provenance_bundle_sha256": bundle_pin["sha256"],
+        "source_archive_sha256": source_pin["sha256"],
+        "verification": verification,
+    })
+    attestation_pin = pin(capture, attestation_copy, "provenance-attestation")
+    return [release_pin, bundle_pin, attestation_pin, source_pin]
+
+
+def requests(root, capture, package, metadata, collector, supplied_request, provenance_pins=()):
     package_pin = pin(capture, package, "package")
     inspection = [package_pin]
     if collector.source:
@@ -684,6 +820,8 @@ def requests(root, capture, package, metadata, collector, supplied_request):
     scopes["LP-03"] = pin(capture, lp03_scope, "assessment")
     retained_bytes = collector.total + sum(len(read(beneath(capture, item["path"]))) for item in policy_pins)
     retained_bytes += sum(len(read(beneath(capture, item["path"]))) for item in scopes.values())
+    retained_bytes += sum(len(read(beneath(capture, item["path"]))) for item in provenance_pins
+                          if item["role"] != "source-archive")
     if observation_pin:
         retained_bytes += len(read(beneath(capture, observation_pin["path"])))
     require(retained_bytes <= TOTAL_LIMIT, "Combined checked input bytes exceed 256 MiB.")
@@ -702,12 +840,17 @@ def requests(root, capture, package, metadata, collector, supplied_request):
                 inputs += policy_pins
                 if collector.sbom:
                     inputs.append(pin(capture, collector.sbom, "sbom"))
+                if collector.npm_designation:
+                    inputs.append(pin(capture, collector.npm_designation, "npm-archives"))
                 admission = collector.sbom_admission
                 if admission and admission["admission"]["disposition"] == "admitted":
                     for number, component in enumerate(admission["admission"]["inventory"]["dependencies"]):
-                        item = collector.dependencies.get((component["id"], component["version"]))
+                        item = (collector.dependencies if component["ecosystem"] == "nuget" else
+                                collector.npm_dependencies).get((component["id"], component["version"]))
                         if item:
                             inputs.append(pin(capture, item[0], f"dependency-{number:03}"))
+        elif row in ("LP-04", "LP-10") and provenance_pins:
+            inputs += list(provenance_pins)
         cases[row] = {"case_id": "eleven-" + row.lower(), "row_id": row, "inputs": inputs}
     if supplied_request:
         supplied_request = regular(supplied_request)
@@ -720,6 +863,8 @@ def requests(root, capture, package, metadata, collector, supplied_request):
                     case["row_id"] not in seen and len(case["inputs"]) <= 512, "Duplicate, unknown or invalid supplied row packet.")
             row = case["row_id"]
             seen.add(row)
+            require(row not in ("LP-04", "LP-10") or [item.get("role") for item in case["inputs"]] == ["package"],
+                    "LP-04 and LP-10 provenance packets must be admitted via --release-nupkg and --provenance-bundle.")
             copied, roles = [], set()
             for number, item in enumerate(case["inputs"]):
                 require(set(item) == {"role", "path", "sha256"} and item["role"] not in roles and
@@ -760,8 +905,8 @@ def results_from(request, results_path):
 
 def checked_facts(path, inspection):
     facts = load(path, 2 * MIB)
-    require(facts["schema_version"] == 1 and facts["producer"] == "package-evidence-observations/1.0.0" and
-            facts["inputs"] == inspection and len(facts["supplied_dependencies"]) <= 64 and
+    require(facts["schema_version"] == 1 and facts["producer"] == "package-evidence-observations/1.1.0" and
+            facts["inputs"] == inspection and len(facts["supplied_dependencies"]) <= 128 and
             "decision" not in facts and "status" not in facts, "Unexpected inspection producer or bindings.")
     return facts
 
@@ -883,11 +1028,12 @@ def run_command(args, root):
                           admit=lambda request, result: tools.r("admit-sbom", request, result))
     acquisition = collector.collect(package_copy, metadata, args.source_archive, supplied,
                                     source_allowed=confirmed["source"]["availability"] != "closed-source",
-                                    release_sbom=args.release_sbom)
+                                    release_sbom=args.release_sbom, npm_archives=getattr(args, "npm_archives", None))
     names = {key: root / f"{work.name}-{name}.json" for key, name in
              (("results", "resolver-results"), ("observations", "observations"), ("acquisition", "acquisition"))}
     dump(names["acquisition"], acquisition)
-    requests(root, capture, package_copy, metadata, collector, args.row_packets)
+    provenance_pins = provenance_inputs(capture, pin(capture, package_copy, "package"), metadata, collector, args)
+    requests(root, capture, package_copy, metadata, collector, args.row_packets, provenance_pins)
     names.update(resolve_request=capture / "resolve-request.json", inspection_request=capture / "inspection-request.json")
     names.update(collector.admission_paths)
     tools.r("inspect", names["inspection_request"], names["observations"])
@@ -979,7 +1125,10 @@ def main():
     run.add_argument("--dependency-directory")
     run.add_argument("--dependency", action="append", default=[])
     run.add_argument("--row-packets")
+    run.add_argument("--npm-archives", help="Caller-designated exact local npm tarballs and SHA-256 pins; no publisher authentication or registry requests.")
     run.add_argument("--release-sbom", help="Designate these exact raw SBOM bytes for this root as the caller's authoritative release-wide inventory. Structural checks do not prove completeness or publication; no owner attestation or capture is invented.")
+    run.add_argument("--release-nupkg", help="Optional SLSA-attested GitHub Release .nupkg for LP-10 build provenance verification.")
+    run.add_argument("--provenance-bundle", help="Optional Sigstore SLSA v1 provenance bundle JSON for LP-10 build provenance verification.")
     run.add_argument("--nuget-feed", choices=tuple(NUGET_FEEDS), default="nuget.org")
     for command in ("check", "rebind"):
         child = commands.add_parser(command)

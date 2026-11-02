@@ -65,6 +65,6 @@ then each selected asset in .NET ordinal path order as
 Safe paths cannot contain TAB/LF. ZIP record order and timestamps do not affect this digest.
 Unsupported paths are retained separately; the selected-asset digest is not a digest of them.
 
-Defer npm admission, new origin/notice review protocols, verified/gap machinery and a
+Defer LP-04 npm origin/notice admission, new origin/notice review protocols, verified/gap machinery and a
 validator v2 protocol. The existing validator's `protocol:notice-coverage-v1` gate
 only constrains verified/gap, so D-lite needs no validator change.

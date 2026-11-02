@@ -1,5 +1,16 @@
 # Locked compact replay corpus
 
+The named `tooling-fixes-v1` allowance composes with the older allowances below:
+LP-02 expected versions become 1.2.0; LP-03 becomes 1.3.0 with exact-archive
+wording and the explicit npm caller-byte/non-publisher-authenticity qualification
+in every canonical outcome; LP-10 becomes 1.0.1 with package-only/no-build,
+no-map-submission follow-up for its four attribution branches. No historical input,
+case ID/order/rationale, policy, seed or raw bank changes. The parent guard applies
+these exact field transformations, never learns answers from the production resolver.
+Current mixed ecosystem, prefix-order, hostile tar/gzip and forged-but-self-consistent
+npm controls run separately in `MixedInventoryChecks.cs`; retained IG/SF checks require
+`READINESS_RETAINED_EVIDENCE_ROOT` pointing explicitly to the retained evidence root.
+
 ## What changed, and what did not
 
 The accepted parent is `9bba9b9c0afff93dd003f6b14d34b82292a2f8a7`.

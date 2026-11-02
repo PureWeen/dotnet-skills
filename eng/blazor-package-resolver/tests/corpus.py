@@ -93,6 +93,38 @@ def nuspec_namespace_version_delta(suite, row):
         result["resolver_version"] = after
 
 
+def tooling_fixes_delta(suite):
+    """Reviewed source-member/mixed-inventory/limitation result fields; no fixture changes."""
+    trust = "npm archive hashes bind caller-designated bytes and do not authenticate publisher archives."
+    for case in suite["cases"]:
+        result = case["expected"]
+        row = result["row_id"]
+        if row == "LP-02":
+            check(result["resolver_version"] == "1.1.0", "Unexpected LP-02 tooling delta")
+            result["resolver_version"] = "1.2.0"
+        elif row == "LP-03":
+            check(result["resolver_version"] == "1.2.0", "Unexpected LP-03 tooling delta")
+            result["resolver_version"] = "1.3.0"
+            result["evidence_contract"] = result["evidence_contract"].replace(
+                "Each included NuGet dependency is classified from its exact checked nupkg declaration ",
+                "Each included dependency is classified from its exact checked nupkg or npm tarball declaration ") + " " + trust
+            for key in ("finding", "missing_fact"):
+                if result[key] is not None:
+                    result[key] += " " + trust
+        elif row == "LP-10":
+            check(result["resolver_version"] == "1.0.0", "Unexpected LP-10 tooling delta")
+            result["resolver_version"] = "1.0.1"
+            if result["branch_id"] in ("unsupported-executable-content", "compiled-attribution-unverified",
+                                      "text-code-attribution-unverified", "mixed-code-attribution-unverified"):
+                result["missing_fact"] += (
+                    " This package-only resolver accepts no source/provenance maps and performs no builds or transforms. "
+                    "Retain the inventory for a separate attribution assessment against paragraph 29; no currently supported packet can verify these candidates.")
+                result["required_input"] = "separate-attribution-assessment-outside-current-resolver"
+                result["next_category"] = "assessment-limitation"
+        else:
+            check(False, "Unreviewed row in tooling delta")
+
+
 def check_parent_file(name, before, after):
     """Admit only named row deltas, including nuspec-namespaces version-only results."""
     if before == after:
@@ -121,8 +153,15 @@ def check_parent_file(name, before, after):
         expected = json.loads(before)
         lp03_declaration_delta(expected)
         nuspec_namespace_version_delta(expected, "LP-03")
+        tooling_fixes_delta(expected)
         reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
         check(after == reviewed, "Unreviewed LP-03 change outside lp03-sbom-declarations-1.1.0: " + name)
+        return
+    if name in ("lp10/cases.json", "lp10/acceptance.json"):
+        expected = json.loads(before)
+        tooling_fixes_delta(expected)
+        reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
+        check(after == reviewed, "Unreviewed LP-10 change outside tooling limitation delta")
         return
     if name in ("lp01/cases.json", "lp01/acceptance.json"):
         expected = json.loads(before)
@@ -189,7 +228,9 @@ def check_parent_file(name, before, after):
                 check(case["case_id"] == "lp02-missing-selected-file", "Unexpected selected-file case")
                 result["missing_fact"] = "A selected supplemental source file is absent from the checked archive."
         reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
-        check(after == reviewed, "Unreviewed LP-02 change outside public-availability delta: " + name)
+        tooling_fixes_delta(expected)
+        reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
+        check(after == reviewed, "Unreviewed LP-02 change outside public-availability/tooling delta: " + name)
         return
     if name == "lp02/README.md":
         check(sha(before) == "b46ea087b5a3700ff62c399aa2b5bb0d2ad6eb3115b5bdac04de508396044004" and

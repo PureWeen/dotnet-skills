@@ -34,13 +34,14 @@ def lp03_installed_checks(plugin, work):
     selected_bytes = package("example.dependency")
 
     def transport(url, destination, maximum, seconds):
-        expected = "https://api.nuget.org/v3-flatcontainer/example.dependency/1.0.0/example.dependency.1.0.0.nupkg"
+        expected = tool["NUGET_FEEDS"][feed] + "/example.dependency/1.0.0/example.dependency.1.0.0.nupkg"
         if url != expected or maximum != tool["PACKAGE_LIMIT"] or not 0 < seconds <= 60:
-            raise ValueError("A non-inventory/minimum/mirror request escaped exact acquisition.")
+            raise ValueError("A non-inventory/minimum/feed-fallback request escaped exact acquisition.")
         calls.append(url)
         destination.write_bytes(selected_bytes)
         return {"result": "succeeded", "detail_code": "http-200", "http_status": 200,
-                "http_requests": [{"host": "api.nuget.org", "attempted_at_utc": "2026-10-30T12:00:00Z", "http_status": 200}]}
+                "http_requests": [{"host": "api.nuget.org" if feed == "nuget.org" else "pkgs.dev.azure.com",
+                                   "attempted_at_utc": "2026-10-30T12:00:00Z", "http_status": 200}]}
 
     class PrebuiltTools(original_tools):
         def command(self, args, output=None):
@@ -72,7 +73,7 @@ def lp03_installed_checks(plugin, work):
         ("mocked-copyleft", "gap", "GPL-3.0-only", True, True, False, "nuget.org"),
         ("mocked-noassertion", "not tested", "NOASSERTION", True, True, False, "nuget.org"),
         ("mocked-file-only", "not tested", "FILE", True, True, False, "nuget.org"),
-        ("explicit-mirror-no-hidden-fallback", "not tested", "MIT", True, True, False, "dotnet-public"),
+        ("explicit-mirror-no-hidden-fallback", "verified", "MIT", True, True, False, "dotnet-public"),
     ):
         calls.clear()
         selected_bytes = (package("example.dependency", license_xml='<license type="file">LICENSE.txt</license>')
@@ -112,6 +113,8 @@ def lp03_installed_checks(plugin, work):
                 raise ValueError(label + ": incorrect row projection/scope.")
             if status == "verified" and ("caller" not in lp03["observation"].lower() or "publication" not in lp03["observation"]):
                 raise ValueError("Positive omitted caller-designation trust boundary.")
+            if "npm archive hashes bind caller-designated bytes and do not authenticate publisher archives." not in lp03["observation"]:
+                raise ValueError("Rendered verified/gap/not-tested finding omitted npm authenticity qualification.")
             state = tool["load"](receipt["state"])
             paths = {key: root / relative for key, relative in state["paths"].items()}
             acquisition = tool["load"](paths["acquisition"])
@@ -123,9 +126,11 @@ def lp03_installed_checks(plugin, work):
                 sbom_attempt = next(a for a in acquisition["attempts"] if a["subject"] == "documentation")
                 if sbom_attempt["method"] != "local-file" or sbom_attempt["request_sent"]:
                     raise ValueError("SBOM import fabricated transport provenance.")
-            expected_calls = 1 if online and designated and feed == "nuget.org" and not supplied else 0
+            expected_calls = 1 if online and designated and not supplied else 0
             if len(calls) != expected_calls:
                 raise ValueError(label + ": unexpected transport count.")
+            if feed == "dotnet-public" and any("api.nuget.org" in url for url in calls):
+                raise ValueError("Explicit mirror acquisition silently fell back to nuget.org.")
             if label == "offline-exact-plus-extra":
                 if len([p for p in lp03_request["inputs"] if p["role"].startswith("dependency-")]) != 1:
                     raise ValueError("Extra supplied archive leaked into authoritative inventory.")
@@ -222,6 +227,51 @@ def report_command(consumer):
             else [shell, str(launcher)])
 
 
+def reader_help_installed_checks(plugin, work):
+    command = report_command(plugin / "skills/blazor-component-readiness")
+    build = work / "reader-help-build"
+    build.mkdir()
+    root = work / "reader-help-input"
+    revision = root / "revision"
+    revision.mkdir(parents=True)
+    (revision / "sentinel.txt").write_bytes(b"Help must not read or change a revision.")
+    output = root / "reader-output"
+    before = {p.relative_to(work): hashlib.sha256(p.read_bytes()).hexdigest()
+              for directory in (plugin, root) for p in directory.rglob("*") if p.is_file()}
+    paths_before = {p.relative_to(work) for p in work.rglob("*")
+                    if not p.is_relative_to(build)}
+    env = os.environ.copy()
+    env.update(READINESS_TEMP=str(build), DOTNET_GENERATE_ASPNET_CERTIFICATE="false",
+               DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1", DOTNET_CLI_TELEMETRY_OPTOUT="1",
+               DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE="true")
+    help_forms = ([], ["--help"], ["-h"], ["render", "--help"], ["render", "-h"],
+                  ["verify", "--help"], ["verify", "-h"])
+    for args in help_forms:
+        text = run([*command, "reader", *args], work, env)
+        if not all(value in text for value in (b"Deterministic partner-preview reader",
+                                               b"readiness-validator reader render",
+                                               b"readiness-validator reader verify")):
+            raise ValueError(f"Reader help omitted its usage for {args}.")
+    malformed = (
+        ["unknown", "--help"],
+        ["unknown", "-h"],
+        ["render", "--help", "--root", str(root), "--revision", str(revision), "--output", str(output)],
+        ["verify", "-h", "--output", str(output)],
+        ["render", "--root", str(root), "--revision", str(revision), "--output", str(output), "--help"],
+        ["render", "--root", "--help"],
+    )
+    for args in malformed:
+        run([*command, "reader", *args], work, env, code=2)
+    after = {p.relative_to(work): hashlib.sha256(p.read_bytes()).hexdigest()
+             for directory in (plugin, root) for p in directory.rglob("*") if p.is_file()}
+    paths_after = {p.relative_to(work) for p in work.rglob("*")
+                   if not p.is_relative_to(build)}
+    if after != before or paths_after != paths_before:
+        raise ValueError("Reader help changed the installed plugin, inputs or paths outside its build cache.")
+    print("Installed reader help: seven help forms, six usage-error controls and unchanged "
+          "plugin/input paths passed through the real launcher; no report/network/models.")
+
+
 def inspection_checks(helper, assessment):
     def archive(entries):
         memory = io.BytesIO()
@@ -262,7 +312,7 @@ def inspection_checks(helper, assessment):
     (assessment / "observations.json").write_bytes(output)
     facts = json.loads(output)
     project = facts["source"]["projects"][0]
-    if (facts["inputs"] != pins or facts["producer"] != "package-evidence-observations/1.0.0" or
+    if (facts["inputs"] != pins or facts["producer"] != "package-evidence-observations/1.1.0" or
             project["sdk_declaration"] != "Microsoft.NET.Sdk.Razor" or
             len(project["ancestor_build_files"]) != 1 or
             facts["exact_source_matches"][0]["package_entry"] != "build/assessment.targets" or
@@ -308,7 +358,7 @@ def lp02_public_capture_checks(plugin, work, root):
     request_path.write_text(json.dumps({"schema_version": 1, "cases": [lp02]}), encoding="utf-8")
     result = json.loads(run([sys.executable, "-I", str(helper), "resolve", str(request_path)], work))["cases"][0]["result"]
     tool["checked_result"](result, lp02["inputs"])
-    if (len(calls) != 1 or result["resolver_version"] != "1.1.0" or
+    if (len(calls) != 1 or result["resolver_version"] != "1.2.0" or
             result["branch_id"] != "public-source-observed" or
             "source relevance is not independently established" not in result["finding"] or
             "binaries were built from that revision" not in result["finding"]):
@@ -785,13 +835,16 @@ def isolated_checks(plugin, work, setup):
 
 
 def main():
-    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"], ["--autofill"], ["--lp03"], ["--lp04"]):
-        raise ValueError("Supported options: --isolated, --launcher, --cert, --autofill, --lp03, --lp04")
+    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"], ["--autofill"], ["--lp03"], ["--lp04"], ["--reader-help"]):
+        raise ValueError("Supported options: --isolated, --launcher, --cert, --autofill, --lp03, --lp04, --reader-help")
     with tempfile.TemporaryDirectory(prefix="resolver-installed-") as work:
         work = Path(work)
         plugin = work / "plugin"
         shutil.copytree(REPO / "plugins/dotnet-blazor", plugin,
                         ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
+        if sys.argv[1:] == ["--reader-help"]:
+            reader_help_installed_checks(plugin, work)
+            return
         if sys.argv[1:] == ["--lp03"]:
             lp03_installed_checks(plugin, work)
             return
@@ -819,7 +872,7 @@ def main():
                   for p in plugin.rglob("*") if p.is_file()}
         invocation = [sys.executable, str(helper)]
         coverage = run([*invocation, "coverage"], assessment)
-        if hashlib.sha256(coverage).hexdigest() != "9f6e80b58ab63cffdcf4dedae827c2fea9551421f5d77176aa5e3b47f89c8c03":
+        if hashlib.sha256(coverage).hexdigest() != "68319fe426543d665819cca4aa2472383a0c1971875718b3cf695c9d2efd7c98":
             raise ValueError("Installed coverage changed.")
         if sys.argv[1:] == ["--launcher"]:
             print("Exact installed coverage invocation passed with hostile caller global.json, "
@@ -850,6 +903,7 @@ def main():
         consumer = plugin / "skills/blazor-component-readiness"
         # Build/launch only the trusted report validator; assessed build targets remain inert.
         command = report_command(consumer)
+        reader_help_installed_checks(plugin, work)
         certificate_launcher_checks(plugin, work)
         env = os.environ.copy()
         env["READINESS_TEMP"] = str(work / "report-build")
@@ -891,7 +945,7 @@ def main():
         run([*command, "evidence", "draft-add", "--output", str(assessment / "evidence-draft.json"),
              "--claim", claim, "--scope", "repository-wide", "--kind", "reviewer-generated-analysis",
              "--root", str(assessment), "--manifest", str(assessment / "confirmed.json"),
-             "--evidence-input", "observations.json", "--method", "package-evidence-observations/1.0.0",
+             "--evidence-input", "observations.json", "--method", "package-evidence-observations/1.1.0",
              "--captured-at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")], work, env)
         run([*command, "evidence", "ledger-build", "--kind", "repository", "--subject",
              str(assessment / "identity.json"), "--draft", str(assessment / "evidence-draft.json"),

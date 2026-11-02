@@ -25,20 +25,20 @@ input bytes are preserved; only the named row-specific expected-result deltas ar
 The full 112-row
 normative rubric and JSON crosswalk/basis are copied byte-for-byte from
 `fefdaccbfdc0f34cec3d3ca5b8f7ea3fce4a68e3`, the tip of
-`https://github.com/dotnet/skills` branch `shneuvil-public-blazor-readiness`
-at copy time. Branch tips can move; the copied bytes remain independently
+`https://github.com/dotnet/skills` at copy time.
+Branch tips can move; the copied bytes remain independently
 pinned by the original paths, Git blob IDs and SHA-256 digests in
 the canonical runtime's `data/provenance.json`. The loader checks both digests, crosswalk clauses,
 source version and all core scopes. Only the 60 `repository-wide` core rows
 enter the registry; the 52 component rows and the separate TA-08 extension
 are excluded. LP-01 through LP-10 have deterministic checked-byte
-handlers: `lp01-license-policy/1.0.0`, `lp02-public-source/1.1.0`,
-`lp03-dependency-licenses/1.1.0`,
+handlers: `lp01-license-policy/1.1.0`, `lp02-public-source/1.2.0`,
+`lp03-dependency-licenses/1.3.0`,
 `lp04-notice-coverage/2.0.0`,
 `lp05-license-expression/1.0.0`, `lp06-repository-url/1.0.0`,
 `lp07-repository-commit/1.0.0`, `lp08-authors/1.0.0`,
-`lp09-project-url/1.0.0`, `lp10-binary-attribution/1.0.0`, and
-`pi01-strong-name/1.0.0`. The other 49 package rows remain `tbd`.
+`lp09-project-url/1.0.0`, `lp10-binary-attribution/1.0.1`, and
+`pi01-strong-name/1.1.0`. The other 49 package rows remain `tbd`.
 `tbd` and `implemented` are
 **work states**, not evaluation results.
 
@@ -66,8 +66,8 @@ assigning PI-06/PI-07 (both remain TBD). Every malformed/ambiguous dependency id
 across every root nuspec group blocks positive admission, including nonempty inventories.
 Known direct IDs must be represented; no TFM/range solving or assessed restore occurs.
 
-Every inventoried exact NuGet dependency, including build tooling, needs retained
-matching nupkg bytes and its **own nuspec expression** classified by the actual
+Every inventoried exact NuGet or npm dependency, including build tooling, needs retained
+matching archive bytes and its **own nuspec expression or package.json string license** classified by the actual
 shared LP-01 policy/classifier (policy 1.0.0 / SPDX 3.27.0). All allowed AND/OR
 alternatives pass. No ordinary grant file, reviewer packet or owner approval.
 The former owner-only LP-03 branch is retired; custom LicenseRefs are unresolved.
@@ -79,11 +79,25 @@ The complete schema, strict field profile, branch table, exact-member role order
 and limits ship in the resolver's
 [SBOM reference](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/sbom-inventory.md).
 Bounds include 1 MiB raw SBOM, 64 KiB scope, depth 16/8, 32,768 JSON values/properties,
-66 packages, 64 dependency versions, 512 relationships, 64 files, 8 MiB/nupkg and
+130 packages, 128 dependency versions, 512 relationships, 64 files, 8 MiB/archive and
 64 MiB checked row bytes. Duplicate identities/properties, wrong root/version,
 external/dangling references and unsupported shapes reject. Published file-checksum
 differences are separate disclosed observations, not an LP-03 final-file-equality
 gate or PI-10 result. There is no independent completeness/publication/build proof.
+
+The explicit mixed profile is `spdx22-release-nuget-npm-union/1.0.0`;
+`admit-sbom` output is schema 2 / `sbom-inventory/2.0.0`. HTTP/HTTPS namespaces are
+opaque and never fetched. Generic github.com product/separate-NuGet-root and
+spdx.org product-as-root/file-association forms are supported, without vendor allowlists.
+Historical NuGet roles sort by ordinal `id/version` unchanged; npm roles follow in
+ordinal `name/version` order. Prefix-related IDs must not sort as `name@version`.
+Optional `--npm-archives` imports exact-root/raw-SBOM-bound caller tarballs. Every
+LP-03 outcome states that npm archive hashes bind caller-designated bytes and do
+not authenticate publisher archives. A narrow, fully bounded plain-gzip/regular-tar
+reader rejects PAX/GNU overrides, links/devices/sparse and trailing gzip data.
+Unsupported archives/licenses remain not tested. No npm download or scripts run.
+All SBOM NuGet downloads honor `--nuget-feed`; selected `dotnet-public` never falls
+back to `api.nuget.org`. Per-member outcomes include missing/oversized evidence.
 
 The helper's explicit `--release-sbom` intake retains the raw bytes and designation,
 calls native admission, and, only when authorized, retrieves missing exact members
@@ -138,7 +152,7 @@ Empty observations state:
 This classifies package bytes, not law, origin, SBOM coverage, applicability or notices.
 An empty profile is not proof of no web code or universal N/A. V1 graphs, all-root
 classifications, whole-subject reviews and notice packets are retired/refused, never a V/G
-fallback. npm admission, new review protocols, verified/gap and validator-v2 work is deferred.
+fallback. LP-04 npm origin/notice admission, new review protocols, verified/gap and validator-v2 work is deferred.
 The historical validator notice-v1 gate only constrains verified/gap, so it is unchanged.
 
 `ResolverChecks -- lp04` exercises bounded layout/unsupported/safety/digest cases and
@@ -158,6 +172,7 @@ python -B eng\blazor-package-resolver\tests\test_autofill.py
 python -B eng\blazor-package-resolver\tests\test_shipping.py --lp04
 python -B eng\blazor-package-resolver\tests\test_shipping.py --lp03
 python -B eng\blazor-package-resolver\tests\test_shipping.py --autofill
+python -B eng\blazor-package-resolver\tests\test_shipping.py --reader-help
 python -B eng\blazor-package-resolver\tests\test_corpus.py
 python -B eng\blazor-package-resolver\tests\corpus.py verify --parent
 dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj --no-restore -p:NuGetAudit=false
@@ -208,11 +223,13 @@ namespace set; PI-01 reuses the shared namespace predicate. Unknown roots remain
 unsafe, metadata must still match its root namespace, and LP-01 rejects mixed
 license namespaces. PI-01's existing package/metadata shape checks and assembly
 verification are unchanged; it does not classify license declarations.
-LP-03 is `1.2.0` because its dependency classifier reuses LP-01.
+LP-03 is now `1.3.0` for mixed NuGet/npm exact declarations.
 The collector also recognizes 2011/10. Independent oracle and native boundary
 controls cover every supported namespace and unsupported/mixed namespace refusals.
 The frozen corpus gains result-version-only deltas, not rewritten inputs or branches;
-see [corpus preservation](tests/CORPUS.md). Handoff `2.0.0` rejects older saved state.
+see [corpus preservation](tests/CORPUS.md). Handoff `2.1.0` rejects older saved state.
+The minor bump is an additive intake/profile extension with an unchanged handoff
+envelope; existing producer/version pinning already requires a fresh capture.
 
 The consumer's optional `autofill-eleven.py` orchestrates acquisition and the existing typed
 report producers. The resolver remains offline; apart from the reviewed LP-01 approved
@@ -222,7 +239,10 @@ mapping is tested against every frozen result, including deterministic/escalated
 Run `python eng\blazor-package-resolver\tests\test_autofill.py` for offline collector/mapping
 tests and `python eng\blazor-package-resolver\tests\test_shipping.py --autofill` for the
 installed producer chain, unchanged-row checks, rebinding and single-skill rejection.
-The full shipping suite also includes that integration. No test makes network or model calls.
+The full shipping suite also includes that integration. `test_shipping.py --reader-help`
+checks top-level and trailing `reader render/verify --help`/`-h` through the real installed
+validator launcher, rejects malformed help combinations and preserves plugin/input bytes.
+No test makes network or model calls.
 The two frozen policy/catalog copies are shipping reference assets with the same digests as
 the corpus seeds, not new policy or owner attestations. Resolver source/data fingerprints
 deliberately require report-mapping review when the bundled tool changes.
@@ -270,7 +290,7 @@ foundation/row outcomes. Invalid bindings, duplicates, unknown fields, links and
 limits fail explicitly. The installed launcher does not expose acquisition.
 
 `inspect` preserves broader evidence without changing the row classifiers: one checked root,
-an optional source ZIP and up to 64 distinct checked dependency nupkgs produce literal license
+an optional source ZIP and up to 128 distinct checked dependency nupkgs produce literal license
 and dependency/repository declarations, bounded literal license/notice text and source notice
 candidates, root entry hashes, Razor/project/inherited-build observations, exact source-byte
 matches and per-PE assembly identity/signing fields through the existing strict PE inspector.
@@ -278,7 +298,7 @@ It does not manufacture anonymous retrieval, full resolved closure,
 grant applicability, notice obligations or binary build mapping. See the shipping
 [inspection contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/evidence-inspection.md).
 The consumer registers the packet as supplemental evidence and preserves useful facts even
-when the deciding row remains unresolved. LP-02 1.1.0 verifies public availability
+when the deciding row remains unresolved. LP-02 1.2.0 verifies public availability
 at the package-declared exact revision using an anonymous capture and checked nonempty
 root-bound archive, without a project/MSBuild relevance gate. The declaration supplies
 the association; independent source relevance, binary correspondence and branch/tag
@@ -391,9 +411,11 @@ compiled PE/ELF/Mach-O/WASM, script/JS and active MSBuild or markup text,
 and escalates unsafe, opaque, or incomplete inventory before attribution.
 Repository metadata, declared dependencies, signatures, PDBs, SourceLink
 and SBOMs do not establish ownership or source correspondence. Code
-branches require per-entry public release-commit build, exact source blob
-or pinned transform, or referenced-package/upstream byte maps; safely
-passive-only packages yield a package-specific vacuous no-code finding.
+branches remain unverified under the documented package-only/no-build limitation.
+The resolver accepts no source/provenance maps and performs no builds or transforms:
+retain the candidates for a separate paragraph-29 attribution assessment; no
+currently supported packet verifies them. Safely passive-only packages yield a
+package-specific vacuous no-code finding.
 MSBuild inspection joins direct text and CDATA across comments and processing
 instructions before testing active functions and hashing locators; prolog
 recognition remains bounded and fail-closed. Supplemental oracle-derived

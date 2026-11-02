@@ -104,21 +104,23 @@ Implemented handlers are LP-01 through LP-10 and PI-01, at their frozen versions
 remain TBD. Coverage never establishes package compliance. The resolver preserves per-row
 precedence and qualified claims; do not broaden them into a full report.
 
-LP-03 `lp03-dependency-licenses/1.2.0` uses the caller-designated release-wide SBOM
-and exact inventoried nupkgs' own declarations through the actual LP-01 classifier.
+LP-03 `lp03-dependency-licenses/1.3.0` uses the caller-designated release-wide SBOM
+and exact inventoried nupkgs' or npm tarballs' own declarations through the actual LP-01 classifier.
 See [SBOM admission](references/sbom-inventory.md) for schema 2, the narrow retained
 SPDX 2.2 JSON profile and bounds. An admitted structure alone is not authoritative:
 the exact raw digest/root-bound caller designation is a separate trust boundary.
 Ordinary grants, reviews and owner approval are not prerequisites; missing or unsupported
 evidence stays `not tested`. PI-06/PI-07 remain unimplemented and unassigned.
+Every LP-03 outcome states that npm hashes bind caller-designated bytes, not publisher
+authenticity. LP-02 1.2.0 admits literal `$` only in bounded source archive members.
+LP-10 1.0.1 single-input checks accept no custom provenance maps; when supplied with the 5-input SLSA v1 packet (`package`, `release-package`, `provenance-bundle`, `provenance-attestation`, `source-archive`), it resolves `provenance-attributed` or `provenance-unverified`.
 
-For LP-04 `lp04-notice-coverage/2.0.0`, pass the assessed package only. Follow
+For LP-04 `lp04-notice-coverage/2.0.0`, default single-input requests pass the assessed package only. Follow
 [D-lite bundled web assets](references/lp04-notices.md) for the bounded layout/suffix profile,
-complete retained inventory, digest and six unresolved reasons. Every outcome is `not tested`,
-including an empty supported-profile scan; it does not prove the absence of other web code.
+complete retained inventory, digest and six unresolved reasons (`not tested`, including an empty supported-profile scan; it does not prove the absence of other web code).
+When supplied with the 5-input SLSA v1 packet (`package`, `release-package`, `provenance-bundle`, `provenance-attestation`, `source-archive`) and non-empty supported-layout assets, LP-04 resolves `provenance-notices-verified` (`verified`) or `provenance-notices-unverified` (`not tested`).
 V1 roles/packets are refused, never converted or used as a verified/gap fallback.
-No origin, SBOM, applicability or notice conclusion is inferred; review protocols and deciding
-machinery are deferred. Preserve `bundled_web_assets` alongside the compact observation.
+Preserve `bundled_web_assets` alongside the compact observation.
 
 Full-report status vocabulary remains `verified`, `gap`, `owner evidence required`, `not tested`,
 `not applicable`. Consume the row's complete qualified result; a caller must not invent a status

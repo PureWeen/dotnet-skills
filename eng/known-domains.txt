@@ -22,6 +22,7 @@ spdx.org
 aka.ms/dotnet-trace
 aka.ms/perfcollect
 api.nuget.org
+pkgs.dev.azure.com/dnceng/public/_packaging/dotnet-public
 www.nuget.org/api/v2/package
 download.sysinternals.com
 libimobiledevice.org

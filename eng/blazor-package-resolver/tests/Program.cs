@@ -57,10 +57,10 @@ using (var doc = JsonDocument.Parse(coverage))
                            row.GetProperty("resolver_version").GetString() == "1.1.0",
                 "LP-02" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp02-public-source" &&
-                           row.GetProperty("resolver_version").GetString() == "1.1.0",
+                           row.GetProperty("resolver_version").GetString() == "1.2.0",
                 "LP-03" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp03-dependency-licenses" &&
-                           row.GetProperty("resolver_version").GetString() == "1.2.0",
+                           row.GetProperty("resolver_version").GetString() == "1.3.0",
                 "LP-04" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp04-notice-coverage" &&
                            row.GetProperty("resolver_version").GetString() == "2.0.0",
@@ -81,7 +81,7 @@ using (var doc = JsonDocument.Parse(coverage))
                            row.GetProperty("resolver_version").GetString() == "1.0.0",
                 "LP-10" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "lp10-binary-attribution" &&
-                           row.GetProperty("resolver_version").GetString() == "1.0.0",
+                           row.GetProperty("resolver_version").GetString() == "1.0.1",
                 "PI-01" => row.GetProperty("work_state").GetString() == "implemented" &&
                            row.GetProperty("resolver_id").GetString() == "pi01-strong-name" &&
                            row.GetProperty("resolver_version").GetString() == "1.1.0",
@@ -731,7 +731,7 @@ var allowed = new HashSet<string>(StringComparer.Ordinal)
       "Lp06RepositoryUrlResolver.cs", "Lp07RepositoryCommitResolver.cs",
       "Lp08AuthorsResolver.cs", "Lp09ProjectUrlResolver.cs",
       "Lp10BinaryAttributionResolver.cs", "NuGetNuspecReader.cs", "NuGetPackageIdentity.cs",
-      "Spdx22InventoryAdmission.cs",
+      "Spdx22InventoryAdmission.cs", "NpmPackageIdentity.cs", "NpmPackageEvidence.cs",
       "Pi01StrongNameResolver.cs", "Pi01PeInspector.cs" };
 var allowedFiles = allowed.Concat(["BlazorPackageResolver.csproj", "Resolver.props", "restore-offline.config",
     "data/provenance.json", "data/rubric.json", "data/requirement-basis.json",
