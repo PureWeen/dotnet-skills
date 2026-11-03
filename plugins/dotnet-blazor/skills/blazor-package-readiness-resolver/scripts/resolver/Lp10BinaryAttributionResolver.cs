@@ -61,7 +61,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         [".md", ".txt", ".css", ".png", ".jpg", ".jpeg", ".gif",
          ".svg", ".pdb", ".p7s", ".map", ".psmdcp", ".d.ts", ".d.mts", ".d.cts"];
     private static readonly HashSet<string> SupportJson = new(StringComparer.Ordinal)
-        { "package.json", "sbom.json", "provenance.json", "sourcelink.json" };
+        { "package.json", "sbom.json", "provenance.json", "sourcelink.json", "readiness-bundler-manifest.json" };
     private static readonly Regex UnsafeXmlToken = new(
         @"<![\s\u001c-\u001f]*(?:DOCTYPE|ENTITY)\b",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
@@ -81,7 +81,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
 
     public string RowId => "LP-10";
     public string ResolverId => "lp10-binary-attribution";
-    public string Version => "1.0.1";
+    public string Version => "1.1.0";
 
     private const int ProvenanceLimit = 4 * 1024 * 1024;
     private const string ProvenanceProducer = "lp10-gh-attestation-verify/1.0.0";
@@ -107,7 +107,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
     private static CaseResult Result(ResolverCase input, string branch, List<EntryRecord> records)
     {
         if (branch == "no-code-payload")
-            return new("LP-10", "lp10-binary-attribution", "1.0.1", branch,
+            return new("LP-10", "lp10-binary-attribution", "1.1.0", branch,
                 "deterministic", "applicable", input.Inputs,
                 ["package:archive", "package:nuspec/metadata"], NoCodeContract,
                 NoCodeFinding, null, null, null);
@@ -155,7 +155,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         if (branch is "unsupported-executable-content" or "compiled-attribution-unverified" or
             "text-code-attribution-unverified" or "mixed-code-attribution-unverified")
             missing += " " + AttributionLimit;
-        return new("LP-10", "lp10-binary-attribution", "1.0.1", branch, "escalated",
+        return new("LP-10", "lp10-binary-attribution", "1.1.0", branch, "escalated",
             structural ? "unknown" : "applicable", input.Inputs,
             branch == "missing-package" ? [] : ["package:archive"],
             structural || records.Count == 0 ? null : CandidateContract(records),
@@ -170,7 +170,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             return Result(input, branch, records);
 
         CaseResult Unverified(string detail) =>
-            new("LP-10", "lp10-binary-attribution", "1.0.1", "provenance-unverified", "escalated",
+            new("LP-10", "lp10-binary-attribution", "1.1.0", "provenance-unverified", "escalated",
                 "applicable", input.Inputs,
                 input.Inputs.Select(item => $"input:{item.Role}:{item.Sha256}")
                     .Distinct(StringComparer.Ordinal).ToArray(),
@@ -218,7 +218,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
 
         if (!TryVerifyProvenanceAttestation(provenanceAttestation.Content, package.Identity.Sha256,
                 releasePackage.Identity.Sha256, provenanceBundle.Identity.Sha256,
-                sourceArchive.Identity.Sha256, repository, declaration.Commit, workflowPath))
+                sourceArchive.Identity.Sha256, sourceArchive.Content.Length, repository, declaration.Commit, workflowPath))
             return Unverified("verified attestation receipt does not bind the provenance bundle, Fulcio OIDC certificate, transparency log or declared commit");
 
         if (!Lp02PublicSourceResolver.TryArchive(sourceArchive.Content, out var sourceFiles,
@@ -226,22 +226,12 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             return Unverified("source archive is unreadable or outside the bounded GitHub source profile");
 
         var rootPrefix = repository.Split('/')[^1] + "-" + declaration.Commit + "/";
-        if (sourceFiles.Keys.Any(path => !path.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase)) ||
+        if (!TrySourceRoot(sourceFiles, rootPrefix, out rootPrefix) ||
             !sourceFiles.Keys.Any(path => path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) ||
             !sourceFiles.ContainsKey(rootPrefix + workflowPath))
             return Unverified("source archive does not match the declared repository/commit root, attested workflow path or C# project layout");
 
         var sourceDigests = sourceFiles.Values.Select(bytes => Catalog.Digest(bytes)).ToHashSet(StringComparer.Ordinal);
-        var hasWebBuildTree = sourceFiles.Keys.Any(path =>
-                path.EndsWith("/package.json", StringComparison.OrdinalIgnoreCase)) &&
-            sourceFiles.Keys.Any(path =>
-                path.EndsWith("/package-lock.json", StringComparison.OrdinalIgnoreCase) ||
-                path.EndsWith("/yarn.lock", StringComparison.OrdinalIgnoreCase) ||
-                path.EndsWith("/pnpm-lock.yaml", StringComparison.OrdinalIgnoreCase)) &&
-            sourceFiles.Keys.Any(path =>
-                path.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) ||
-                path.EndsWith(".js", StringComparison.OrdinalIgnoreCase));
-
         var compiledCount = 0;
         var exactSourceTextCount = 0;
         var builtWebAssetTextCount = 0;
@@ -249,11 +239,13 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         {
             if (record.Classification == "compiled")
             {
-                if (record.Reason != "pe-signature" ||
+                if (!record.Path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
+                    record.Reason != "pe-signature" ||
                     sourceDigests.Contains(record.Sha256) ||
                     !packageEntries.TryGetValue(record.Path, out var dllBytes) ||
-                    !VerifyAssemblyMetadataConsistency(dllBytes, repository, declaration.Commit))
-                    return Unverified($"compiled candidate {record.Path} has conflicting PE repository metadata or matches a prebuilt binary in source");
+                    !VerifyAssemblyMetadataConsistency(dllBytes, repository, declaration.Commit) ||
+                    !HasMatchingProject(record.Path, dllBytes, sourceFiles, rootPrefix))
+                    return Unverified($"compiled candidate {record.Path} lacks a matching source project/output identity, has conflicting PE repository metadata or matches a prebuilt binary in source");
                 compiledCount++;
             }
             else if (record.Classification == "text")
@@ -264,7 +256,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                     record.Path.StartsWith("staticwebassets/", StringComparison.OrdinalIgnoreCase) &&
                     (record.Path.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
                      record.Path.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase)) &&
-                    hasWebBuildTree)
+                    TryBundlerAsset(packageEntries, sourceFiles, rootPrefix, record.Path, record.Sha256, out _))
                     builtWebAssetTextCount++;
                 else
                     return Unverified($"text candidate {record.Path} lacks exact source-blob or attested web-asset build correspondence");
@@ -283,9 +275,10 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             $"{releasePackage.Identity.Sha256} to workflow {workflowPath}@{declaration.Commit}; all {pkgNonSig.Count} non-signature " +
             $"archive entries in package {package.Identity.Sha256} match the attested release package byte-for-byte; and all " +
             $"{compiledCount + exactSourceTextCount + builtWebAssetTextCount} non-passive code candidates ({compiledCount} compiled PE/CLI " +
-            $"assemblies with consistent metadata and no prebuilt source-tree binary, {exactSourceTextCount} exact source-blob text " +
-            $"matches, {builtWebAssetTextCount} workflow-built staticwebassets scripts) correspond to the attested commit.";
-        return new("LP-10", "lp10-binary-attribution", "1.0.1", "provenance-attributed",
+            $"assemblies with matching source project/output identities, consistent metadata and no prebuilt source-tree binary, {exactSourceTextCount} exact source-blob text " +
+            $"matches, {builtWebAssetTextCount} digest-bound bundler-manifest scripts) correspond to the attested commit. " +
+            "Project/output correspondence is not a reproducible-build or exhaustive workflow/dataflow proof.";
+        return new("LP-10", "lp10-binary-attribution", "1.1.0", "provenance-attributed",
             "deterministic", "applicable", input.Inputs,
             input.Inputs.Select(item => $"input:{item.Role}:{item.Sha256}").ToArray(),
             CandidateContract(records), finding, null, null, null);
@@ -325,6 +318,11 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             return false;
         }
         var rootPrefix = repository.Split('/')[^1] + "-" + declaration.Commit + "/";
+        if (!TrySourceRoot(sourceFiles, rootPrefix, out rootPrefix))
+        {
+            error = "source archive root differs from the declared repository/commit";
+            return false;
+        }
         context = new VerifiedProvenanceContext(declaration, repository, workflowPath,
             releasePackage.Identity.Sha256, rootPrefix, packageEntries, sourceFiles);
         return true;
@@ -462,7 +460,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
     }
 
     private static bool TryVerifyProvenanceAttestation(ReadOnlyMemory<byte> content,
-        string packageSha256, string releaseSha256, string bundleSha256, string sourceSha256,
+        string packageSha256, string releaseSha256, string bundleSha256, string sourceSha256, int sourceSize,
         string expectedRepository, string expectedCommit, string workflowPath)
     {
         if (content.Length is <= 0 or > ProvenanceLimit)
@@ -470,7 +468,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         try
         {
             _ = StrictUtf8.GetCharCount(content.Span);
-            using var doc = JsonDocument.Parse(content, new JsonDocumentOptions { MaxDepth = 32 });
+            using var doc = HelperAdmission.Open(content);
+            if (doc is null) return false;
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object ||
                 !root.TryGetProperty("schema_version", out var schemaVer) ||
@@ -486,6 +485,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 bndSha.GetString() != bundleSha256 ||
                 !root.TryGetProperty("source_archive_sha256", out var srcSha) ||
                 srcSha.GetString() != sourceSha256 ||
+                !ValidSourceAcquisition(root, packageSha256, sourceSha256, sourceSize, expectedRepository, expectedCommit) ||
                 !root.TryGetProperty("verification", out var verArray) ||
                 verArray.ValueKind != JsonValueKind.Array ||
                 verArray.GetArrayLength() == 0)
@@ -540,12 +540,104 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             }
             return false;
         }
-        catch (Exception ex) when (ex is JsonException or DecoderFallbackException or InvalidOperationException)
+        catch (Exception ex) when (ex is JsonException or DecoderFallbackException or InvalidOperationException or KeyNotFoundException)
+        {
+            return false;
+        }
+
+    }
+
+    private static bool ValidSourceAcquisition(JsonElement receipt, string packageSha, string sourceSha,
+        int sourceSize, string repository, string commit)
+    {
+        if (!receipt.TryGetProperty("source_acquisition", out var acquisition) ||
+            acquisition.ValueKind != JsonValueKind.Object) return false;
+        var retrieval = acquisition.GetProperty("retrieval_attempt");
+        var capture = acquisition.GetProperty("capture_receipt");
+        return acquisition.GetProperty("producer").GetString() == Lp02PublicSourceResolver.Producer &&
+            acquisition.GetProperty("package_sha256").GetString() == packageSha &&
+            string.Equals(acquisition.GetProperty("repository_url").GetString(), repository, StringComparison.OrdinalIgnoreCase) &&
+            acquisition.GetProperty("commit").GetString() == commit &&
+            acquisition.GetProperty("archive_size").GetInt32() == sourceSize &&
+            retrieval.GetProperty("url").GetString() == "https://codeload.github.com/" +
+                repository["https://github.com/".Length..] + "/zip/" + commit &&
+            retrieval.GetProperty("transport").GetString() == Lp02PublicSourceResolver.Transport &&
+            retrieval.GetProperty("result").GetString() == "retrieved" &&
+            retrieval.GetProperty("http_status").GetInt32() == 200 &&
+            capture.GetProperty("role").GetString() == "source-archive" &&
+            capture.GetProperty("sha256").GetString() == sourceSha;
+    }
+
+    internal static bool TrySourceRoot(Dictionary<string, byte[]> files, string expected, out string actual)
+    {
+        actual = files.Count == 0 ? "" : files.Keys.First().Split('/')[0] + "/";
+        var prefix = actual;
+        return actual.Equals(expected, StringComparison.OrdinalIgnoreCase) &&
+            files.Keys.All(path => path.StartsWith(prefix, StringComparison.Ordinal));
+    }
+
+    internal static bool HasMatchingProject(string assetPath, byte[] dll, Dictionary<string, byte[]> files, string prefix)
+    {
+        using var pe = new PEReader(new MemoryStream(dll, writable: false));
+        if (!pe.HasMetadata) return false;
+        var metadata = pe.GetMetadataReader();
+        var name = metadata.GetString(metadata.GetAssemblyDefinition().Name);
+        if (Path.GetFileNameWithoutExtension(assetPath) != name) return false;
+        foreach (var (path, bytes) in files.Where(item => item.Key.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)))
+        {
+            try
+            {
+                using var reader = XmlReader.Create(new MemoryStream(bytes), new XmlReaderSettings
+                { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = XmlLimit });
+                var project = XDocument.Load(reader);
+                var names = project.Descendants().Where(item => item.Name.LocalName == "AssemblyName").ToArray();
+                if (project.Root?.Name.LocalName != "Project" || names.Length > 1 ||
+                    names.Any(item => item.HasAttributes || item.HasElements ||
+                        item.Ancestors().Any(parent => parent.Attribute("Condition") is not null))) continue;
+                var output = names.Length == 1 ? names[0].Value.Trim() : Path.GetFileNameWithoutExtension(path);
+                if (output == name && path.StartsWith(prefix, StringComparison.Ordinal)) return true;
+            }
+            catch (XmlException) { }
+        }
+        return false;
+    }
+
+    internal static bool TryBundlerAsset(Dictionary<string, byte[]> packageFiles,
+        Dictionary<string, byte[]> sourceFiles, string prefix, string assetPath, string digest,
+        out HashSet<(string Name, string Version)> components)
+    {
+        components = [];
+        if (!packageFiles.TryGetValue("readiness-bundler-manifest.json", out var bytes) || bytes.Length > XmlLimit)
+            return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 16 });
+            if (doc.RootElement.GetProperty("schema_version").GetInt32() != 1) return false;
+            var assets = doc.RootElement.GetProperty("assets").EnumerateArray().ToArray();
+            if (assets.Length is 0 or > 4096 ||
+                assets.Select(a => a.GetProperty("path").GetString()).Distinct(StringComparer.Ordinal).Count() != assets.Length)
+                return false;
+            var matches = assets.Where(a => a.GetProperty("path").GetString() == assetPath).ToArray();
+            if (matches.Length != 1 || matches[0].GetProperty("sha256").GetString() != digest) return false;
+            var inputs = matches[0].GetProperty("inputs").EnumerateArray().ToArray();
+            if (inputs.Length is 0 or > 4096 || inputs.Any(i =>
+                !Lp02PublicSourceResolver.SafeSourceMemberPath(i.GetProperty("path").GetString()) ||
+                !sourceFiles.TryGetValue(prefix + i.GetProperty("path").GetString(), out var source) ||
+                Catalog.Digest(source) != i.GetProperty("sha256").GetString())) return false;
+            foreach (var component in matches[0].GetProperty("components").EnumerateArray())
+            {
+                var name = component.GetProperty("name").GetString();
+                var version = component.GetProperty("version").GetString();
+                if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(version) ||
+                    !components.Add((name, version)) || components.Count > 128) return false;
+            }
+            return true;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException or KeyNotFoundException or ArgumentException)
         {
             return false;
         }
     }
-
     private static bool VerifyAssemblyMetadataConsistency(byte[] bytes, string expectedRepository, string expectedCommit)
     {
         var inspected = Pi01PeInspector.Inspect(bytes);
@@ -905,7 +997,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                     imports[target] = classified.Imports;
                     records[target] = records[target] with
                     {
-                        Classification = classified.Kind, Reason = classified.Reason,
+                        Classification = classified.Kind,
+                        Reason = classified.Reason,
                         Locators = classified.Locators
                     };
                 }
@@ -928,7 +1021,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             if (records[name].Classification == "passive")
                 records[name] = records[name] with
                 {
-                    Classification = "text", Reason = "promoted-in-package-code-source"
+                    Classification = "text",
+                    Reason = "promoted-in-package-code-source"
                 };
         var ordered = records.Values.OrderBy(item => item.Path, StringComparer.Ordinal).ToList();
         var compiled = ordered.Any(item => item.Classification == "compiled");

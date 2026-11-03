@@ -74,7 +74,7 @@ public static class PackageEvidenceInspection
                     declaration.RepositoryUrl, declaration.Commit, out var repository, out _))
             {
                 var prefix = repository.Split('/')[^1] + "-" + declaration.Commit + "/";
-                rootMatches = files.Count > 0 && files.Keys.All(path => path.StartsWith(prefix, StringComparison.Ordinal));
+                rootMatches = Lp10BinaryAttributionResolver.TrySourceRoot(files, prefix, out _);
                 if (rootMatches == false)
                     diagnostics.Add("Source archive paths do not match the package-declared repository/revision prefix.");
             }

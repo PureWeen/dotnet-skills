@@ -9,6 +9,10 @@
     <DefineConstants Condition="'$(EnableResolverTestHooks)' == 'true'">$(DefineConstants);RESOLVER_TEST_HOOKS</DefineConstants>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="NuGet.Versioning">
+      <HintPath>$(MSBuildBinPath)\NuGet.Versioning.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
     <Compile Include="$(MSBuildThisFileDirectory)*.cs" />
     <Content Include="$(MSBuildThisFileDirectory)data\*.json"
              Link="data\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

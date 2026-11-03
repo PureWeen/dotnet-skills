@@ -32,10 +32,10 @@ if len(sys.argv) > 1:
                              "next_category", "evidence_contract", "evidence_references", "inputs"}
         require(set(row) == fields | ({"bundled_web_assets"} if row["row_id"] == "LP-04" else set()))
         require(row["row_id"] in rows and
-                row["resolver_version"] == ("2.0.0" if row["row_id"] == "LP-04" else
-                                           "1.3.0" if row["row_id"] == "LP-03" else
+                row["resolver_version"] == ("2.1.0" if row["row_id"] == "LP-04" else
+                                           "1.4.0" if row["row_id"] == "LP-03" else
                                            "1.2.0" if row["row_id"] == "LP-02" else
-                                           "1.0.1" if row["row_id"] == "LP-10" else
+                                           "1.1.0" if row["row_id"] == "LP-10" else
                                            "1.1.0" if row["row_id"] in ("LP-01", "PI-01") else "1.0.0"))
         require(re.fullmatch(r"[a-z][a-z0-9-]*", row["resolver_id"]) is not None and
                 re.fullmatch(r"[a-z][a-z0-9-]*", row["branch_id"]) is not None)

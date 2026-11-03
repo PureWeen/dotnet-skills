@@ -293,7 +293,7 @@ internal static class Spdx22InventoryAdmission
         Check(reached.SetEquals(nodes.Keys), "unsupported", "closure-unresolved", "Orphan or incomplete package inventory.");
         if (!productAsRoot) components.Remove(rootKey);
         Check(components.Count <= ComponentLimit, "unsupported", "closure-unresolved", "Dependency component cap.");
-        CheckRootDependencies(package, components.Values.Where(c => c.Ecosystem == "nuget").Select(c => c.Id).ToHashSet(StringComparer.Ordinal));
+        CheckRootDependencies(package, components.Values.Where(c => c.Ecosystem == "nuget").ToArray());
         var diagnostics = new List<string>();
         foreach (var file in files)
         {
@@ -311,7 +311,7 @@ internal static class Spdx22InventoryAdmission
             edges.OrderBy(e => e.From, StringComparer.Ordinal).ThenBy(e => e.To, StringComparer.Ordinal).ToArray(), diagnostics.ToArray());
     }
 
-    private static void CheckRootDependencies(ReadOnlyMemory<byte> package, HashSet<string> ids)
+    private static void CheckRootDependencies(ReadOnlyMemory<byte> package, InventoryComponent[] components)
     {
         var metadata = NuGetNuspecReader.Read(package).Metadata!;
         var ns = metadata.Name.Namespace;
@@ -358,7 +358,12 @@ internal static class Spdx22InventoryAdmission
                         Check(supported, "unsupported", "closure-unresolved",
                             "Unsupported or malformed root dependency " + attribute.Name.LocalName + " declaration.");
                     }
-                    Check(ids.Contains(id!), "unsupported", "closure-unresolved", "Known root direct dependency omitted: " + id);
+                    var version = (string?)dependency.Attribute("version");
+                    var candidates = components.Where(c => c.Id == id).ToArray();
+                    Check(candidates.Length > 0 && (version is null ||
+                        candidates.Any(c => NuGet.Versioning.VersionRange.Parse(version).Satisfies(
+                            NuGet.Versioning.NuGetVersion.Parse(c.Version)))),
+                        "unsupported", "closure-unresolved", "Known root direct dependency omitted or no inventoried version satisfies its NuGet range: " + id);
                 }
             }
         }
@@ -366,11 +371,16 @@ internal static class Spdx22InventoryAdmission
 
     private static bool SupportedDependencyVersion(string value)
     {
-        // Same bounded literals as helper discovery; this checks syntax, never a selected version.
-        if (value.Length > 19) return false;
+        if (value.Length > 64 || value != value.Trim()) return false;
         var literal = value.Length >= 2 && value[0] == '[' && value[^1] == ']'
             ? value[1..^1] : value;
-        return NuGetPackageIdentity.ValidVersion(literal);
+        if (NuGetPackageIdentity.ValidVersion(literal)) return true;
+        var match = System.Text.RegularExpressions.Regex.Match(value,
+            @"\A[\[(]([^,]*),([^,]*)[\])]\z", System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        return match.Success && (match.Groups[1].Value.Length > 0 || match.Groups[2].Value.Length > 0) &&
+            (match.Groups[1].Value.Length == 0 || NuGetPackageIdentity.ValidVersion(match.Groups[1].Value)) &&
+            (match.Groups[2].Value.Length == 0 || NuGetPackageIdentity.ValidVersion(match.Groups[2].Value)) &&
+            NuGet.Versioning.VersionRange.TryParse(value, out _);
     }
 
     private static bool SupportedDependencyAssets(string value)

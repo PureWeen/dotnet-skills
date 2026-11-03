@@ -104,7 +104,7 @@ def tooling_fixes_delta(suite):
             result["resolver_version"] = "1.2.0"
         elif row == "LP-03":
             check(result["resolver_version"] == "1.2.0", "Unexpected LP-03 tooling delta")
-            result["resolver_version"] = "1.3.0"
+            result["resolver_version"] = "1.4.0"
             result["evidence_contract"] = result["evidence_contract"].replace(
                 "Each included NuGet dependency is classified from its exact checked nupkg declaration ",
                 "Each included dependency is classified from its exact checked nupkg or npm tarball declaration ") + " " + trust
@@ -113,7 +113,7 @@ def tooling_fixes_delta(suite):
                     result[key] += " " + trust
         elif row == "LP-10":
             check(result["resolver_version"] == "1.0.0", "Unexpected LP-10 tooling delta")
-            result["resolver_version"] = "1.0.1"
+            result["resolver_version"] = "1.1.0"
             if result["branch_id"] in ("unsupported-executable-content", "compiled-attribution-unverified",
                                       "text-code-attribution-unverified", "mixed-code-attribution-unverified"):
                 result["missing_fact"] += (

@@ -158,15 +158,50 @@ internal static class Lp03SbomChecks
                     new XElement("group", new XAttribute("targetFramework", $"net{index + 8}.0"),
                         index == position ? node : Dependency("0.5.0"))));
             }
-            foreach (var version in new string?[] { null, "0.0.0", "0.5.0", "0.99999.99999", "1.0.0", "[1.0.0]" })
+            foreach (var version in new string?[] { null, "0.0.0", "0.5.0", "0.99999.99999", "1.0.0", "[1.0.0]",
+                "[1.0.0,2.0.0)", "(,1.0.0]", "[1.0.0,)" })
                 for (var position = -1; position < 3; position++)
                     Declaration($"supported version {version ?? "(omitted)"} / group {position}",
                         Dependencies(position, version), "dependencies-policy-satisfied");
+            foreach (var version in new[] { "2.99999.99999", "2.0.0", "[2.0.0]", "(1.0.0,2.0.0]", "[0.0.0,1.0.0)" })
+                for (var position = -1; position < 3; position++)
+                    Declaration($"B6 ID-only match cannot satisfy {version} / group {position}",
+                        Dependencies(position, version), "closure-unresolved");
+            foreach (var (version, shouldAdmit) in new[]
+            {
+                ("[2.0.0]", true), ("(1.0.0,3.0.0)", true), ("[3.0.0]", false)
+            })
+            {
+                var inputs = new Dictionary<string, CheckedInput>(checkedInputs, StringComparer.Ordinal);
+                Replace(inputs, "package", Package("example.controls", Dependencies(-1, version)));
+                var sbom = JsonNode.Parse(inputs["sbom"].Content.Span)!;
+                var second = sbom["packages"]![2]!.DeepClone();
+                second["SPDXID"] = "SPDXRef-Dependency-V2";
+                second["versionInfo"] = "2.0.0";
+                second["externalRefs"]![0]!["referenceLocator"] = "pkg:nuget/example.dependency@2.0.0";
+                sbom["packages"]!.AsArray().Add(second);
+                sbom["relationships"]!.AsArray().Add(new JsonObject
+                {
+                    ["relationshipType"] = "DEPENDS_ON", ["spdxElementId"] = "SPDXRef-Product",
+                    ["relatedSpdxElement"] = "SPDXRef-Dependency-V2"
+                });
+                Replace(inputs, "sbom", Encoding.UTF8.GetBytes(sbom.ToJsonString()));
+                var scope = JsonNode.Parse(inputs["assessment"].Content.Span)!;
+                scope["root"]!["sha256"] = inputs["package"].Identity.Sha256;
+                scope["designation"]!["root"]!["sha256"] = inputs["package"].Identity.Sha256;
+                scope["sbom_sha256"] = inputs["sbom"].Identity.Sha256;
+                scope["designation"]!["sbom_sha256"] = inputs["sbom"].Identity.Sha256;
+                Replace(inputs, "assessment", Encoding.UTF8.GetBytes(scope.ToJsonString()));
+                var result = Spdx22InventoryAdmission.Admit(inputs);
+                Check(shouldAdmit ? result.Inventory?.Dependencies.Length == 2 :
+                    result.Code == "closure-unresolved", $"B6 multiple inventoried versions / {version}: {result.Detail}");
+                declarations++;
+            }
             foreach (var version in new[]
             {
                 "not-a-version", "", " ", " 1.0.0 ", "01.0.0", "1.0", "1.0.0.0", "0.0.100000",
                 "1.0.0-beta.1", "1.0.0+build", "1.*", "[1.0.0", "1.0.0]", "[[1.0.0]]",
-                "[1.0.0,2.0.0)", "(,1.0.0]", "[1.0.0,)", "(,)", new string('1', 4096)
+                "(,)", new string('1', 4096)
             })
                 for (var position = -1; position < 3; position++)
                     Declaration($"unsupported version {version} / group {position}",

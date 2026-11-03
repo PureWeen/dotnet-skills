@@ -14,7 +14,7 @@ public sealed class Lp03DependencyLicensesResolver : IDeterministicResolver
         "npm archive hashes bind caller-designated bytes and do not authenticate publisher archives.";
     public string RowId => "LP-03";
     public string ResolverId => "lp03-dependency-licenses";
-    public string Version => "1.3.0";
+    public string Version => "1.4.0";
     internal static bool ValidId(string value) => NuGetPackageIdentity.ValidId(value);
     internal static bool ValidVersion(string value) => NuGetPackageIdentity.ValidVersion(value);
 

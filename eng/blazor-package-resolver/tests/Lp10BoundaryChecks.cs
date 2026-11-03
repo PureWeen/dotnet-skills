@@ -397,6 +397,7 @@ internal static class Lp10BoundaryChecks
             ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
             ($"controls-{commit}/Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
             ($"controls-{commit}/wwwroot/matched.js", matchedJs),
+            ($"controls-{commit}/wwwroot/built.js", builtJs),
             ($"controls-{commit}/package.json", "{\"name\":\"controls\"}"u8.ToArray()),
             ($"controls-{commit}/package-lock.json", "{\"name\":\"controls\",\"lockfileVersion\":3}"u8.ToArray()),
             ($"controls-{commit}/src/index.ts", "export const built: number = 2;"u8.ToArray()));
@@ -451,8 +452,8 @@ internal static class Lp10BoundaryChecks
         byte[] BuildAttestation(byte[] pkg, byte[] rel, byte[] bnd, byte[] src,
             string runnerEnv = "github-hosted", string certCommit = commit)
         {
-            using var stmtDoc = JsonDocument.Parse(statementJson);
-            return Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+            using var stmtDoc = JsonDocument.Parse(statementJson.Replace(releaseSha, Catalog.Digest(rel), StringComparison.Ordinal));
+            var raw = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
             {
                 schema_version = 1,
                 producer = "lp10-gh-attestation-verify/1.0.0",
@@ -486,6 +487,7 @@ internal static class Lp10BoundaryChecks
                     }
                 }
             }));
+            return ProvenanceTestAdmission.Sign(raw, src, repoUrl, commit);
         }
 
         CaseResult Dispatch(byte[] pkg, byte[] rel, byte[] bnd, byte[] att, byte[] src, bool dropSource = false)
@@ -506,6 +508,19 @@ internal static class Lp10BoundaryChecks
         }
 
         var validAtt = BuildAttestation(pkgBytes, releaseBytes, bundleBytes, sourceBytes);
+        Check(Dispatch(pkgBytes, releaseBytes, bundleBytes, ProvenanceTestAdmission.Payload(validAtt), sourceBytes)
+            .BranchId == "provenance-unverified", "B7 caller-authored gh receipt cannot verify without helper binding");
+        var noAcquisition = ProvenanceTestAdmission.Sign(
+            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+            {
+                schema_version = 1, producer = "lp10-gh-attestation-verify/1.0.0",
+                package_sha256 = Catalog.Digest(pkgBytes), release_package_sha256 = releaseSha,
+                provenance_bundle_sha256 = Catalog.Digest(bundleBytes),
+                source_archive_sha256 = Catalog.Digest(sourceBytes),
+                verification = JsonDocument.Parse(ProvenanceTestAdmission.Payload(validAtt)).RootElement.GetProperty("verification")
+            })), sourceBytes, repoUrl, commit, acquired: false);
+        Check(Dispatch(pkgBytes, releaseBytes, bundleBytes, noAcquisition, sourceBytes).BranchId == "provenance-unverified",
+            "B1 signed helper admission without trusted exact-commit source acquisition must fail closed");
         var positive = Dispatch(pkgBytes, releaseBytes, bundleBytes, validAtt, sourceBytes);
         Check(positive.BranchId == "provenance-attributed" &&
             positive.Decision == "deterministic" &&
@@ -557,9 +572,69 @@ internal static class Lp10BoundaryChecks
         var missingLockfile = Dispatch(pkgBytes, releaseBytes, bundleBytes,
             BuildAttestation(pkgBytes, releaseBytes, bundleBytes, sourceMissingLockfile), sourceMissingLockfile);
         Check(missingLockfile.BranchId == "provenance-unverified" && missingLockfile.Decision == "escalated",
-            "Source archive missing a JS lockfile when staticwebassets scripts exist must fail closed to provenance-unverified.");
+            "B2 generic web tree without a per-asset source match must fail closed to provenance-unverified.");
 
-        Console.WriteLine("LP-10 SLSA v1 build provenance positive and negative checks: 7 cases passed.");
+        var unmatchedWithLock = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/Controls.csproj", "<Project/>"u8.ToArray()),
+            ($"controls-{commit}/wwwroot/matched.js", matchedJs),
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\"}"u8.ToArray()),
+            ($"controls-{commit}/package-lock.json", "{}"u8.ToArray()),
+            ($"controls-{commit}/src/index.ts", "export const unrelated = 0;"u8.ToArray()));
+        Check(Dispatch(pkgBytes, releaseBytes, bundleBytes,
+            BuildAttestation(pkgBytes, releaseBytes, bundleBytes, unmatchedWithLock), unmatchedWithLock)
+            .BranchId == "provenance-unverified", "B2 unmatched JS with package/lock/source tree cannot be attributed");
+
+        using var rootZip = new ZipArchive(new MemoryStream(sourceBytes), ZipArchiveMode.Read);
+        var casedSource = BuildZip(rootZip.Entries.Select(e =>
+        {
+            using var stream = e.Open();
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            return (e.FullName.Replace("controls-", "Controls-", StringComparison.Ordinal), memory.ToArray());
+        }).ToArray());
+        Check(Dispatch(pkgBytes, releaseBytes, bundleBytes,
+            BuildAttestation(pkgBytes, releaseBytes, bundleBytes, casedSource), casedSource)
+            .BranchId == "provenance-attributed", "S3 validated root uses archive's actual casing for workflow lookup");
+
+        var metadata = new System.Reflection.Metadata.Ecma335.MetadataBuilder();
+        metadata.AddModule(0, metadata.GetOrAddString("Example.Controls.dll"),
+            metadata.GetOrAddGuid(new Guid("11111111-2222-3333-4444-555555555555")), default, default);
+        metadata.AddAssembly(metadata.GetOrAddString("Example.Controls"), new Version(1, 0, 0, 0),
+            default, default, 0, default);
+        metadata.AddTypeDefinition(System.Reflection.TypeAttributes.NotPublic, default,
+            metadata.GetOrAddString("<Module>"), default,
+            System.Reflection.Metadata.Ecma335.MetadataTokens.FieldDefinitionHandle(1),
+            System.Reflection.Metadata.Ecma335.MetadataTokens.MethodDefinitionHandle(1));
+        var peBuilder = new System.Reflection.PortableExecutable.ManagedPEBuilder(
+            new System.Reflection.PortableExecutable.PEHeaderBuilder(imageCharacteristics:
+                System.Reflection.PortableExecutable.Characteristics.ExecutableImage |
+                System.Reflection.PortableExecutable.Characteristics.Dll),
+            new System.Reflection.Metadata.Ecma335.MetadataRootBuilder(metadata),
+            new System.Reflection.Metadata.BlobBuilder(),
+            flags: System.Reflection.PortableExecutable.CorFlags.ILOnly);
+        var peBlob = new System.Reflection.Metadata.BlobBuilder();
+        peBuilder.Serialize(peBlob);
+        var assemblyPackage = BuildZip(("Example.Controls.nuspec", nuspec),
+            ("lib/net10.0/Example.Controls.dll", peBlob.ToArray()));
+        var assemblyBundleNode = System.Text.Json.Nodes.JsonNode.Parse(bundleBytes)!;
+        assemblyBundleNode["dsseEnvelope"]!["payload"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+            statementJson.Replace(releaseSha, Catalog.Digest(assemblyPackage), StringComparison.Ordinal)));
+        var assemblyBundle = Encoding.UTF8.GetBytes(assemblyBundleNode.ToJsonString());
+        var wrongProjectSource = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/Unrelated.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"/>"u8.ToArray()));
+        Check(Dispatch(assemblyPackage, assemblyPackage, assemblyBundle,
+            BuildAttestation(assemblyPackage, assemblyPackage, assemblyBundle, wrongProjectSource), wrongProjectSource)
+            .BranchId == "provenance-unverified", "B2 DLL with no matching source project cannot pass on absence of contradictory metadata");
+        var matchingProjectSource = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/Unrelated.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\"><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Project>"u8.ToArray()));
+        Check(Dispatch(assemblyPackage, assemblyPackage, assemblyBundle,
+            BuildAttestation(assemblyPackage, assemblyPackage, assemblyBundle, matchingProjectSource), matchingProjectSource)
+            .BranchId == "provenance-attributed", "B2 literal source AssemblyName must match shipped filename and CLR identity");
+
+        Console.WriteLine("LP-10 strict helper/source/per-entry provenance regressions passed.");
     }
 
     private static void Check(bool success, string reason)

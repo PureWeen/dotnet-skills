@@ -7,6 +7,7 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="NuGet.Versioning" HintPath="$(MSBuildBinPath)\NuGet.Versioning.dll" Private="true" />
     <ProjectReference Include="..\BlazorPackageResolver.csproj" AdditionalProperties="EnableResolverTestHooks=true" />
     <Content Include="..\..\..\plugins\dotnet-blazor\skills\blazor-package-readiness-resolver\scripts\resolver\data\*.json"
              Link="data\%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

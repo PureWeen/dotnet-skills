@@ -1,15 +1,22 @@
 # Locked compact replay corpus
 
 The named `tooling-fixes-v1` allowance composes with the older allowances below:
-LP-02 expected versions become 1.2.0; LP-03 becomes 1.3.0 with exact-archive
+LP-02 expected versions become 1.2.0; LP-03 becomes 1.4.0 with exact-archive
 wording and the explicit npm caller-byte/non-publisher-authenticity qualification
-in every canonical outcome; LP-10 becomes 1.0.1 with package-only/no-build,
+in every canonical outcome; LP-10 becomes 1.1.0 with package-only/no-build,
 no-map-submission follow-up for its four attribution branches. No historical input,
 case ID/order/rationale, policy, seed or raw bank changes. The parent guard applies
 these exact field transformations, never learns answers from the production resolver.
 Current mixed ecosystem, prefix-order, hostile tar/gzip and forged-but-self-consistent
 npm controls run separately in `MixedInventoryChecks.cs`; retained IG/SF checks require
 `READINESS_RETAINED_EVIDENCE_ROOT` pointing explicitly to the retained evidence root.
+
+The strict provenance revision projects LP-04's frozen package-only metadata to 2.1.0
+without changing its D-lite branches. New native tests separately reject unauthenticated
+receipts, unmatched executable entries, incomplete/SPDX-mismatched notices, name-based
+exclusions and unsatisfied NuGet versions. Mode B is intentionally unverified; Mode A
+requires per-asset component maps. These are reviewed semantic contract/expectation
+changes, not result-only updates or production-derived golden answers.
 
 ## What changed, and what did not
 

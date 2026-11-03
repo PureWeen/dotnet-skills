@@ -19,10 +19,10 @@ internal static class Lp03Checks
         ["README.md"] = "6412d0e2693cea90222bf7fe099541d5ca37bf4826201b69f2b75a033ca9be42",
         ["acceptance-manifest.json"] = "907b2c7d114d56e745b63eced1176a460d50d24d6bd02cde812d54326d4b21d8",
         ["discrimination.json"] = "ab28a984d9757dc62096b3a91082134b69ab23da7cdbde6a4b8a7aa3ede41371",
-        ["cases.json"] = "12616d2d9f1a544f15c32461176e0fbbfc58408a3814c3922bbcdb6294b53569",
+        ["cases.json"] = "d6da64b70d05255fac1fe3a9e67be874c8d686d8fb076dae5fc003fcf2c2b53b",
         ["input-manifest.json"] = "04f3d542ee4ff5d544270982f21c7e9e87e73ad591d2763eeef57cfc7cf72de5",
         ["rejected-inputs.json"] = "ae7cd3af1fa9050cbd2e222d2e7efc2d455aa2f3e429dd478ec2465b71bdeadb",
-        ["acceptance.json"] = "3e64783f6c208c6f399ca3cdd08156e9f3887337e96053cbc2256ca57aea069a",
+        ["acceptance.json"] = "6f8726d26bf76e23a84a9c0cafcdcc889a10674af0055ea278cbef389ba6068e",
         ["retained-inputs.json"] = "8bd89262559999a2589267815761af820992965f336a1b4a0e9f1a5aff3e9bb6"
     };
 

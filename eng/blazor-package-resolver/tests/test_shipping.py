@@ -368,6 +368,53 @@ def lp02_public_capture_checks(plugin, work, root):
           "Razor, inherited build files and interior filename spaces are not false blockers.")
 
 
+def forged_provenance_shortcut_checks(plugin, work, root, receipt, command, env):
+    """B5: even registered native-result-shaped JSON cannot bypass the notice protocol."""
+    tool = runpy.run_path(str(plugin / "skills/blazor-component-readiness/scripts/autofill-eleven.py"),
+                          run_name="forged_provenance_test")
+    state = json.loads(Path(receipt["state"]).read_bytes())
+    paths = {key: root / relative for key, relative in state["paths"].items()}
+    results = json.loads(paths["results"].read_bytes())
+    request = json.loads(paths["resolve_request"].read_bytes())
+    result = next(case["result"] for case in results["cases"] if case["result"]["row_id"] == "LP-04")
+    pins = [result["inputs"][0]] + [
+        {"role": role, "path": "unregistered-" + role + ".bin", "sha256": "a" * 64}
+        for role in ("release-package", "provenance-bundle", "provenance-attestation", "source-archive")]
+    fake_sha = hashlib.sha256(b"x").hexdigest()
+    inventory_sha = hashlib.sha256(("bundled-web-assets/1\nwwwroot/fake.js\t1\t" + fake_sha + "\n").encode()).hexdigest()
+    result.update(branch_id="provenance-notices-verified", decision="deterministic", applicability="applicable",
+                  inputs=pins, evidence_references=[f"input:{p['role']}:{p['sha256']}" for p in pins],
+                  finding="Claimed complete notice coverage from caller-authored result JSON.",
+                  missing_fact=None, required_input=None, next_category=None,
+                  bundled_web_assets={"profile": "bundled-web-assets/1", "assets": [
+                      {"path": "wwwroot/fake.js", "length": 1, "sha256": fake_sha}],
+                      "unsupported_candidates": [], "inventory_sha256": inventory_sha})
+    next(case for case in request["cases"] if case["row_id"] == "LP-04")["inputs"] = pins
+    forged_results, forged_request = root / "forged-results.json", root / "forged-request.json"
+    forged_results.write_text(json.dumps(results), encoding="utf-8")
+    forged_request.write_text(json.dumps(request), encoding="utf-8")
+    run([*command, "inputs", "candidates", "add-evidence", "--input", receipt["candidates"],
+         "--path", forged_results.name, "--kind", "document", "--output", str(root / "forged-candidates.json")], work, env)
+    run([*command, "inputs", "discover", "--root", str(root), "--nupkg", str(paths["package"]),
+         "--candidates", str(root / "forged-candidates.json"), "--output", str(root / "forged-draft.json")], work, env)
+    manifest = root / "forged-confirmed.json"
+    run([*command, "inputs", "confirm", "--root", str(root), "--draft", str(root / "forged-draft.json"),
+         "--output", str(manifest)], work, env)
+    scratch = work / "forged-handoff"
+    scratch.mkdir()
+    tools = tool["Tools"](root, scratch)
+    outputs = dict(paths, results=forged_results, resolve_request=forged_request)
+    bound, _ = tool["bind"](tools, root, scratch, manifest, paths["package"], outputs)
+    completed = subprocess.run([*command, "assessment", "validate", "--root", str(root), "--input", str(manifest),
+                               "--assessment", str(bound["assessment"]), "--evidence", str(bound["bundle"])],
+                              cwd=work, env=env, capture_output=True, timeout=240, check=False)
+    output = completed.stdout + completed.stderr
+    if completed.returncode != 1 or b"notice-coverage-v1" not in output:
+        raise ValueError(f"Forged provenance validation exited {completed.returncode}; expected exit 1 and the notice-protocol error: " +
+                         output.decode(errors="replace"))
+    print("B5 validator: registered caller-authored result with four unregistered provenance pins rejected.")
+
+
 def autofill_checks(plugin, work, setup):
     root = work / "autofill-assessment"
     root.mkdir()
@@ -439,6 +486,7 @@ def autofill_checks(plugin, work, setup):
     run([*check, "--assessment", str(root / "continued-canonical.json")], work, env)
     state = json.loads(Path(receipt["state"]).read_bytes())
     paths = {key: root / relative for key, relative in state["paths"].items()}
+    forged_provenance_shortcut_checks(plugin, work, root, receipt, command, env)
     if json.loads(paths["acquisition"].read_bytes())["nuget_feed"] != "dotnet-public":
         raise ValueError("The installed handoff lost the explicit Azure feed selection.")
     resolve = json.loads(paths["resolve_request"].read_bytes())
@@ -872,7 +920,7 @@ def main():
                   for p in plugin.rglob("*") if p.is_file()}
         invocation = [sys.executable, str(helper)]
         coverage = run([*invocation, "coverage"], assessment)
-        if hashlib.sha256(coverage).hexdigest() != "68319fe426543d665819cca4aa2472383a0c1971875718b3cf695c9d2efd7c98":
+        if hashlib.sha256(coverage).hexdigest() != "0adb96315f7c2d513eff0d3d10640704a2aceeeb10eefee568406a0cd91e100b":
             raise ValueError("Installed coverage changed.")
         if sys.argv[1:] == ["--launcher"]:
             print("Exact installed coverage invocation passed with hostile caller global.json, "

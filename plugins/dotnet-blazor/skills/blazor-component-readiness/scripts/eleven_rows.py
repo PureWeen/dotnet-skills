@@ -4,7 +4,7 @@ import json
 import re
 import unicodedata
 
-VERSION = "eleven-row-handoff/2.1.0"
+VERSION = "eleven-row-handoff/2.2.0"
 ROWS = tuple(f"LP-{number:02}" for number in range(1, 11)) + ("PI-01",)
 RESOLVERS = dict(zip(ROWS, (
     "lp01-license-policy", "lp02-public-source", "lp03-dependency-licenses",
@@ -14,8 +14,8 @@ RESOLVERS = dict(zip(ROWS, (
 )))
 STATUSES = {"V": "verified", "G": "gap", "N": "not tested",
             "O": "owner evidence required", "A": "not applicable"}
-RESOLVER_VERSIONS = {row: "2.0.0" if row == "LP-04" else "1.3.0" if row == "LP-03" else
-                     "1.2.0" if row == "LP-02" else "1.0.1" if row == "LP-10" else
+RESOLVER_VERSIONS = {row: "2.1.0" if row == "LP-04" else "1.4.0" if row == "LP-03" else
+                     "1.2.0" if row == "LP-02" else "1.1.0" if row == "LP-10" else
                      "1.1.0" if row in ("LP-01", "PI-01") else "1.0.0" for row in ROWS}
 
 # Each entry is (explicit branches, status, smallest next action). Unknown keys are errors.

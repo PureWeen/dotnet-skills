@@ -60,7 +60,7 @@ def result(branch, pins, surface=None):
         else:
             raise ValueError("Unknown independent D-lite branch")
         next_category = "notice-investigation"
-    value = dict(row_id="LP-04", resolver_id="lp04-notice-coverage", resolver_version="2.0.0",
+    value = dict(row_id="LP-04", resolver_id="lp04-notice-coverage", resolver_version="2.1.0",
                  branch_id=branch, decision="escalated", applicability="unknown", inputs=pins,
                  evidence_references=[], evidence_contract=CONTRACT, finding=None,
                  missing_fact=missing, required_input=required, next_category=next_category)
@@ -90,7 +90,7 @@ def mapping_results():
             [result("no-supported-layout-assets", [], inventory([])),
              result("origin-review-missing", [], surf),
              result("surface-unsupported", [], inventory([], ["tools/x.js"])),
-             dict(row_id="LP-04", resolver_id="lp04-notice-coverage", resolver_version="2.0.0",
+             dict(row_id="LP-04", resolver_id="lp04-notice-coverage", resolver_version="2.1.0",
                   branch_id="provenance-notices-verified", decision="deterministic", applicability="applicable",
                   inputs=[], evidence_references=["input:package:" + "0" * 64],
                   evidence_contract=PROVENANCE_CONTRACT,
@@ -99,7 +99,7 @@ def mapping_results():
                            "notice coverage verified."),
                   missing_fact=None, required_input=None, next_category=None,
                   bundled_web_assets=surf),
-             dict(row_id="LP-04", resolver_id="lp04-notice-coverage", resolver_version="2.0.0",
+             dict(row_id="LP-04", resolver_id="lp04-notice-coverage", resolver_version="2.1.0",
                   branch_id="provenance-notices-unverified", decision="escalated", applicability="unknown",
                   inputs=[], evidence_references=["input:package:" + "0" * 64],
                   evidence_contract=PROVENANCE_CONTRACT, finding=None,

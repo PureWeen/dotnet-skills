@@ -1469,7 +1469,7 @@ def result(inputs, branch, records=(), pointers=(), viewed=False):
         finding = None
         evidence_contract = contract(records, viewed=viewed) if records and branch not in STRUCTURAL else None
     require(set(evidence) <= set(pointers), f"Invalid evidence pointer for {branch}")
-    return dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.0.1",
+    return dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.1.0",
                 branch_id=branch, decision=decision, applicability=applicability,
                 inputs=inputs, evidence_references=evidence, evidence_contract=evidence_contract,
                 finding=finding, missing_fact=missing, required_input=required,
@@ -1863,7 +1863,7 @@ def check_negative_bindings():
 
 def mapping_results():
     return [
-        dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.0.1",
+        dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.1.0",
              branch_id="provenance-attributed", decision="deterministic", applicability="applicable",
              inputs=[], evidence_references=["package:archive", "package:nuspec/metadata",
                                              "package:nuspec/repository", "release-package:archive",
@@ -1875,7 +1875,7 @@ def mapping_results():
                       "public repository commit via verified GitHub Actions SLSA v1 build provenance "
                       "and payload-identical release package equivalence."),
              missing_fact=None, required_input=None, next_category=None),
-        dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.0.1",
+        dict(row_id="LP-10", resolver_id="lp10-binary-attribution", resolver_version="1.1.0",
              branch_id="provenance-unverified", decision="escalated", applicability="applicable",
              inputs=[], evidence_references=["package:archive"],
              evidence_contract="SLSA v1 build provenance verification did not establish release-commit attribution.",

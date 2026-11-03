@@ -251,8 +251,29 @@ class SbomCollectionTests(unittest.TestCase):
             with unittest.mock.patch.object(tool.subprocess, "run", return_value=mock_completed) as mocked_run:
                 provenance = tool.provenance_inputs(
                     capture, package_pin, metadata, collector,
-                    unittest.mock.Mock(release_nupkg=release, provenance_bundle=bundle))
+                    unittest.mock.Mock(release_nupkg=release, provenance_bundle=bundle), b"k" * 32)
                 mocked_run.assert_called_once()
+                self.assertEqual(mocked_run.call_args.kwargs["encoding"], "utf-8")
+                self.assertEqual(mocked_run.call_args.kwargs["errors"], "replace")
+            receipt = json.loads(tool.base64.b64decode(tool.load(capture / "provenance-attestation.json")["payload"]))
+            self.assertIsNone(receipt["source_acquisition"], "B1 local imports must never invent trusted source acquisition")
+            def clear_admission():
+                for name in ("release-package.nupkg", "provenance-bundle.json", "provenance-attestation.json"):
+                    (capture / name).unlink(missing_ok=True)
+            saved_receipt = (capture / "provenance-attestation.json").read_bytes()
+            clear_admission()
+            with mock.patch.object(tool.subprocess, "run", return_value=mock.Mock(returncode=1, stderr="no", stdout="")):
+                tool.provenance_inputs(capture, package_pin, metadata, collector,
+                                       mock.Mock(release_nupkg=release, provenance_bundle=bundle), b"k" * 32)
+            failed = json.loads(tool.base64.b64decode(tool.load(capture / "provenance-attestation.json")["payload"]))
+            self.assertEqual(failed["verification"], [])
+            self.assertEqual(failed["verification_status"], "unverified")
+            clear_admission()
+            with mock.patch.object(tool.subprocess, "run", side_effect=subprocess.TimeoutExpired("gh", 60)):
+                with self.assertRaisesRegex(tool.ToolFailure, "60-second timeout"):
+                    tool.provenance_inputs(capture, package_pin, metadata, collector,
+                                           mock.Mock(release_nupkg=release, provenance_bundle=bundle), b"k" * 32)
+            (capture / "provenance-attestation.json").write_bytes(saved_receipt)
             _, request = tool.requests(root, capture, main, metadata, collector, None, provenance)
             lp10 = next(c for c in request["cases"] if c["row_id"] == "LP-10")
             self.assertEqual([p["role"] for p in lp10["inputs"]],
@@ -273,6 +294,13 @@ class SbomCollectionTests(unittest.TestCase):
             collector2.collect(main2, metadata, source, [])
             with self.assertRaisesRegex(ValueError, "LP-10 provenance packets must be admitted via --release-nupkg and --provenance-bundle"):
                 tool.requests(root, capture2, main2, metadata, collector2, row_packets, [])
+            for row in ("LP-04", "LP-10"):
+                row_packets.write_text(json.dumps({"schema_version": 1, "cases": [
+                    {"case_id": "override", "row_id": row, "inputs": [package_pin]}]}), encoding="utf-8")
+                for name in ("inspection-request.json", "policy.json", "corpus.json", "resolve-request.json"):
+                    (capture / name).unlink(missing_ok=True)
+                with self.assertRaisesRegex(ValueError, "overrides are forbidden"):
+                    tool.requests(root, capture, main, metadata, collector, row_packets, provenance)
 
 
 class MappingTests(unittest.TestCase):
@@ -333,7 +361,7 @@ class MappingTests(unittest.TestCase):
                 rows.checked_result(value, original["inputs"])
 
     def test_versions_are_admitted_only_for_their_reviewed_contracts(self):
-        versions = {"LP-01": "1.1.0", "LP-02": "1.2.0", "LP-03": "1.3.0", "LP-04": "2.0.0", "LP-10": "1.0.1", "PI-01": "1.1.0"}
+        versions = {"LP-01": "1.1.0", "LP-02": "1.2.0", "LP-03": "1.4.0", "LP-04": "2.1.0", "LP-10": "1.1.0", "PI-01": "1.1.0"}
         for row in rows.ROWS:
             original = next(value for value in frozen_results() if value["row_id"] == row)
             self.assertEqual(original["resolver_version"], versions.get(row, "1.0.0"))

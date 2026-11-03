@@ -56,7 +56,7 @@ def result(branch, pins, detail=None):
         finding += " " + NPM_TRUST
     if missing is not None:
         missing += " " + NPM_TRUST
-    return dict(row_id="LP-03", resolver_id="lp03-dependency-licenses", resolver_version="1.3.0",
+    return dict(row_id="LP-03", resolver_id="lp03-dependency-licenses", resolver_version="1.4.0",
                 branch_id=branch, decision="deterministic" if positive or negative else "escalated",
                 applicability="applicable" if positive or negative else "unknown", inputs=pins,
                 evidence_references=[f"input:{p['role']}:{p['sha256']}" for p in pins],
@@ -200,7 +200,7 @@ def specimens(policy, catalog):
                  '<group targetFramework="net9.0"><dependency version="1.0.0"/></group></dependencies>')
     add("malformed-later-root-group-nonempty", "closure-unresolved", "Malformed or ambiguous root dependency identity.",
         root_bytes=package("example.controls", dependencies=malformed))
-    add("known-direct-omitted", "closure-unresolved", "Known root direct dependency omitted: absent",
+    add("known-direct-omitted", "closure-unresolved", "Known root direct dependency omitted or no inventoried version satisfies its NuGet range: absent",
         root_bytes=package("example.controls", dependencies='<dependencies><dependency id="absent"/></dependencies>'))
     add("duplicate-root-dependency", "closure-unresolved", "Malformed or ambiguous root dependency identity.",
         root_bytes=package("example.controls", dependencies='<dependencies><dependency id="example.dependency"/><dependency id="example.dependency"/></dependencies>'))

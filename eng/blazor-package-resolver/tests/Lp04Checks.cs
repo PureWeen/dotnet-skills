@@ -46,7 +46,7 @@ internal static class Lp04Checks
             var input = new ResolverCase("dlite", "LP-04", pins, inputs);
             var result = registry.Dispatch(input);
             result.Validate(input);
-            Check(result.ResolverVersion == "2.0.0" && result.Decision == "escalated" &&
+            Check(result.ResolverVersion == "2.1.0" && result.Decision == "escalated" &&
                 result.Applicability == "unknown" && result.Finding is null &&
                 !string.IsNullOrWhiteSpace(result.RequiredInput) && !string.IsNullOrWhiteSpace(result.MissingFact),
                 "only unresolved, substantive outcomes");
@@ -277,7 +277,7 @@ internal static class Lp04Checks
                     }
                 }
             }));
-            return (bnd, att);
+            return (bnd, ProvenanceTestAdmission.Sign(att, src, repoUrl, commit));
         }
 
         CaseResult Dispatch5(byte[] pkg, byte[] rel, byte[] bnd, byte[] att, byte[] src)
@@ -298,7 +298,7 @@ internal static class Lp04Checks
             return registry.Dispatch(new ResolverCase("lp04-prov", "LP-04", pins, checkedMap));
         }
 
-        // Mode B positive: first-party source script + Razor .bundle.scp.css + repo notice
+        // Exact source bytes and a notice declaration cannot establish first-party authorship.
         var modeBPkg = BuildZip(
             ("Example.Controls.nuspec", nuspec),
             ("LICENSE.txt", licenseBytes),
@@ -313,9 +313,9 @@ internal static class Lp04Checks
             ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"devDependencies\":{\"eslint\":\"^9.0.0\"}}"u8.ToArray()));
         var (modeBBnd, modeBAtt) = MakeProvenance(modeBPkg, modeBPkg, modeBSrc);
         var modeBRes = Dispatch5(modeBPkg, modeBPkg, modeBBnd, modeBAtt, modeBSrc);
-        check(modeBRes.BranchId == "provenance-notices-verified" && modeBRes.Decision == "deterministic" &&
-            modeBRes.Applicability == "applicable" && modeBRes.BundledWebAssets!.Assets.Count == 2,
-            "LP-04 Mode B first-party source + Razor bundle CSS verified");
+        check(modeBRes.BranchId == "provenance-notices-unverified" && modeBRes.Decision == "escalated" &&
+            modeBRes.BundledWebAssets!.Assets.Count == 2,
+            "B8 LP-04 Mode B exact source + Razor CSS + notice declaration cannot prove origin");
 
         // Mode B negative: foreign @license or (c) banner in shipped JS
         var foreignJs = "/*! (c) 2025 Other Author | Licensed under MIT */\nexport const x = 1;\n"u8.ToArray();
@@ -349,16 +349,32 @@ internal static class Lp04Checks
             "# Licenses\n\n## lit-html - 3.3.3 (BSD-3-Clause)\n\n" +
             "Copyright 2017 Google LLC\n" +
             "Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n" +
-            "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED.\n");
+            "1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.\n" +
+            "2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.\n" +
+            "3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.\n" +
+            "THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. " +
+            "IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) " +
+            "HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\n");
+        var bundledScript = "/** @license Copyright 2017 Google LLC */\nexport const y = 2;\n"u8.ToArray();
+        var sourceScript = "export const y: number = 2;\n"u8.ToArray();
+        byte[] Manifest(byte[] script) => JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            schema_version = 1,
+            assets = new[] { new { path = "staticwebassets/bundle.js", sha256 = Catalog.Digest(script),
+                inputs = new[] { new { path = "src/index.ts", sha256 = Catalog.Digest(sourceScript) } },
+                components = new[] { new { name = "lit-html", version = "3.3.3" } } } }
+        });
         var modeAPkg = BuildZip(
             ("Example.Controls.nuspec", nuspec),
             ("LICENSE", licenseBytes),
             ("THIRD-PARTY-LICENSES.md", tplBytes),
-            ("staticwebassets/bundle.js", "/** @license Copyright 2017 Google LLC */\nexport const y = 2;\n"u8.ToArray()));
+            ("staticwebassets/bundle.js", bundledScript),
+            ("readiness-bundler-manifest.json", Manifest(bundledScript)));
         var modeASrc = BuildZip(
             ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
             ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
-            ($"controls-{commit}/src/index.ts", "export const y: number = 2;\n"u8.ToArray()),
+            ($"controls-{commit}/src/index.ts", sourceScript),
+            ($"controls-{commit}/src/output.js", bundledScript),
             ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"u8.ToArray()),
             ($"controls-{commit}/package-lock.json",
                 "{\"name\":\"controls\",\"lockfileVersion\":3,\"packages\":{\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}},\"node_modules/lit-html\":{\"version\":\"3.3.3\"}}}"u8.ToArray()));
@@ -368,13 +384,52 @@ internal static class Lp04Checks
             modeARes.BundledWebAssets!.Assets.Count == 1,
             "LP-04 Mode A bundled npm notice coverage verified");
 
+        var unmappedPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec), ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", tplBytes), ("staticwebassets/bundle.js", bundledScript));
+        var (unmappedBnd, unmappedAtt) = MakeProvenance(unmappedPkg, unmappedPkg, modeASrc);
+        check(Dispatch5(unmappedPkg, unmappedPkg, unmappedBnd, unmappedAtt, modeASrc).BranchId ==
+            "provenance-notices-unverified", "B8 Mode A complete dependency notices without a per-asset map must not verify");
+
+        foreach (var id in new[] { "MIT", "BSD-2-Clause", "BSD-3-Clause", "Apache-2.0", "ISC", "0BSD" })
+        {
+            var clauses = CanonicalLicenseBody.Clauses(id)!;
+            var full = id == "Apache-2.0" ? clauses : "Copyright 2026 Example\n" + clauses;
+            check(CanonicalLicenseBody.Matches(id, full), "B3 complete canonical " + id);
+            check(!CanonicalLicenseBody.Matches(id, full[..^40]), "B3 truncated canonical " + id);
+            check(!CanonicalLicenseBody.Matches(id == "MIT" ? "BSD-2-Clause" : "MIT", full),
+                "B3 mismatched declared SPDX " + id);
+        }
+        var incompleteBsd = "Copyright 2017 Google LLC\n" + CanonicalLicenseBody.BsdGrant.Split("1.")[0] +
+            "\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED.";
+        check(!CanonicalLicenseBody.Matches("BSD-3-Clause", incompleteBsd),
+            "B3 old greater-than-180-character BSD fixture without canonical conditions must fail closed");
+
+        using var sourceZip = new ZipArchive(new MemoryStream(modeASrc), ZipArchiveMode.Read);
+        var ssrSource = BuildZip(sourceZip.Entries.Select(e =>
+        {
+            using var stream = e.Open();
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            var bytes = memory.ToArray();
+            if (e.FullName.EndsWith("package-lock.json", StringComparison.Ordinal))
+                bytes = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(bytes).Replace(
+                    "\"version\":\"3.3.3\"", "\"version\":\"3.3.3\",\"dependencies\":{\"@lit-labs/ssr-dom-shim\":\"1.0.0\"}") .Replace(
+                    "\"node_modules/lit-html\":", "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.0.0\"},\"node_modules/lit-html\":"));
+            return (e.FullName, bytes);
+        }).ToArray());
+        var (ssrBnd, ssrAtt) = MakeProvenance(modeAPkg, modeAPkg, ssrSource);
+        check(Dispatch5(modeAPkg, modeAPkg, ssrBnd, ssrAtt, ssrSource).BranchId == "provenance-notices-unverified",
+            "B4 SSR dependency without a notice cannot be excluded by absent package-name text");
+
         // Mode A negative: truncated one-liner license stub in THIRD-PARTY-LICENSES.md
         var stubTpl = "# Licenses\n\n## lit-html - 3.3.3 (BSD-3-Clause)\n\nCopyright 2017 Google LLC\nRedistribution and use...\n"u8.ToArray();
         var stubModeAPkg = BuildZip(
             ("Example.Controls.nuspec", nuspec),
             ("LICENSE", licenseBytes),
             ("THIRD-PARTY-LICENSES.md", stubTpl),
-            ("staticwebassets/bundle.js", "export const y = 2;\n"u8.ToArray()));
+            ("staticwebassets/bundle.js", bundledScript),
+            ("readiness-bundler-manifest.json", Manifest(bundledScript)));
         var (stubModeABnd, stubModeAAtt) = MakeProvenance(stubModeAPkg, stubModeAPkg, modeASrc);
         var stubModeARes = Dispatch5(stubModeAPkg, stubModeAPkg, stubModeABnd, stubModeAAtt, modeASrc);
         check(stubModeARes.BranchId == "provenance-notices-unverified" && stubModeARes.Decision == "escalated",
@@ -386,7 +441,8 @@ internal static class Lp04Checks
             ("Example.Controls.nuspec", nuspec),
             ("LICENSE", licenseBytes),
             ("THIRD-PARTY-LICENSES.md", incompleteTpl),
-            ("staticwebassets/bundle.js", "export const y = 2;\n"u8.ToArray()));
+            ("staticwebassets/bundle.js", bundledScript),
+            ("readiness-bundler-manifest.json", Manifest(bundledScript)));
         var (badModeABnd, badModeAAtt) = MakeProvenance(badModeAPkg, badModeAPkg, modeASrc);
         var badModeARes = Dispatch5(badModeAPkg, badModeAPkg, badModeABnd, badModeAAtt, modeASrc);
         check(badModeARes.BranchId == "provenance-notices-unverified" && badModeARes.Decision == "escalated",

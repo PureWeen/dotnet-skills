@@ -5,6 +5,7 @@ import base64
 from collections import deque
 from datetime import datetime, timezone
 import hashlib
+import hmac
 import http.client
 import io
 import json
@@ -646,7 +647,7 @@ def source_observation(root, capture, package, metadata, collector):
     datetime.strptime(observed_at, "%Y-%m-%dT%H:%M:%SZ")
     owner, repo = urllib.parse.urlsplit(url).path.split("/")[1:3]
     path = capture / "source-observation.json"
-    dump(path, {
+    observation = {
         "schema_version": 1, "producer": "lp02-anonymous-github/1.0.0",
         "package_id": metadata["declared_id"], "package_version": metadata["version"],
         "package_sha256": sha(read(package, PACKAGE_LIMIT)),
@@ -656,7 +657,11 @@ def source_observation(root, capture, package, metadata, collector):
         "capture_receipt": {"role": "source-archive", "sha256": digest},
         "source_inventory": [],
         "mapping_rationale": "The exact package declares this repository and revision; one anonymous download retained this archive."
-    })
+    }
+    if path.exists():
+        require(load(path) == observation, "Source observation changed within the helper admission.")
+    else:
+        dump(path, observation)
     return pin(capture, path, "source-observation")
 
 
@@ -677,6 +682,8 @@ class Tools:
         for name, digest in POLICIES.items():
             require(sha(read(DATA / name)) == digest, f"Bundled frozen policy asset changed: {name}")
         self.env = os.environ.copy()
+        self.admission_key = os.urandom(32)
+        self.env["BLAZOR_PROVENANCE_ADMISSION_KEY"] = self.admission_key.hex()
         self.env.update(DOTNET_GENERATE_ASPNET_CERTIFICATE="false", DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1",
                         DOTNET_CLI_TELEMETRY_OPTOUT="1", READINESS_TEMP=str(work / "validator-build"),
                         READINESS_SKILL_ROOT=str(self.skill), TEMP=str(work), TMP=str(work), TMPDIR=str(work))
@@ -737,7 +744,7 @@ def assert_manifest_package(manifest, package, metadata):
             "Package differs from the confirmed exact identity.")
 
 
-def provenance_inputs(capture, package_pin, metadata, collector, args):
+def provenance_inputs(capture, package_pin, metadata, collector, args, admission_key=None):
     release_nupkg = getattr(args, "release_nupkg", None)
     provenance_bundle = getattr(args, "provenance_bundle", None)
     if not (release_nupkg or provenance_bundle):
@@ -776,25 +783,46 @@ def provenance_inputs(capture, package_pin, metadata, collector, args):
     env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GH_HOST", "GITHUB_TOKEN")}
     cmd = ["gh", "attestation", "verify", str(release_copy), "-b", str(bundle_copy),
            "--repo", owner_repo, "--predicate-type", "https://slsa.dev/provenance/v1", "--format", "json"]
-    completed = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=60, check=False)
-    if completed.returncode != 0:
-        raise ToolFailure(f"gh attestation verify failed ({completed.returncode}): {completed.stderr.strip()}")
-    verification = json.loads(completed.stdout)
-    require(isinstance(verification, list) and len(verification) > 0,
-            "gh attestation verify returned an empty verification result.")
+    try:
+        completed = subprocess.run(cmd, env=env, capture_output=True, text=True,
+                                   encoding="utf-8", errors="replace", timeout=60, check=False)
+    except subprocess.TimeoutExpired as error:
+        raise ToolFailure("gh attestation verify exceeded its 60-second timeout.") from error
+    verification = []
+    verification_status = "unverified"
+    if completed.returncode == 0:
+        try:
+            verification = json.loads(completed.stdout)
+        except (ValueError, TypeError):
+            verification = []
+        if isinstance(verification, list) and verification:
+            verification_status = "verified"
+        else:
+            verification = []
     release_pin = pin(capture, release_copy, "release-package")
     bundle_pin = pin(capture, bundle_copy, "provenance-bundle")
     source_pin = pin(capture, collector.source, "source-archive")
     attestation_copy = capture / "provenance-attestation.json"
-    dump(attestation_copy, {
+    observation_pin = source_observation(collector.root, capture, capture / package_pin["path"], metadata, collector)
+    acquisition = load(capture / observation_pin["path"]) if observation_pin else None
+    if acquisition:
+        acquisition["archive_size"] = collector.source.stat().st_size
+    receipt = {
         "schema_version": 1,
         "producer": "lp10-gh-attestation-verify/1.0.0",
         "package_sha256": package_pin["sha256"],
         "release_package_sha256": release_pin["sha256"],
         "provenance_bundle_sha256": bundle_pin["sha256"],
         "source_archive_sha256": source_pin["sha256"],
+        "verification_status": verification_status,
         "verification": verification,
-    })
+        "source_acquisition": acquisition,
+    }
+    require(isinstance(admission_key, bytes) and len(admission_key) == 32,
+            "Provenance admission requires the trusted helper's process-local key.")
+    payload = json.dumps(receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    dump(attestation_copy, {"payload": base64.b64encode(payload).decode("ascii"),
+                            "hmac_sha256": hmac.new(admission_key, payload, hashlib.sha256).hexdigest()})
     attestation_pin = pin(capture, attestation_copy, "provenance-attestation")
     return [release_pin, bundle_pin, attestation_pin, source_pin]
 
@@ -863,6 +891,8 @@ def requests(root, capture, package, metadata, collector, supplied_request, prov
                     case["row_id"] not in seen and len(case["inputs"]) <= 512, "Duplicate, unknown or invalid supplied row packet.")
             row = case["row_id"]
             seen.add(row)
+            require(not (provenance_pins and row in ("LP-04", "LP-10")),
+                    "LP-04 and LP-10 row-packet overrides are forbidden when provenance pins are supplied.")
             require(row not in ("LP-04", "LP-10") or [item.get("role") for item in case["inputs"]] == ["package"],
                     "LP-04 and LP-10 provenance packets must be admitted via --release-nupkg and --provenance-bundle.")
             copied, roles = [], set()
@@ -1032,7 +1062,8 @@ def run_command(args, root):
     names = {key: root / f"{work.name}-{name}.json" for key, name in
              (("results", "resolver-results"), ("observations", "observations"), ("acquisition", "acquisition"))}
     dump(names["acquisition"], acquisition)
-    provenance_pins = provenance_inputs(capture, pin(capture, package_copy, "package"), metadata, collector, args)
+    provenance_pins = provenance_inputs(capture, pin(capture, package_copy, "package"), metadata, collector, args,
+                                       tools.admission_key)
     requests(root, capture, package_copy, metadata, collector, args.row_packets, provenance_pins)
     names.update(resolve_request=capture / "resolve-request.json", inspection_request=capture / "inspection-request.json")
     names.update(collector.admission_paths)
