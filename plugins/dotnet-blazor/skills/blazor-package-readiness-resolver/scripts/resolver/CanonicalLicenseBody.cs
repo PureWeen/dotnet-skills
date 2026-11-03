@@ -238,6 +238,26 @@ internal static class CanonicalLicenseBody
         limitations under the License.
         """;
 
+    internal static readonly string[] SupportedSpdxIds =
+        ["MIT", "BSD-2-Clause", "BSD-3-Clause", "ISC", "0BSD", "Apache-2.0"];
+
+    internal static string? NormalizeSpdxId(string? spdx) =>
+        SupportedSpdxIds.FirstOrDefault(id => id.Equals(spdx?.Trim(), StringComparison.OrdinalIgnoreCase));
+
+    internal static bool TryMatchAny(string body, out string matchedSpdx)
+    {
+        foreach (var id in SupportedSpdxIds)
+        {
+            if (Matches(id, body))
+            {
+                matchedSpdx = id;
+                return true;
+            }
+        }
+        matchedSpdx = "";
+        return false;
+    }
+
     internal static string? Clauses(string spdx) => spdx switch
     {
         "MIT" => Mit,
@@ -270,9 +290,11 @@ internal static class CanonicalLicenseBody
             lines.All(line => line.StartsWith("Copyright", StringComparison.OrdinalIgnoreCase) ||
                 line.Equals("All rights reserved.", StringComparison.OrdinalIgnoreCase) ||
                 line == spdx || line == spdx + " License" ||
+                line == "The " + spdx + " License" ||
+                line == "The " + spdx + " License (" + spdx + ")" ||
                 line == "SPDX-License-Identifier: " + spdx ||
-                spdx == "BSD-2-Clause" && line == "BSD 2-Clause License" ||
-                spdx == "BSD-3-Clause" && line == "BSD 3-Clause License");
+                spdx == "BSD-2-Clause" && (line == "BSD 2-Clause License" || line == "The BSD 2-Clause License") ||
+                spdx == "BSD-3-Clause" && (line == "BSD 3-Clause License" || line == "The BSD 3-Clause License"));
     }
 
     private static string Normalize(string value) =>

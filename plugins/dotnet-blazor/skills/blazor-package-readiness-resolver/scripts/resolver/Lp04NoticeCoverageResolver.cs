@@ -135,7 +135,140 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             return VerifyBundledNpmNoticeCoverage(input, package, inventory, summary, prov,
                 licenseFile, licenseText, runtimeDeps, Unverified);
 
-        return Unverified("exact source matches and absent third-party banners do not establish first-party authorship; Mode B cannot verify notice obligations");
+        return VerifyFirstPartyWebAssetNoticeCoverage(input, package, inventory, summary, prov,
+            licenseFile, licenseText, Unverified);
+    }
+
+    private CaseResult VerifyFirstPartyWebAssetNoticeCoverage(ResolverCase input, CheckedInput package,
+        BundledWebAssetsEvidence inventory, string summary,
+        Lp10BinaryAttributionResolver.VerifiedProvenanceContext prov,
+        string licenseFile, string licenseText, Func<string, CaseResult> unverified)
+    {
+        if (!CanonicalLicenseBody.TryMatchAny(licenseText, out var rootCanonicalSpdx))
+            return unverified($"root license file {licenseFile} lacks a complete canonical license body");
+
+        foreach (var candidate in RootLicenseCandidates)
+        {
+            if (prov.SourceFiles.TryGetValue(prov.RootPrefix + candidate, out var srcLicenseBytes) &&
+                TryStrictUtf8(srcLicenseBytes, out var srcLicenseText))
+            {
+                var normPkg = licenseText.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+                var normSrc = srcLicenseText.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+                if (!string.Equals(normPkg, normSrc, StringComparison.Ordinal))
+                    return unverified($"package root {licenseFile} diverges from source repository {candidate}");
+            }
+        }
+
+        if (Lp10BinaryAttributionResolver.HasBundlerManifestEntry(prov.PackageEntries))
+            return unverified("package contains a bundler manifest while declaring zero runtime npm dependencies");
+
+        foreach (var (fullPath, bytes) in prov.SourceFiles)
+        {
+            var rel = fullPath[prov.RootPrefix.Length..];
+            if (NonShippingPrefixes.Any(prefix => rel.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) ||
+                ThirdPartyDirMarkers.Any(marker => ("/" + rel).Contains(marker, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            var fileName = Path.GetFileName(rel);
+            if (fileName.StartsWith("vite.config.", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("webpack.config.", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("rollup.config.", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("esbuild.", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("tsup.config.", StringComparison.OrdinalIgnoreCase) ||
+                fileName.StartsWith("parcel.config.", StringComparison.OrdinalIgnoreCase) ||
+                fileName.Equals(".parcelrc", StringComparison.OrdinalIgnoreCase))
+                return unverified($"shipping source contains bundler configuration {rel} without declared runtime dependencies");
+            if (fileName.Equals("package.json", StringComparison.OrdinalIgnoreCase) &&
+                HasBundlerScriptInPackageJson(bytes))
+                return unverified($"shipping {rel} declares a bundler script while declaring zero runtime dependencies");
+            if (fileName.Equals("package-lock.json", StringComparison.OrdinalIgnoreCase) &&
+                !TryVerifyDevOnlyLockfile(bytes))
+                return unverified($"shipping lockfile {rel} contains non-dev or malformed package entries while package.json declares zero runtime dependencies");
+        }
+
+        var sourcePathsBySha = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (fullPath, bytes) in prov.SourceFiles)
+        {
+            var rel = fullPath[prov.RootPrefix.Length..];
+            var sha = Catalog.Digest(bytes);
+            if (!sourcePathsBySha.TryGetValue(sha, out var list))
+                sourcePathsBySha[sha] = list = [];
+            list.Add(rel);
+        }
+
+        var exactSourceMatchCount = 0;
+        var razorCssBundleCount = 0;
+        var razorCssComponentCount = 0;
+
+        foreach (var asset in inventory.Assets)
+        {
+            if (!asset.Path.StartsWith("staticwebassets/", StringComparison.Ordinal) ||
+                !prov.PackageEntries.TryGetValue(asset.Path, out var rawBytes) ||
+                !TryStrictUtf8(rawBytes, out var text))
+                return unverified($"web asset {asset.Path} could not be decoded as a staticwebassets UTF-8 text asset");
+
+            if (asset.Path.EndsWith(".bundle.scp.css", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!TryVerifyRazorScopedCssBundle(text, prov.Declaration.Id, prov.SourceFiles, prov.RootPrefix,
+                        out var componentCount))
+                    return unverified($"scoped CSS bundle {asset.Path} does not map every _content section header to a shipping .razor.css source file");
+                razorCssBundleCount++;
+                razorCssComponentCount += componentCount;
+            }
+            else
+            {
+                if (!sourcePathsBySha.TryGetValue(asset.Sha256, out var matchingRelPaths) ||
+                    matchingRelPaths.Count == 0)
+                    return unverified($"web asset {asset.Path} lacks an exact SHA-256 match in the attested source archive");
+                var shippingRelPaths = matchingRelPaths
+                    .Where(rel => !NonShippingPrefixes.Any(prefix => rel.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)))
+                    .ToList();
+                if (shippingRelPaths.Count == 0)
+                    return unverified($"web asset {asset.Path} matches only non-shipping source paths ({string.Join(", ", matchingRelPaths)})");
+                if (shippingRelPaths.Any(rel =>
+                        ThirdPartyDirMarkers.Any(marker => ("/" + rel).Contains(marker, StringComparison.OrdinalIgnoreCase))))
+                    return unverified($"web asset {asset.Path} matches a vendor or third-party source path ({string.Join(", ", shippingRelPaths)})");
+
+                var fileName = Path.GetFileName(asset.Path);
+                if (Regex.IsMatch(fileName, @"-[0-9]+\.[0-9]+\.[0-9]+(?:\.min)?\.(?:m?js|cjs|css)\z",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    return unverified($"web asset {asset.Path} has a version-stamped third-party library filename");
+
+                if (HasMinifiedExtension(fileName) &&
+                    !HasUnminifiedSourceSibling(shippingRelPaths, prov.SourceFiles, prov.RootPrefix))
+                    return unverified($"minified web asset {asset.Path} lacks an unminified sibling source file in the attested source archive");
+
+                if (asset.Path.EndsWith(".map", StringComparison.OrdinalIgnoreCase) &&
+                    !TryVerifyFirstPartySourceMap(text))
+                    return unverified($"source map {asset.Path} references third-party or invalid sources");
+
+                if (text.Contains("__webpack_require__", StringComparison.Ordinal) ||
+                    text.Contains("__vite_ssr_", StringComparison.Ordinal) ||
+                    Regex.IsMatch(text, @"please\s+see\s+[^\r\n*]*LICENSE", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    return unverified($"web asset {asset.Path} contains bundler runtime or sidecar license markers");
+
+                exactSourceMatchCount++;
+            }
+
+            if (!TryVerifyInlineAssetAttributions(text, licenseText, noticeText: null,
+                    requiredFirstPartySpdx: rootCanonicalSpdx, out var inlineError))
+                return unverified($"{inlineError} in {asset.Path}");
+        }
+
+        var cssDetail = razorCssBundleCount > 0
+            ? $" and {razorCssBundleCount} Razor scoped CSS bundle(s) ({razorCssComponentCount} component .razor.css sections)"
+            : "";
+        var finding =
+            $"{summary} SLSA v1 build provenance and first-party web-asset notice coverage verified for {prov.Declaration.Id} " +
+            $"{prov.Declaration.Version} at repository {prov.Repository} commit {prov.Declaration.Commit} (workflow {prov.WorkflowPath}, " +
+            $"attested release package SHA-256 {prov.ReleasePackageSha256}): shipping package.json/package-lock.json declare zero runtime npm dependencies, " +
+            $"all {inventory.Assets.Count} shipped web assets ({exactSourceMatchCount} exact source-blob match(es){cssDetail}) map to first-party shipping source paths, " +
+            $"and root {licenseFile} covers package copyright and license obligations with no uncovered third-party inline notices. " +
+            "This does not independently prove authorship of uncredited code or legal sufficiency.";
+        return new(RowId, ResolverId, Version, "provenance-notices-verified", "deterministic", "applicable",
+            input.Inputs,
+            input.Inputs.Select(item => $"input:{item.Role}:{item.Sha256}").ToArray(),
+            ProvenanceContract, finding, null, null, null)
+        { BundledWebAssets = inventory };
     }
 
     private CaseResult VerifyBundledNpmNoticeCoverage(ResolverCase input, CheckedInput package,
@@ -240,21 +373,9 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 !prov.PackageEntries.TryGetValue(asset.Path, out var rawBytes) ||
                 !TryStrictUtf8(rawBytes, out var text))
                 return unverified($"bundled web asset {asset.Path} could not be decoded as a staticwebassets UTF-8 text asset");
-            foreach (var holder in ExtractCopyrightHolders(text))
-            {
-                if (!noticeText.Contains(holder, StringComparison.OrdinalIgnoreCase) &&
-                    !licenseText.Contains(holder, StringComparison.OrdinalIgnoreCase))
-                    return unverified($"inline copyright holder '{holder}' in {asset.Path} is not covered by {noticeFile} or {licenseFile}");
-            }
-            foreach (Match spdxMatch in Regex.Matches(text, @"SPDX-License-Identifier:\s*([A-Za-z0-9.\-]+)",
-                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-            {
-                var spdxId = spdxMatch.Groups[1].Value.Trim();
-                if (spdxId.Length > 0 &&
-                    !noticeText.Contains(spdxId, StringComparison.OrdinalIgnoreCase) &&
-                    !licenseText.Contains(spdxId, StringComparison.OrdinalIgnoreCase))
-                    return unverified($"inline SPDX identifier '{spdxId}' in {asset.Path} is not covered by {noticeFile} or {licenseFile}");
-            }
+            if (!TryVerifyInlineAssetAttributions(text, licenseText, noticeText,
+                    requiredFirstPartySpdx: null, out var inlineError))
+                return unverified($"{inlineError} in {asset.Path}");
         }
 
         var distinctPackages = verifiedPackages.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
@@ -489,21 +610,623 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         return result;
     }
 
-    private static List<string> ExtractCopyrightHolders(string text)
+    private static readonly HashSet<string> InvalidHolderStopWords = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "the", "a", "an", "owner", "holder", "notice", "authors", "contributors", "the authors", "the contributors"
+    };
+
+    private static List<string> ExtractCopyrightHolders(string text, bool allowYearlessSymbol = false)
     {
         var holders = new List<string>();
-        foreach (Match match in Regex.Matches(text,
-            @"(?:Copyright\s+(?:\(c\)\s+|©\s*)?(?:[0-9]{4}(?:-[0-9]{4})?\s+)?|\(c\)\s*[0-9]{4}(?:-[0-9]{4})?\s+|©\s*[0-9]{4}(?:-[0-9]{4})?\s+)([^\r\n*]+)",
+        var pattern = allowYearlessSymbol
+            ? @"(?<prefix>Copyright\s+(?:\(c\)\s+|©\s*)?(?:[0-9]{4}(?:-[0-9]{4})?\s*,?\s*)?|\(c\)\s*(?<year>[0-9]{4}(?:-[0-9]{4})?\s*,?\s*)?(?=[A-Z@])|©\s*(?:[0-9]{4}(?:-[0-9]{4})?\s*,?\s*)?)(?<holder>[^\r\n*]+)"
+            : @"(?<prefix>Copyright\s+(?:\(c\)\s+|©\s*)?(?:[0-9]{4}(?:-[0-9]{4})?\s*,?\s*)?|\(c\)\s*(?<year>[0-9]{4}(?:-[0-9]{4})?\s*,?\s*)|©\s*(?:[0-9]{4}(?:-[0-9]{4})?\s*,?\s*))(?<holder>[^\r\n*]+)";
+        foreach (Match match in Regex.Matches(text, pattern,
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
         {
-            var holder = match.Groups[1].Value.Trim().TrimEnd('.', ',', ';');
-            if (holder.Length > 0 &&
-                !holder.StartsWith("by ", StringComparison.OrdinalIgnoreCase) &&
+            var prefix = match.Groups["prefix"].Value.TrimStart();
+            if (allowYearlessSymbol &&
+                prefix.StartsWith("(c)", StringComparison.OrdinalIgnoreCase) &&
+                !match.Groups["year"].Success &&
+                Regex.IsMatch(text[..match.Index], @"\(a\)[\s\S]*?\(b\)", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                continue;
+
+            var holder = match.Groups["holder"].Value.Trim();
+            var commentCloseIdx = holder.IndexOf("*/", StringComparison.Ordinal);
+            if (commentCloseIdx >= 0)
+                holder = holder[..commentCloseIdx].TrimEnd();
+            var pipeIdx = holder.IndexOf('|');
+            if (pipeIdx >= 0)
+                holder = holder[..pipeIdx].TrimEnd();
+            var inlineLicSplit = Regex.Match(holder,
+                @"(?:\b(?:Licensed|Released)\s+under\b|\bSPDX-License-Identifier\s*:|@license\b|@preserve\b)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (inlineLicSplit.Success)
+                holder = holder[..inlineLicSplit.Index].TrimEnd();
+            if (holder.StartsWith("by ", StringComparison.OrdinalIgnoreCase))
+                holder = holder[3..].TrimStart();
+            holder = Regex.Replace(holder, @"\s*\bAll\s+rights\s+reserved\.?\s*\z", "",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            holder = holder.Trim().TrimEnd('.', ',', ';');
+            if (holder.Length >= 3 &&
+                !InvalidHolderStopWords.Contains(holder) &&
                 !holder.StartsWith("notice", StringComparison.OrdinalIgnoreCase) &&
                 !holder.StartsWith("holder", StringComparison.OrdinalIgnoreCase))
                 holders.Add(holder);
         }
+        foreach (Match match in Regex.Matches(text,
+            @"\bLicensed\s+to\s+(?:the\s+)?(?<holder>[^\r\n*]+?)\s+under\s+one\s+or\s+more\s+agreements\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            var holder = match.Groups["holder"].Value.Trim().TrimEnd('.', ',', ';');
+            if (holder.Length >= 3 &&
+                !InvalidHolderStopWords.Contains(holder) &&
+                !holders.Contains(holder, StringComparer.OrdinalIgnoreCase))
+                holders.Add(holder);
+        }
         return holders;
+    }
+
+    private static List<string> ExtractLicenseCopyrightLines(string licenseText)
+    {
+        var lines = new List<string>();
+        foreach (var rawLine in licenseText.Split('\n'))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0 || line.Contains("[name of copyright owner]", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (Regex.IsMatch(line, @"\A(?:Copyright\s+(?:\(c\)|©|[0-9]{4})|\(c\)\s*[0-9]{4}|©)",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                lines.Add(line);
+        }
+        return lines;
+    }
+
+    private static IEnumerable<string> EnumerateCommentBlocks(string text)
+    {
+        foreach (Match blockMatch in Regex.Matches(text, @"/\*[\s\S]*?\*/", RegexOptions.CultureInvariant))
+            yield return blockMatch.Value;
+        foreach (Match lineGroupMatch in Regex.Matches(text, @"(?:^[ \t]*//[^\r\n]*(?:\r?\n|\z))+",
+                     RegexOptions.Multiline | RegexOptions.CultureInvariant))
+            yield return lineGroupMatch.Value;
+    }
+
+    private static bool TryParseSingleProseLicenseClause(string rawClause, out string normalizedSpdx)
+    {
+        normalizedSpdx = "";
+        var clause = rawClause.Trim();
+        var commentClose = clause.IndexOf("*/", StringComparison.Ordinal);
+        if (commentClose >= 0)
+            clause = clause[..commentClose].Trim();
+        var seeIdx = Regex.Match(clause, @"\.\s+See\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (seeIdx.Success)
+            clause = clause[..seeIdx.Index].Trim();
+        clause = Regex.Replace(clause, @"\s*\(the\s+""License""\)\s*\z", "",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        clause = clause.Trim().TrimEnd('.', ',', ';');
+        if (clause.Length == 0 ||
+            Regex.IsMatch(clause, @"\b(?:with|exception|commons\s+clause|or|and)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return false;
+
+        if (Regex.IsMatch(clause, @"\A(?:the\s+)?(?:MIT(?:\s+Licen[sc]e)?)\z",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            normalizedSpdx = "MIT";
+            return true;
+        }
+        if (Regex.IsMatch(clause, @"\A(?:the\s+)?(?:ISC(?:\s+Licen[sc]e)?)\z",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            normalizedSpdx = "ISC";
+            return true;
+        }
+        if (Regex.IsMatch(clause, @"\A(?:the\s+)?(?:0BSD(?:\s+Licen[sc]e)?|Zero-Clause\s+BSD(?:\s+Licen[sc]e)?)\z",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            normalizedSpdx = "0BSD";
+            return true;
+        }
+        var bsdMatch = Regex.Match(clause, @"\A(?:the\s+)?BSD[-\s]+(?<n>[234])-Clause(?:\s+Licen[sc]e)?\z",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (bsdMatch.Success)
+        {
+            normalizedSpdx = $"BSD-{bsdMatch.Groups["n"].Value}-Clause";
+            return true;
+        }
+        if (Regex.IsMatch(clause, @"\A(?:the\s+)?(?:Apache\s+Licen[sc]e,?\s*Version\s*2\.0|Apache[-\s]+2\.0(?:\s+Licen[sc]e)?)\z",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            normalizedSpdx = "Apache-2.0";
+            return true;
+        }
+        if (Regex.IsMatch(clause, @"\A(?:the\s+)?(?:Mozilla\s+Public\s+Licen[sc]e(?:,?\s*v(?:ersion)?\.?\s*2\.0)?|MPL[-\s]+2\.0(?:\s+Licen[sc]e)?)\z",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            normalizedSpdx = "MPL-2.0";
+            return true;
+        }
+        return false;
+    }
+
+    private static List<string> ExtractProseCommentLicenses(string commentBlock, out bool hasUnrecognizedClause)
+    {
+        var unrecognized = false;
+        var result = new List<string>();
+        void AddLic(string id)
+        {
+            if (!result.Contains(id, StringComparer.OrdinalIgnoreCase))
+                result.Add(id);
+        }
+
+        void ValidateClauseSegments(string rawClause)
+        {
+            var segments = rawClause.Split(new[] { '|', ';' }, StringSplitOptions.RemoveEmptyEntries);
+            if (segments.Length == 0)
+            {
+                unrecognized = true;
+                return;
+            }
+            foreach (var rawSegment in segments)
+            {
+                var segment = rawSegment.Trim();
+                if (segment.Length == 0)
+                    continue;
+                if (Regex.IsMatch(segment, @"\A(?:(?:Copyright|\(c\)|©)\b|All\s+rights\s+reserved\.?\z)",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    continue;
+                segment = Regex.Replace(segment,
+                    @"\A(?:@license\s+|\b(?:Licensed|Released|licenses\s+this\s+file\s+to\s+you)\s+under\s+)",
+                    "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Trim();
+                if (TryParseSingleProseLicenseClause(segment, out var parsedSpdx))
+                    AddLic(parsedSpdx);
+                else
+                    unrecognized = true;
+            }
+        }
+
+        foreach (Match atLicMatch in Regex.Matches(commentBlock,
+                     @"@license\b(?:[ \t]+(?![\r\n*])(?<sameLine>[^\r\n*]+)|[ \t]*(?:\r?\n[ \t*]*(?<nextLine>[^\r\n*]+))?)",
+                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            if (atLicMatch.Groups["sameLine"].Success)
+            {
+                var sameLine = atLicMatch.Groups["sameLine"].Value.Trim();
+                if (Regex.IsMatch(sameLine, @"\A(?:Copyright|\(c\)|©)\b",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    continue;
+                ValidateClauseSegments(sameLine);
+            }
+            else if (atLicMatch.Groups["nextLine"].Success)
+            {
+                var nextLine = atLicMatch.Groups["nextLine"].Value.Trim().Trim('/');
+                if (nextLine.Length == 0)
+                {
+                    unrecognized = true;
+                    continue;
+                }
+                if (Regex.IsMatch(nextLine,
+                        @"\A(?:(?:Copyright|\(c\)|©)\b|SPDX-License-Identifier\s*:|@license\b|@preserve\b|(?:Licensed|Released)\s+under\b)|(?:\blicenses\s+this\s+file\s+to\s+you\s+under\b)",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    continue;
+                ValidateClauseSegments(nextLine);
+            }
+            else
+            {
+                unrecognized = true;
+            }
+        }
+
+        if (Regex.IsMatch(commentBlock,
+                @"\b(?:Licensed|Released|licenses\s+this\s+file\s+to\s+you)\s+under(?![ \t]+[^\r\n*;|]|[ \t]*\r?\n[ \t*]*[^\r\n*;|])",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            unrecognized = true;
+        }
+        foreach (Match clauseMatch in Regex.Matches(commentBlock,
+                     @"\b(?:Licensed|Released|licenses\s+this\s+file\s+to\s+you)\s+under(?:[ \t]+(?![\r\n*])|[ \t]*\r?\n[ \t*]*)(?<clause>[^\r\n*]+)",
+                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+        {
+            ValidateClauseSegments(clauseMatch.Groups["clause"].Value);
+        }
+        hasUnrecognizedClause = unrecognized;
+
+        if (Regex.IsMatch(commentBlock, @"\bApache\s+Licen[sc]e,?\s*Version\s*2\.0\b|\bApache[-\s]+2\.0\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("Apache-2.0");
+        if (Regex.IsMatch(commentBlock, @"\bMozilla\s+Public\s+Licen[sc]e\b|mozilla\.org/MPL/2\.0|\bMPL[-\s]+2\.0\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("MPL-2.0");
+        if (Regex.IsMatch(commentBlock, @"\bGNU\s+(?:Lesser|Library)\s+General\s+Public\s+Licen[sc]e\b|\bLGPL-[23]\.[01](?:-only|-or-later)?\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("LGPL");
+        if (Regex.IsMatch(commentBlock, @"\bGNU\s+Affero\s+General\s+Public\s+Licen[sc]e\b|\bAGPL-3\.0(?:-only|-or-later)?\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("AGPL-3.0");
+        if (Regex.IsMatch(commentBlock, @"\bGNU\s+General\s+Public\s+Licen[sc]e\b|\bGPL-[23]\.[01](?:-only|-or-later)?\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("GPL");
+        if (Regex.IsMatch(commentBlock, @"\bEclipse\s+Public\s+Licen[sc]e\b|\bEPL-[12]\.0\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("EPL");
+        if (Regex.IsMatch(commentBlock, @"\bCreative\s+Commons\b|\bCC-BY(?:-[A-Za-z0-9.\-]+)?\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("CC-BY");
+        if (Regex.IsMatch(commentBlock, @"\bCC0[-\s]+1\.0\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("CC0-1.0");
+        if (Regex.IsMatch(commentBlock, @"\bUnlicense\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("Unlicense");
+        if (Regex.IsMatch(commentBlock, @"\bZero-Clause\s+BSD\b|\b0BSD\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            AddLic("0BSD");
+
+        var patterns = new[]
+        {
+            @"(?:@license|@preserve)\s+(?<lic>MIT|BSD-[234]-Clause|BSD\s+[234]-Clause|ISC|0BSD)\b",
+            @"\b(?<lic>MIT|BSD-[234]-Clause|BSD\s+[234]-Clause|ISC|0BSD)\s+Licen[sc]e\b",
+            @"\|\s*(?<lic>MIT|BSD-[234]-Clause|BSD\s+[234]-Clause|ISC|0BSD)\b",
+            @"\b(?<lic>BSD-[234]-Clause|BSD\s+[234]-Clause)\b"
+        };
+        foreach (var pattern in patterns)
+        {
+            foreach (Match m in Regex.Matches(commentBlock, pattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            {
+                var raw = Regex.Replace(m.Groups["lic"].Value.Trim(), @"\s+", "-", RegexOptions.CultureInvariant);
+                var normalized = CanonicalLicenseBody.NormalizeSpdxId(raw) ?? raw.ToUpperInvariant();
+                AddLic(normalized);
+            }
+        }
+        return result;
+    }
+
+    private static bool TryVerifyInlineAssetAttributions(string text, string licenseText, string? noticeText,
+        string? requiredFirstPartySpdx, out string error)
+    {
+        error = "";
+        var licenseCopyrightLines = ExtractLicenseCopyrightLines(licenseText);
+        bool IsHolderCoveredByLicense(string holder) =>
+            requiredFirstPartySpdx is not null
+                ? licenseCopyrightLines.Any(line => line.Contains(holder, StringComparison.OrdinalIgnoreCase))
+                : licenseText.Contains(holder, StringComparison.OrdinalIgnoreCase);
+
+        var holders = ExtractCopyrightHolders(text, allowYearlessSymbol: false);
+        foreach (var holder in holders)
+        {
+            var coveredByLicense = IsHolderCoveredByLicense(holder);
+            var coveredByNotice = noticeText is not null && noticeText.Contains(holder, StringComparison.OrdinalIgnoreCase);
+            if (!coveredByLicense && !coveredByNotice)
+            {
+                error = $"inline copyright holder '{holder}' is not covered by root license or notice files";
+                return false;
+            }
+        }
+
+        var spdxMatches = Regex.Matches(text, @"SPDX-License-Identifier:\s*([^\r\n*]+)",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        foreach (Match spdxMatch in spdxMatches)
+        {
+            var rawExpr = spdxMatch.Groups[1].Value.Trim();
+            var commentClose = rawExpr.IndexOf("*/", StringComparison.Ordinal);
+            if (commentClose >= 0)
+                rawExpr = rawExpr[..commentClose].Trim();
+            rawExpr = rawExpr.Trim('(', ')').Trim();
+            if (rawExpr.Length == 0)
+            {
+                error = "empty inline SPDX-License-Identifier expression";
+                return false;
+            }
+            var tokens = Regex.Split(rawExpr, @"\s+(?:AND|OR|WITH)\s+",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            var validTokenCount = 0;
+            foreach (var rawToken in tokens)
+            {
+                var token = rawToken.Trim('(', ')').Trim();
+                if (token.Length == 0 || !Regex.IsMatch(token, @"\A[A-Za-z0-9.\-+]+\z", RegexOptions.CultureInvariant))
+                {
+                    error = $"malformed inline SPDX-License-Identifier token '{rawToken}'";
+                    return false;
+                }
+                validTokenCount++;
+                if (requiredFirstPartySpdx is not null &&
+                    !string.Equals(token, requiredFirstPartySpdx, StringComparison.OrdinalIgnoreCase))
+                {
+                    error = $"inline SPDX identifier '{token}' does not match root license '{requiredFirstPartySpdx}'";
+                    return false;
+                }
+                var coveredByLicense = ContainsSpdxToken(licenseText, token);
+                var coveredByNotice = noticeText is not null && ContainsSpdxToken(noticeText, token);
+                if (!coveredByLicense && !coveredByNotice)
+                {
+                    error = $"inline SPDX identifier '{token}' is not covered by root license or notice files";
+                    return false;
+                }
+            }
+            if (validTokenCount == 0)
+            {
+                error = "inline SPDX-License-Identifier contained no valid license tokens";
+                return false;
+            }
+        }
+
+        if (requiredFirstPartySpdx is not null)
+        {
+            foreach (var commentBlock in EnumerateCommentBlocks(text))
+            {
+                var blockHolders = ExtractCopyrightHolders(commentBlock, allowYearlessSymbol: true);
+                foreach (var holder in blockHolders)
+                {
+                    if (!IsHolderCoveredByLicense(holder))
+                    {
+                        error = $"inline copyright holder '{holder}' is not covered by root license or notice files";
+                        return false;
+                    }
+                }
+
+                var proseLicenses = ExtractProseCommentLicenses(commentBlock, out var hasUnrecognizedClause);
+                var hasSpdxTag = Regex.IsMatch(commentBlock, @"\bSPDX-License-Identifier\s*:",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                var hasExplicitUnderClause = Regex.IsMatch(commentBlock,
+                    @"(?:@license\b|\b(?:Licensed|Released|licenses\s+this\s+file\s+to\s+you)\s+under\b)",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+                foreach (var lic in proseLicenses)
+                {
+                    if (!string.Equals(lic, requiredFirstPartySpdx, StringComparison.OrdinalIgnoreCase))
+                    {
+                        error = $"inline comment declares license '{lic}' which does not match root license '{requiredFirstPartySpdx}'";
+                        return false;
+                    }
+                }
+
+                if (hasUnrecognizedClause || (hasExplicitUnderClause && proseLicenses.Count == 0))
+                {
+                    error = "inline comment contains an unrecognized license declaration";
+                    return false;
+                }
+
+                var isLicenseBanner = proseLicenses.Count > 0 ||
+                    hasSpdxTag ||
+                    hasExplicitUnderClause ||
+                    Regex.IsMatch(commentBlock, @"@preserve\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+                if (isLicenseBanner && blockHolders.Count == 0)
+                {
+                    error = "inline license banner comment lacks an explicit first-party copyright holder in the same comment block";
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
+    private static bool ContainsSpdxToken(string documentText, string spdxToken)
+    {
+        if (Regex.IsMatch(documentText,
+                @"(?<![A-Za-z0-9.\-])" + Regex.Escape(spdxToken) + @"(?![A-Za-z0-9.\-])",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+            return true;
+        var canonicalId = CanonicalLicenseBody.NormalizeSpdxId(spdxToken);
+        return canonicalId is not null && CanonicalLicenseBody.Matches(canonicalId, documentText);
+    }
+
+    private static readonly HashSet<string> BundlerPackageNames = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "vite", "webpack", "webpack-cli", "rollup", "esbuild", "parcel", "tsup",
+        "@rspack/core", "@rspack/cli", "rolldown", "browserify", "@vercel/ncc", "microbundle"
+    };
+
+    private static bool HasBundlerScriptInPackageJson(byte[] pkgJsonBytes)
+    {
+        if (!TryStrictUtf8(pkgJsonBytes, out var text))
+            return true;
+        try
+        {
+            using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = 32 });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !JsonStringValidation.IsWellFormed(doc.RootElement))
+                return true;
+            foreach (var depField in new[] { "dependencies", "devDependencies", "optionalDependencies" })
+            {
+                if (!doc.RootElement.TryGetProperty(depField, out var deps))
+                    continue;
+                if (deps.ValueKind != JsonValueKind.Object)
+                    return true;
+                foreach (var prop in deps.EnumerateObject())
+                {
+                    if (BundlerPackageNames.Contains(prop.Name))
+                        return true;
+                }
+            }
+            if (!doc.RootElement.TryGetProperty("scripts", out var scripts))
+                return false;
+            if (scripts.ValueKind != JsonValueKind.Object)
+                return true;
+            foreach (var script in scripts.EnumerateObject())
+            {
+                if (script.Value.ValueKind != JsonValueKind.String)
+                    return true;
+                var cmd = script.Value.GetString() ?? "";
+                if (Regex.IsMatch(cmd, @"\b(?:vite|webpack|rollup|esbuild|parcel|tsup|rspack|rolldown|browserify|ncc|microbundle)\b|--bundle\b|\bbun\s+build\b",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    return true;
+            }
+            return false;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return true;
+        }
+    }
+
+    private static bool TryVerifyDevOnlyLockfile(byte[] lockBytes)
+    {
+        if (!TryStrictUtf8(lockBytes, out var text))
+            return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = 64 });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !JsonStringValidation.IsWellFormed(doc.RootElement) ||
+                !doc.RootElement.TryGetProperty("packages", out var packages) ||
+                packages.ValueKind != JsonValueKind.Object)
+                return false;
+
+            var hasNonRootEntry = false;
+            foreach (var entry in packages.EnumerateObject())
+            {
+                if (entry.Value.ValueKind != JsonValueKind.Object)
+                    return false;
+                if (entry.Name.Length == 0)
+                {
+                    if (entry.Value.TryGetProperty("dependencies", out var rootDeps) &&
+                        (rootDeps.ValueKind != JsonValueKind.Object || rootDeps.EnumerateObject().Any()))
+                        return false;
+                    if (entry.Value.TryGetProperty("optionalDependencies", out var rootOptDeps) &&
+                        (rootOptDeps.ValueKind != JsonValueKind.Object || rootOptDeps.EnumerateObject().Any()))
+                        return false;
+                    continue;
+                }
+                hasNonRootEntry = true;
+                if (!entry.Value.TryGetProperty("dev", out var devProp) ||
+                    devProp.ValueKind != JsonValueKind.True)
+                    return false;
+                if (entry.Value.TryGetProperty("devOptional", out var devOptProp) &&
+                    devOptProp.ValueKind == JsonValueKind.True)
+                    return false;
+            }
+            return hasNonRootEntry || !packages.EnumerateObject().Any(e => e.Name.Length > 0);
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryVerifyRazorScopedCssBundle(string bundleText, string packageId,
+        Dictionary<string, byte[]> sourceFiles, string rootPrefix, out int componentCount)
+    {
+        componentCount = 0;
+        var trimmed = bundleText.TrimStart();
+        if (!trimmed.StartsWith("/* _content/", StringComparison.Ordinal))
+            return false;
+
+        var headerMatches = Regex.Matches(trimmed,
+            @"^/\* _content/(?<pkg>[^/\r\n*]+)/(?<rel>[^\r\n*]+?)\.rz\.scp\.css \*/\r?$",
+            RegexOptions.Multiline | RegexOptions.CultureInvariant);
+        if (headerMatches.Count == 0 || headerMatches[0].Index != 0)
+            return false;
+
+        var shippingRazorCssPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var fullPath in sourceFiles.Keys)
+        {
+            if (!fullPath.StartsWith(rootPrefix, StringComparison.Ordinal))
+                continue;
+            var rel = fullPath[rootPrefix.Length..];
+            if (!rel.EndsWith(".razor.css", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (NonShippingPrefixes.Any(prefix => rel.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) ||
+                ThirdPartyDirMarkers.Any(marker => ("/" + rel).Contains(marker, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            shippingRazorCssPaths.Add(rel);
+        }
+
+        for (var i = 0; i < headerMatches.Count; i++)
+        {
+            var match = headerMatches[i];
+            var pkg = match.Groups["pkg"].Value;
+            var relComponent = match.Groups["rel"].Value;
+            if (!string.Equals(pkg, packageId, StringComparison.OrdinalIgnoreCase) ||
+                relComponent.Contains("..", StringComparison.Ordinal) ||
+                relComponent.Contains('\\', StringComparison.Ordinal) ||
+                !relComponent.EndsWith(".razor", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var expectedSuffix = relComponent + ".css";
+            var matchedSource = shippingRazorCssPaths.Any(srcRel =>
+                srcRel.Equals(expectedSuffix, StringComparison.OrdinalIgnoreCase) ||
+                srcRel.EndsWith("/" + expectedSuffix, StringComparison.OrdinalIgnoreCase));
+            if (!matchedSource)
+                return false;
+
+            componentCount++;
+        }
+
+        return componentCount > 0;
+    }
+
+    private static bool HasMinifiedExtension(string fileName) =>
+        fileName.EndsWith(".min.js", StringComparison.OrdinalIgnoreCase) ||
+        fileName.EndsWith(".min.mjs", StringComparison.OrdinalIgnoreCase) ||
+        fileName.EndsWith(".min.cjs", StringComparison.OrdinalIgnoreCase) ||
+        fileName.EndsWith(".min.css", StringComparison.OrdinalIgnoreCase);
+
+    private static bool HasUnminifiedSourceSibling(List<string> matchingRelPaths,
+        Dictionary<string, byte[]> sourceFiles, string rootPrefix)
+    {
+        foreach (var relPath in matchingRelPaths)
+        {
+            var unminifiedRel = Regex.Replace(relPath, @"\.min\.(m?js|cjs|css)\z", ".$1",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!string.Equals(unminifiedRel, relPath, StringComparison.OrdinalIgnoreCase) &&
+                sourceFiles.ContainsKey(rootPrefix + unminifiedRel))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool HasUriSchemeOrRootedPath(string value) =>
+        value.Contains("://", StringComparison.Ordinal) ||
+        value.StartsWith('/') ||
+        value.StartsWith('\\') ||
+        Regex.IsMatch(value, @"\A[A-Za-z][A-Za-z0-9+.\-]*:", RegexOptions.CultureInvariant);
+
+    private static bool TryVerifyFirstPartySourceMap(string mapJson)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(mapJson, new JsonDocumentOptions { MaxDepth = 32 });
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !JsonStringValidation.IsWellFormed(doc.RootElement) ||
+                !doc.RootElement.TryGetProperty("sources", out var sources) ||
+                sources.ValueKind != JsonValueKind.Array)
+                return false;
+            var sourceRootPrefix = "";
+            if (doc.RootElement.TryGetProperty("sourceRoot", out var sourceRootProp))
+            {
+                if (sourceRootProp.ValueKind != JsonValueKind.String)
+                    return false;
+                var sr = (sourceRootProp.GetString() ?? "").Trim();
+                if (sr.Length > 0)
+                {
+                    if (HasUriSchemeOrRootedPath(sr))
+                        return false;
+                    sourceRootPrefix = "/" + sr.Replace('\\', '/').Trim('/') + "/";
+                    if (ThirdPartyDirMarkers.Any(marker => sourceRootPrefix.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+                        return false;
+                }
+            }
+            var hasAny = false;
+            foreach (var item in sources.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                    return false;
+                var src = (item.GetString() ?? "").Trim();
+                if (src.Length == 0 || HasUriSchemeOrRootedPath(src))
+                    return false;
+                hasAny = true;
+                var normalized = (sourceRootPrefix.Length > 0 ? sourceRootPrefix : "/") + src.Replace('\\', '/').TrimStart('/');
+                if (ThirdPartyDirMarkers.Any(marker => normalized.Contains(marker, StringComparison.OrdinalIgnoreCase)))
+                    return false;
+            }
+            return hasAny;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     private static bool IsGeneratedViteLicenseNotice(string noticeFile, string noticeText,

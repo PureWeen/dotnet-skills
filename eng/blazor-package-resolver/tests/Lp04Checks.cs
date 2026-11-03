@@ -184,9 +184,12 @@ internal static class Lp04Checks
         var nuspec = Encoding.UTF8.GetBytes(
             "<package><metadata><id>Example.Controls</id><version>1.0.0</version>" +
             $"<repository type=\"git\" url=\"{repoUrl}\" commit=\"{commit}\"/></metadata></package>");
-        var licenseBytes = "MIT License\nCopyright (c) 2026 Example Corp.\nPermission is hereby granted..."u8.ToArray();
-        var scriptBytes = "export function greet() { return 'hi'; }\n"u8.ToArray();
-        var bundleCssBytes = "div[b-1234567890] { color: red; }\n"u8.ToArray();
+        var licenseBytes = Encoding.UTF8.GetBytes(
+            "The MIT License (MIT)\n\nCopyright (c) 2026 Example Corp.\n\nAll rights reserved.\n\n" +
+            CanonicalLicenseBody.Clauses("MIT"));
+        var scriptBytes =
+            "// Copyright (c) 2026 Example Corp.\n// SPDX-License-Identifier: MIT\n/*! component helper section */\nexport function greet() { return 'hi'; }\n"u8.ToArray();
+        var bundleCssBytes = "/* _content/Example.Controls/Components/Button.razor.rz.scp.css */\ndiv[b-1234567890] { color: red; }\n"u8.ToArray();
 
         static byte[] BuildZip(params (string Name, byte[] Bytes)[] entries)
         {
@@ -298,7 +301,7 @@ internal static class Lp04Checks
             return registry.Dispatch(new ResolverCase("lp04-prov", "LP-04", pins, checkedMap));
         }
 
-        // Exact source bytes and a notice declaration cannot establish first-party authorship.
+        // Mode B positive: zero runtime npm dependencies, exact first-party source matches (with duplicate in tests/vendor/), Razor scoped CSS bundle headers, and dev-only lockfile
         var modeBPkg = BuildZip(
             ("Example.Controls.nuspec", nuspec),
             ("LICENSE.txt", licenseBytes),
@@ -306,19 +309,76 @@ internal static class Lp04Checks
             ("staticwebassets/Example.Controls.abc123.bundle.scp.css", bundleCssBytes));
         var modeBSrc = BuildZip(
             ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
-            ($"controls-{commit}/.github/THIRD-PARTY-NOTICES.md", "# Third-Party Notices\nNo bundled runtime npm deps.\n"u8.ToArray()),
+            ($"controls-{commit}/LICENSE.txt", licenseBytes),
             ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
             ($"controls-{commit}/src/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/tests/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/tests/vendor/app.js", scriptBytes),
             ($"controls-{commit}/src/Components/Button.razor.css", "div { color: red; }\n"u8.ToArray()),
-            ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"devDependencies\":{\"eslint\":\"^9.0.0\"}}"u8.ToArray()));
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"scripts\":{\"lint\":\"eslint .\"},\"devDependencies\":{\"eslint\":\"^9.0.0\"}}"u8.ToArray()),
+            ($"controls-{commit}/package-lock.json",
+                "{\"name\":\"controls\",\"lockfileVersion\":3,\"packages\":{\"\":{\"devDependencies\":{\"eslint\":\"^9.0.0\"}},\"node_modules/eslint\":{\"version\":\"9.0.0\",\"dev\":true}}}"u8.ToArray()));
         var (modeBBnd, modeBAtt) = MakeProvenance(modeBPkg, modeBPkg, modeBSrc);
         var modeBRes = Dispatch5(modeBPkg, modeBPkg, modeBBnd, modeBAtt, modeBSrc);
-        check(modeBRes.BranchId == "provenance-notices-unverified" && modeBRes.Decision == "escalated" &&
+        check(modeBRes.BranchId == "provenance-notices-verified" && modeBRes.Decision == "deterministic" &&
             modeBRes.BundledWebAssets!.Assets.Count == 2,
-            "B8 LP-04 Mode B exact source + Razor CSS + notice declaration cannot prove origin");
+            "LP-04 Mode B exact first-party source + Razor CSS bundle + dev-only lockfile verified");
 
-        // Mode B negative: foreign @license or (c) banner in shipped JS
-        var foreignJs = "/*! (c) 2025 Other Author | Licensed under MIT */\nexport const x = 1;\n"u8.ToArray();
+        // Mode B positive: compound banner with 'All rights reserved. | Licensed under MIT'
+        var compoundValidJs = "/*! Copyright (c) 2026 Example Corp. All rights reserved. | Licensed under MIT */\nexport const x = 1;\n"u8.ToArray();
+        var compoundValidPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", compoundValidJs));
+        var compoundValidSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", compoundValidJs));
+        var (compoundValidBnd, compoundValidAtt) = MakeProvenance(compoundValidPkg, compoundValidPkg, compoundValidSrc);
+        var compoundValidRes = Dispatch5(compoundValidPkg, compoundValidPkg, compoundValidBnd, compoundValidAtt, compoundValidSrc);
+        check(compoundValidRes.BranchId == "provenance-notices-verified" && compoundValidRes.Decision == "deterministic",
+            "LP-04 Mode B accepts compound first-party 'All rights reserved. | Licensed under MIT' banner");
+
+        // Mode B positive & negative: .NET Foundation 'Licensed to the .NET Foundation under one or more agreements.' header
+        var dotnetHeaderJs =
+            "// Licensed to the .NET Foundation under one or more agreements.\n// The .NET Foundation licenses this file to you under the MIT license.\nexport const x = 1;\n"u8.ToArray();
+        var dotnetLicenseBytes = Encoding.UTF8.GetBytes(
+            "The MIT License (MIT)\nCopyright (c) .NET Foundation and Contributors\n\n" + CanonicalLicenseBody.Clauses("MIT"));
+        var dotnetValidPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", dotnetLicenseBytes), ("staticwebassets/scripts/app.js", dotnetHeaderJs));
+        var dotnetValidSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/LICENSE.txt", dotnetLicenseBytes),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", dotnetHeaderJs));
+        var (dotnetValidBnd, dotnetValidAtt) = MakeProvenance(dotnetValidPkg, dotnetValidPkg, dotnetValidSrc);
+        var dotnetValidRes = Dispatch5(dotnetValidPkg, dotnetValidPkg, dotnetValidBnd, dotnetValidAtt, dotnetValidSrc);
+        check(dotnetValidRes.BranchId == "provenance-notices-verified" && dotnetValidRes.Decision == "deterministic",
+            "LP-04 Mode B accepts standard .NET Foundation header when root LICENSE attributes .NET Foundation");
+
+        var theAuthorsLicenseBytes = Encoding.UTF8.GetBytes(
+            "The MIT License (MIT)\nCopyright (c) 2026 The Authors\n\n" + CanonicalLicenseBody.Clauses("MIT"));
+        var dotnetMismatchPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", theAuthorsLicenseBytes), ("staticwebassets/scripts/app.js", dotnetHeaderJs));
+        var dotnetMismatchSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/LICENSE.txt", theAuthorsLicenseBytes),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", dotnetHeaderJs));
+        var (dotnetMismatchBnd, dotnetMismatchAtt) = MakeProvenance(dotnetMismatchPkg, dotnetMismatchPkg, dotnetMismatchSrc);
+        var dotnetMismatchRes = Dispatch5(dotnetMismatchPkg, dotnetMismatchPkg, dotnetMismatchBnd, dotnetMismatchAtt, dotnetMismatchSrc);
+        check(dotnetMismatchRes.BranchId == "provenance-notices-unverified" &&
+            dotnetMismatchRes.MissingFact!.Contains("inline copyright holder '.NET Foundation' is not covered", StringComparison.Ordinal),
+            "LP-04 Mode B extracts '.NET Foundation' (not 'the') and rejects when root LICENSE only attributes 'The Authors'");
+
+        // Mode B negative: truncated root LICENSE.txt
+        var truncatedLicensePkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE.txt", "MIT License\nCopyright (c) 2026 Example Corp.\nPermission is hereby granted..."u8.ToArray()),
+            ("staticwebassets/scripts/app.js", scriptBytes));
+        var (truncLicBnd, truncLicAtt) = MakeProvenance(truncatedLicensePkg, truncatedLicensePkg, modeBSrc);
+        var truncLicRes = Dispatch5(truncatedLicensePkg, truncatedLicensePkg, truncLicBnd, truncLicAtt, modeBSrc);
+        check(truncLicRes.BranchId == "provenance-notices-unverified" &&
+            truncLicRes.MissingFact!.Contains("lacks a complete canonical license body", StringComparison.Ordinal),
+            "LP-04 Mode B rejects truncated root LICENSE.txt");
+
+        // Mode B negative: foreign @license or yearless (c) banner in shipped JS
+        var foreignJs = "/*! jQuery v3.7.1 | (c) OpenJS Foundation and other contributors | jquery.org/license */\nexport const x = 1;\n"u8.ToArray();
         var badModeBPkg = BuildZip(
             ("Example.Controls.nuspec", nuspec),
             ("LICENSE.txt", licenseBytes),
@@ -330,10 +390,286 @@ internal static class Lp04Checks
             ($"controls-{commit}/src/wwwroot/scripts/app.js", foreignJs));
         var (badModeBBnd, badModeBAtt) = MakeProvenance(badModeBPkg, badModeBPkg, badModeBSrc);
         var badModeBRes = Dispatch5(badModeBPkg, badModeBPkg, badModeBBnd, badModeBAtt, badModeBSrc);
-        check(badModeBRes.BranchId == "provenance-notices-unverified" && badModeBRes.Decision == "escalated",
-            "LP-04 Mode B rejects foreign (c) / Licensed under banner");
+        check(badModeBRes.BranchId == "provenance-notices-unverified" && badModeBRes.Decision == "escalated" &&
+            badModeBRes.MissingFact!.Contains("inline copyright holder 'OpenJS Foundation and other contributors'", StringComparison.Ordinal),
+            "LP-04 Mode B rejects foreign yearless (c) banner");
 
-        // Mode B negative: unrelated CSS smuggled in .bundle.scp.css
+        // Mode B negative: 'Copyright (c) 2026 by ThirdParty Inc. All rights reserved.' banner
+        var byHolderJs = "/* Copyright (c) 2026 by ThirdParty Inc. All rights reserved. */\nexport const x = 1;\n"u8.ToArray();
+        var byHolderPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", byHolderJs));
+        var byHolderSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", byHolderJs));
+        var (byHolderBnd, byHolderAtt) = MakeProvenance(byHolderPkg, byHolderPkg, byHolderSrc);
+        var byHolderRes = Dispatch5(byHolderPkg, byHolderPkg, byHolderBnd, byHolderAtt, byHolderSrc);
+        check(byHolderRes.BranchId == "provenance-notices-unverified" &&
+            byHolderRes.MissingFact!.Contains("inline copyright holder 'ThirdParty Inc'", StringComparison.Ordinal),
+            "LP-04 Mode B rejects 'Copyright (c) YYYY by Holder All rights reserved' foreign notice");
+
+        // Mode B negative: first-party copyright holder with mismatched inline license (BSD-3-Clause vs MIT root LICENSE)
+        var mismatchLicJs = "/* Copyright (c) 2026 Example Corp. | Licensed under BSD-3-Clause */\nexport const x = 1;\n"u8.ToArray();
+        var mismatchLicPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", mismatchLicJs));
+        var mismatchLicSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", mismatchLicJs));
+        var (mismatchLicBnd, mismatchLicAtt) = MakeProvenance(mismatchLicPkg, mismatchLicPkg, mismatchLicSrc);
+        var mismatchLicRes = Dispatch5(mismatchLicPkg, mismatchLicPkg, mismatchLicBnd, mismatchLicAtt, mismatchLicSrc);
+        check(mismatchLicRes.BranchId == "provenance-notices-unverified" &&
+            mismatchLicRes.MissingFact!.Contains("declares license 'BSD-3-Clause' which does not match root license 'MIT'", StringComparison.Ordinal),
+            "LP-04 Mode B rejects first-party holder comment declaring non-matching license");
+
+        // Mode B negative: compound SPDX-License-Identifier with uncovered license token or unattributed normalize.css banner in second comment block
+        var compoundSpdxJs = "// SPDX-License-Identifier: MIT OR GPL-3.0-only\nexport const x = 1;\n"u8.ToArray();
+        var compoundSpdxPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", compoundSpdxJs));
+        var compoundSpdxSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", compoundSpdxJs));
+        var (compoundSpdxBnd, compoundSpdxAtt) = MakeProvenance(compoundSpdxPkg, compoundSpdxPkg, compoundSpdxSrc);
+        var compoundSpdxRes = Dispatch5(compoundSpdxPkg, compoundSpdxPkg, compoundSpdxBnd, compoundSpdxAtt, compoundSpdxSrc);
+        check(compoundSpdxRes.BranchId == "provenance-notices-unverified" &&
+            compoundSpdxRes.MissingFact!.Contains("inline SPDX identifier 'GPL-3.0-only' does not match root license 'MIT'", StringComparison.Ordinal),
+            "LP-04 Mode B rejects compound SPDX-License-Identifier with uncovered token");
+
+        var unattributedBannerJs =
+            "// Copyright (c) 2026 Example Corp.\n/*! normalize.css v8.0.1 | MIT License | github.com/necolas/normalize.css */\nexport const x = 1;\n"u8.ToArray();
+        var unattributedBannerPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", unattributedBannerJs));
+        var unattributedBannerSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", unattributedBannerJs));
+        var (unattributedBnd, unattributedAtt) = MakeProvenance(unattributedBannerPkg, unattributedBannerPkg, unattributedBannerSrc);
+        var unattributedRes = Dispatch5(unattributedBannerPkg, unattributedBannerPkg, unattributedBnd, unattributedAtt, unattributedBannerSrc);
+        check(unattributedRes.BranchId == "provenance-notices-unverified" &&
+            unattributedRes.MissingFact!.Contains("lacks an explicit first-party copyright holder in the same comment block", StringComparison.Ordinal),
+            "LP-04 Mode B rejects normalize.css MIT License banner without copyright holder in that comment block");
+
+        var unattributedSpdxJs =
+            "// Copyright (c) 2026 Example Corp.\n/*! SPDX-License-Identifier: MIT */\nexport const x = 1;\n"u8.ToArray();
+        var unattributedSpdxPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", unattributedSpdxJs));
+        var unattributedSpdxSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", unattributedSpdxJs));
+        var (unattributedSpdxBnd, unattributedSpdxAtt) = MakeProvenance(unattributedSpdxPkg, unattributedSpdxPkg, unattributedSpdxSrc);
+        var unattributedSpdxRes = Dispatch5(unattributedSpdxPkg, unattributedSpdxPkg, unattributedSpdxBnd, unattributedSpdxAtt, unattributedSpdxSrc);
+        check(unattributedSpdxRes.BranchId == "provenance-notices-unverified" &&
+            unattributedSpdxRes.MissingFact!.Contains("lacks an explicit first-party copyright holder in the same comment block", StringComparison.Ordinal),
+            "LP-04 Mode B rejects standalone SPDX-License-Identifier comment block without copyright holder in that block");
+
+        var apacheProseJs =
+            "/*\n * Copyright (c) 2026 Example Corp.\n * Licensed under the Apache License, Version 2.0.\n */\nexport const x = 1;\n"u8.ToArray();
+        var apacheProsePkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", apacheProseJs));
+        var apacheProseSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", apacheProseJs));
+        var (apacheProseBnd, apacheProseAtt) = MakeProvenance(apacheProsePkg, apacheProsePkg, apacheProseSrc);
+        var apacheProseRes = Dispatch5(apacheProsePkg, apacheProsePkg, apacheProseBnd, apacheProseAtt, apacheProseSrc);
+        check(apacheProseRes.BranchId == "provenance-notices-unverified" &&
+            apacheProseRes.MissingFact!.Contains("declares license 'Apache-2.0' which does not match root license 'MIT'", StringComparison.Ordinal),
+            "LP-04 Mode B rejects 'Apache License, Version 2.0' prose comment under MIT root license");
+
+        var mplBoilerplateJs =
+            "/* This Source Code Form is subject to the terms of the Mozilla Public License, v. 2.0.\n * If a copy of the MPL was not distributed with this file, You can obtain one at https://mozilla.org/MPL/2.0/. */\nexport const x = 1;\n"u8.ToArray();
+        var mplBoilerplatePkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", mplBoilerplateJs));
+        var mplBoilerplateSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", mplBoilerplateJs));
+        var (mplBnd, mplAtt) = MakeProvenance(mplBoilerplatePkg, mplBoilerplatePkg, mplBoilerplateSrc);
+        var mplRes = Dispatch5(mplBoilerplatePkg, mplBoilerplatePkg, mplBnd, mplAtt, mplBoilerplateSrc);
+        check(mplRes.BranchId == "provenance-notices-unverified" &&
+            mplRes.MissingFact!.Contains("declares license 'MPL-2.0' which does not match root license 'MIT'", StringComparison.Ordinal),
+            "LP-04 Mode B rejects MPL-2.0 boilerplate comment under MIT root license");
+
+        var unknownLicJs =
+            "/* Copyright (c) 2026 Example Corp. | Licensed under the CustomFoo License */\nexport const x = 1;\n"u8.ToArray();
+        var unknownLicPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", unknownLicJs));
+        var unknownLicSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", unknownLicJs));
+        var (unknownLicBnd, unknownLicAtt) = MakeProvenance(unknownLicPkg, unknownLicPkg, unknownLicSrc);
+        var unknownLicRes = Dispatch5(unknownLicPkg, unknownLicPkg, unknownLicBnd, unknownLicAtt, unknownLicSrc);
+        check(unknownLicRes.BranchId == "provenance-notices-unverified" &&
+            unknownLicRes.MissingFact!.Contains("inline comment contains an unrecognized license declaration", StringComparison.Ordinal),
+            "LP-04 Mode B rejects unrecognized 'Licensed under ...' comment");
+
+        var mixedSpdxAndUnknownJs =
+            "/*\n * Copyright (c) 2026 Example Corp.\n * SPDX-License-Identifier: MIT\n * Licensed under the CustomFoo License\n */\nexport const x = 1;\n"u8.ToArray();
+        var mixedSpdxAndUnknownPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", mixedSpdxAndUnknownJs));
+        var mixedSpdxAndUnknownSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", mixedSpdxAndUnknownJs));
+        var (mixedSpdxBnd, mixedSpdxAtt) = MakeProvenance(mixedSpdxAndUnknownPkg, mixedSpdxAndUnknownPkg, mixedSpdxAndUnknownSrc);
+        var mixedSpdxRes = Dispatch5(mixedSpdxAndUnknownPkg, mixedSpdxAndUnknownPkg, mixedSpdxBnd, mixedSpdxAtt, mixedSpdxAndUnknownSrc);
+        check(mixedSpdxRes.BranchId == "provenance-notices-unverified" &&
+            mixedSpdxRes.MissingFact!.Contains("inline comment contains an unrecognized license declaration", StringComparison.Ordinal),
+            "LP-04 Mode B rejects unrecognized 'Licensed under ...' even when SPDX-License-Identifier is in the same block");
+
+        var pipeSecondUnknownJs =
+            "/* Copyright (c) 2026 Example Corp. | Licensed under MIT | Released under the CustomFoo License */\nexport const x = 1;\n"u8.ToArray();
+        var pipeSecondUnknownPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", pipeSecondUnknownJs));
+        var pipeSecondUnknownSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", pipeSecondUnknownJs));
+        var (pipeSecondBnd, pipeSecondAtt) = MakeProvenance(pipeSecondUnknownPkg, pipeSecondUnknownPkg, pipeSecondUnknownSrc);
+        var pipeSecondRes = Dispatch5(pipeSecondUnknownPkg, pipeSecondUnknownPkg, pipeSecondBnd, pipeSecondAtt, pipeSecondUnknownSrc);
+        check(pipeSecondRes.BranchId == "provenance-notices-unverified" &&
+            pipeSecondRes.MissingFact!.Contains("inline comment contains an unrecognized license declaration", StringComparison.Ordinal),
+            "LP-04 Mode B rejects pipe-separated second unrecognized license clause on same line");
+
+        var pipeAtLicenseUnknownJs =
+            "/* Copyright (c) 2026 Example Corp. | @license MIT | @license CustomFoo */\nexport const x = 1;\n"u8.ToArray();
+        var pipeAtLicensePkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", pipeAtLicenseUnknownJs));
+        var pipeAtLicenseSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", pipeAtLicenseUnknownJs));
+        var (pipeAtBnd, pipeAtAtt) = MakeProvenance(pipeAtLicensePkg, pipeAtLicensePkg, pipeAtLicenseSrc);
+        var pipeAtRes = Dispatch5(pipeAtLicensePkg, pipeAtLicensePkg, pipeAtBnd, pipeAtAtt, pipeAtLicenseSrc);
+        check(pipeAtRes.BranchId == "provenance-notices-unverified" &&
+            pipeAtRes.MissingFact!.Contains("inline comment contains an unrecognized license declaration", StringComparison.Ordinal),
+            "LP-04 Mode B rejects pipe-separated second unrecognized @license clause on same line");
+
+        var wrappedAtLicenseUnknownJs =
+            "/*\n * Copyright (c) 2026 Example Corp.\n * Licensed under MIT\n * @license\n * CustomFoo\n */\nexport const x = 1;\n"u8.ToArray();
+        var wrappedAtLicensePkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", wrappedAtLicenseUnknownJs));
+        var wrappedAtLicenseSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", wrappedAtLicenseUnknownJs));
+        var (wrappedAtBnd, wrappedAtAtt) = MakeProvenance(wrappedAtLicensePkg, wrappedAtLicensePkg, wrappedAtLicenseSrc);
+        var wrappedAtRes = Dispatch5(wrappedAtLicensePkg, wrappedAtLicensePkg, wrappedAtBnd, wrappedAtAtt, wrappedAtLicenseSrc);
+        check(wrappedAtRes.BranchId == "provenance-notices-unverified" &&
+            wrappedAtRes.MissingFact!.Contains("inline comment contains an unrecognized license declaration", StringComparison.Ordinal),
+            "LP-04 Mode B rejects wrapped @license declaration even when another recognized clause is present");
+
+        var commonsClauseJs =
+            "/* Copyright (c) 2026 Example Corp. | Licensed under the MIT License with Commons Clause */\nexport const x = 1;\n"u8.ToArray();
+        var commonsClausePkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", commonsClauseJs));
+        var commonsClauseSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", commonsClauseJs));
+        var (commonsBnd, commonsAtt) = MakeProvenance(commonsClausePkg, commonsClausePkg, commonsClauseSrc);
+        var commonsRes = Dispatch5(commonsClausePkg, commonsClausePkg, commonsBnd, commonsAtt, commonsClauseSrc);
+        check(commonsRes.BranchId == "provenance-notices-unverified" &&
+            commonsRes.MissingFact!.Contains("inline comment contains an unrecognized license declaration", StringComparison.Ordinal),
+            "LP-04 Mode B rejects 'Licensed under the MIT License with Commons Clause'");
+
+        var jsCookieBannerJs =
+            "// Copyright (c) 2026 Example Corp.\n/*! js-cookie v3.0.5 | MIT */\nexport const x = 1;\n"u8.ToArray();
+        var jsCookiePkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", licenseBytes), ("staticwebassets/scripts/app.js", jsCookieBannerJs));
+        var jsCookieSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", jsCookieBannerJs));
+        var (jsCookieBnd, jsCookieAtt) = MakeProvenance(jsCookiePkg, jsCookiePkg, jsCookieSrc);
+        var jsCookieRes = Dispatch5(jsCookiePkg, jsCookiePkg, jsCookieBnd, jsCookieAtt, jsCookieSrc);
+        check(jsCookieRes.BranchId == "provenance-notices-unverified" &&
+            jsCookieRes.MissingFact!.Contains("lacks an explicit first-party copyright holder in the same comment block", StringComparison.Ordinal),
+            "LP-04 Mode B rejects '/*! js-cookie v3.0.5 | MIT */' banner without copyright holder in that block");
+
+        // Mode B negative: shipping package.json with bundler script or devDependencies bundler, or source map with third-party/remote/scheme sourceRoot/sources
+        var bundlerScriptSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/src/Components/Button.razor.css", "div { color: red; }\n"u8.ToArray()),
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"scripts\":{\"build\":\"esbuild src/app.js --bundle --outfile=src/wwwroot/scripts/app.js\"}}"u8.ToArray()));
+        var (bundlerScriptBnd, bundlerScriptAtt) = MakeProvenance(modeBPkg, modeBPkg, bundlerScriptSrc);
+        var bundlerScriptRes = Dispatch5(modeBPkg, modeBPkg, bundlerScriptBnd, bundlerScriptAtt, bundlerScriptSrc);
+        check(bundlerScriptRes.BranchId == "provenance-notices-unverified" &&
+            bundlerScriptRes.MissingFact!.Contains("declares a bundler script while declaring zero runtime dependencies", StringComparison.Ordinal),
+            "LP-04 Mode B rejects shipping package.json with bundler script");
+
+        var bundlerDevDepSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/src/Components/Button.razor.css", "div { color: red; }\n"u8.ToArray()),
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"devDependencies\":{\"vite\":\"^5.0.0\"}}"u8.ToArray()));
+        var (bundlerDevDepBnd, bundlerDevDepAtt) = MakeProvenance(modeBPkg, modeBPkg, bundlerDevDepSrc);
+        var bundlerDevDepRes = Dispatch5(modeBPkg, modeBPkg, bundlerDevDepBnd, bundlerDevDepAtt, bundlerDevDepSrc);
+        check(bundlerDevDepRes.BranchId == "provenance-notices-unverified" &&
+            bundlerDevDepRes.MissingFact!.Contains("declares a bundler script while declaring zero runtime dependencies", StringComparison.Ordinal),
+            "LP-04 Mode B rejects shipping package.json with bundler in devDependencies");
+
+        var badMapBytes = "{\"version\":3,\"sourceRoot\":\"../node_modules/\",\"sources\":[\"pkg/index.js\"]}\n"u8.ToArray();
+        var badMapPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE.txt", licenseBytes),
+            ("staticwebassets/scripts/app.js", scriptBytes),
+            ("staticwebassets/scripts/app.js.map", badMapBytes));
+        var badMapSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js.map", badMapBytes));
+        var (badMapBnd, badMapAtt) = MakeProvenance(badMapPkg, badMapPkg, badMapSrc);
+        var badMapRes = Dispatch5(badMapPkg, badMapPkg, badMapBnd, badMapAtt, badMapSrc);
+        check(badMapRes.BranchId == "provenance-notices-unverified" &&
+            badMapRes.MissingFact!.Contains("source map staticwebassets/scripts/app.js.map references third-party or invalid sources", StringComparison.Ordinal),
+            "LP-04 Mode B rejects source map with node_modules in sourceRoot");
+
+        var remoteMapBytes = "{\"version\":3,\"sourceRoot\":\"https://unpkg.com/normalize.css@8.0.1/\",\"sources\":[\"normalize.css\"]}\n"u8.ToArray();
+        var remoteMapPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE.txt", licenseBytes),
+            ("staticwebassets/scripts/app.js", scriptBytes),
+            ("staticwebassets/scripts/app.js.map", remoteMapBytes));
+        var remoteMapSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js.map", remoteMapBytes));
+        var (remoteMapBnd, remoteMapAtt) = MakeProvenance(remoteMapPkg, remoteMapPkg, remoteMapSrc);
+        var remoteMapRes = Dispatch5(remoteMapPkg, remoteMapPkg, remoteMapBnd, remoteMapAtt, remoteMapSrc);
+        check(remoteMapRes.BranchId == "provenance-notices-unverified" &&
+            remoteMapRes.MissingFact!.Contains("source map staticwebassets/scripts/app.js.map references third-party or invalid sources", StringComparison.Ordinal),
+            "LP-04 Mode B rejects source map with external URL in sourceRoot");
+
+        var dataUriMapBytes = "{\"version\":3,\"sources\":[\"data:text/javascript,export%20const%20x%3D1\"]}\n"u8.ToArray();
+        var dataUriMapPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE.txt", licenseBytes),
+            ("staticwebassets/scripts/app.js", scriptBytes),
+            ("staticwebassets/scripts/app.js.map", dataUriMapBytes));
+        var dataUriMapSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js.map", dataUriMapBytes));
+        var (dataUriMapBnd, dataUriMapAtt) = MakeProvenance(dataUriMapPkg, dataUriMapPkg, dataUriMapSrc);
+        var dataUriMapRes = Dispatch5(dataUriMapPkg, dataUriMapPkg, dataUriMapBnd, dataUriMapAtt, dataUriMapSrc);
+        check(dataUriMapRes.BranchId == "provenance-notices-unverified" &&
+            dataUriMapRes.MissingFact!.Contains("source map staticwebassets/scripts/app.js.map references third-party or invalid sources", StringComparison.Ordinal),
+            "LP-04 Mode B rejects source map with data: URI in sources");
+
+        var driveLetterMapBytes = "{\"version\":3,\"sources\":[\"C:\\\\src\\\\app.js\"]}\n"u8.ToArray();
+        var driveLetterMapPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE.txt", licenseBytes),
+            ("staticwebassets/scripts/app.js", scriptBytes),
+            ("staticwebassets/scripts/app.js.map", driveLetterMapBytes));
+        var driveLetterMapSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js.map", driveLetterMapBytes));
+        var (driveMapBnd, driveMapAtt) = MakeProvenance(driveLetterMapPkg, driveLetterMapPkg, driveLetterMapSrc);
+        var driveMapRes = Dispatch5(driveLetterMapPkg, driveLetterMapPkg, driveMapBnd, driveMapAtt, driveLetterMapSrc);
+        check(driveMapRes.BranchId == "provenance-notices-unverified" &&
+            driveMapRes.MissingFact!.Contains("source map staticwebassets/scripts/app.js.map references third-party or invalid sources", StringComparison.Ordinal),
+            "LP-04 Mode B rejects source map with Windows drive-letter path in sources");
+
+        // Mode B negative: unrelated CSS smuggled in .bundle.scp.css or referencing missing .razor.css
         var smuggledCssPkg = BuildZip(
             ("Example.Controls.nuspec", nuspec),
             ("LICENSE.txt", licenseBytes),
@@ -341,8 +677,47 @@ internal static class Lp04Checks
             ("staticwebassets/Example.Controls.abc123.bundle.scp.css", "body[b-1234567890] { display: flex; }\n"u8.ToArray()));
         var (smuggledBnd, smuggledAtt) = MakeProvenance(smuggledCssPkg, smuggledCssPkg, modeBSrc);
         var smuggledRes = Dispatch5(smuggledCssPkg, smuggledCssPkg, smuggledBnd, smuggledAtt, modeBSrc);
-        check(smuggledRes.BranchId == "provenance-notices-unverified" && smuggledRes.Decision == "escalated",
+        check(smuggledRes.BranchId == "provenance-notices-unverified" && smuggledRes.Decision == "escalated" &&
+            smuggledRes.MissingFact!.Contains("scoped CSS bundle", StringComparison.Ordinal),
             "LP-04 Mode B rejects .bundle.scp.css that does not match source .razor.css");
+
+        var missingRazorCssPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE.txt", licenseBytes),
+            ("staticwebassets/scripts/app.js", scriptBytes),
+            ("staticwebassets/Example.Controls.abc123.bundle.scp.css",
+                "/* _content/Example.Controls/Components/Missing.razor.rz.scp.css */\ndiv[b-1234567890] { color: red; }\n"u8.ToArray()));
+        var (missingRazorBnd, missingRazorAtt) = MakeProvenance(missingRazorCssPkg, missingRazorCssPkg, modeBSrc);
+        var missingRazorRes = Dispatch5(missingRazorCssPkg, missingRazorCssPkg, missingRazorBnd, missingRazorAtt, modeBSrc);
+        check(missingRazorRes.BranchId == "provenance-notices-unverified" &&
+            missingRazorRes.MissingFact!.Contains("scoped CSS bundle", StringComparison.Ordinal),
+            "LP-04 Mode B rejects .bundle.scp.css section whose .razor.css is absent from source");
+
+        // Mode B negative: source match inside vendor directory or non-dev lockfile entry
+        var vendorSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/vendor/app.js", scriptBytes),
+            ($"controls-{commit}/src/Components/Button.razor.css", "div { color: red; }\n"u8.ToArray()));
+        var (vendorBnd, vendorAtt) = MakeProvenance(modeBPkg, modeBPkg, vendorSrc);
+        var vendorRes = Dispatch5(modeBPkg, modeBPkg, vendorBnd, vendorAtt, vendorSrc);
+        check(vendorRes.BranchId == "provenance-notices-unverified" &&
+            vendorRes.MissingFact!.Contains("matches a vendor or third-party source path", StringComparison.Ordinal),
+            "LP-04 Mode B rejects source match under vendor directory");
+
+        var nonDevLockSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/wwwroot/scripts/app.js", scriptBytes),
+            ($"controls-{commit}/src/Components/Button.razor.css", "div { color: red; }\n"u8.ToArray()),
+            ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"devDependencies\":{\"eslint\":\"^9.0.0\"}}"u8.ToArray()),
+            ($"controls-{commit}/package-lock.json",
+                "{\"name\":\"controls\",\"lockfileVersion\":3,\"packages\":{\"\":{},\"node_modules/forgotten-lib\":{\"version\":\"1.0.0\"}}}"u8.ToArray()));
+        var (nonDevLockBnd, nonDevLockAtt) = MakeProvenance(modeBPkg, modeBPkg, nonDevLockSrc);
+        var nonDevLockRes = Dispatch5(modeBPkg, modeBPkg, nonDevLockBnd, nonDevLockAtt, nonDevLockSrc);
+        check(nonDevLockRes.BranchId == "provenance-notices-unverified" &&
+            nonDevLockRes.MissingFact!.Contains("shipping lockfile", StringComparison.Ordinal),
+            "LP-04 Mode B rejects package-lock.json entry without dev: true");
 
         // Mode A positive: bundled npm web build with full THIRD-PARTY-LICENSES.md covering lock closure
         var tplBytes = Encoding.UTF8.GetBytes(
