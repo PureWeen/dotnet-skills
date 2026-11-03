@@ -126,7 +126,10 @@ For LP-04 `lp04-notice-coverage/2.1.0`, default single-input requests pass the a
 [D-lite bundled web assets](references/lp04-notices.md) for the bounded layout/suffix profile,
 complete retained inventory, digest and six unresolved reasons (`not tested`, including an empty supported-profile scan; it does not prove the absence of other web code).
 The helper-admitted provenance path requires a digest-bound per-asset source/component map
-and complete SPDX-specific notices. Mode B remains unverified: exact repository bytes do
+and complete SPDX-specific notices whose labels exactly match each covered lock entry's
+single SPDX `license` ID. Missing, non-string, expression or mismatched declarations stay
+unverified; agreement is still producer-declared metadata, not legal sufficiency.
+Mode B remains unverified: exact repository bytes do
 not prove authorship. Native `provenance-notices-verified` is not a report-validator bypass;
 separately admitted structured notice evidence is still required. Missing evidence resolves
 `provenance-notices-unverified` (`not tested`).

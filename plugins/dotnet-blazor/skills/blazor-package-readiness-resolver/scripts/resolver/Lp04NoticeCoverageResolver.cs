@@ -153,23 +153,26 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         if (lockEntry.Key is null ||
             !TryResolveLockClosure(lockEntry.Value, runtimeDeps.Keys, out var closure) ||
             closure.Count == 0)
-            return unverified("source archive lacks a valid package-lock.json covering declared runtime npm dependencies");
+            return unverified("source archive lacks a valid package-lock.json covering declared runtime npm dependencies with single SPDX license IDs");
 
+        var closureComponents = closure.Select(dependency => (dependency.Name, dependency.Version)).ToHashSet();
         foreach (var asset in inventory.Assets)
         {
             if (!Lp10BinaryAttributionResolver.TryBundlerAsset(prov.PackageEntries, prov.SourceFiles,
                     prov.RootPrefix, asset.Path, asset.Sha256, out var components) || components.Count == 0 ||
-                components.Any(component => !closure.Contains(component)))
+                components.Any(component => !closureComponents.Contains(component)))
                 return unverified($"bundled web asset {asset.Path} lacks a digest-bound per-asset source/component map consistent with the lockfile");
         }
         var noticeSections = ParseNoticeSections(noticeText);
         var verifiedPackages = new List<string>();
-        foreach (var (pkgName, pkgVersion) in closure)
+        foreach (var (pkgName, pkgVersion, pkgLicense) in closure)
         {
             if (!noticeSections.TryGetValue((pkgName, pkgVersion), out var section))
             {
                 return unverified($"root notice file {noticeFile} is missing a version-matched entry for runtime npm dependency {pkgName}@{pkgVersion}");
             }
+            if (!string.Equals(section.Spdx, pkgLicense, StringComparison.Ordinal))
+                return unverified($"root notice file {noticeFile} has an SPDX label that does not match the lockfile-declared license for runtime npm dependency {pkgName}@{pkgVersion}");
             if (!CanonicalLicenseBody.Matches(section.Spdx, section.Body))
                 return unverified($"root notice file {noticeFile} has an incomplete or truncated license entry for runtime npm dependency {pkgName}@{pkgVersion}");
             verifiedPackages.Add(pkgName);
@@ -302,7 +305,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
     }
 
     private static bool TryResolveLockClosure(byte[] lockBytes, IEnumerable<string> roots,
-        out List<(string Name, string Version)> closure)
+        out List<(string Name, string Version, string License)> closure)
     {
         closure = [];
         if (!TryStrictUtf8(lockBytes, out var text))
@@ -330,7 +333,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 }
             }
             var visitedPaths = new HashSet<string>(StringComparer.Ordinal);
-            var seenPairs = new HashSet<(string Name, string Version)>();
+            var seenPairs = new Dictionary<(string Name, string Version), string>();
             var queue = new Queue<(string ParentPath, string Name)>(roots.Select(r => ("", r)));
             while (queue.Count > 0)
             {
@@ -339,13 +342,25 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     entry.ValueKind != JsonValueKind.Object ||
                     !entry.TryGetProperty("version", out var verProp) ||
                     verProp.ValueKind != JsonValueKind.String ||
-                    string.IsNullOrWhiteSpace(verProp.GetString()))
+                    string.IsNullOrWhiteSpace(verProp.GetString()) ||
+                    entry.EnumerateObject().Count(property => property.Name == "license") != 1 ||
+                    !entry.TryGetProperty("license", out var licenseProp) ||
+                    licenseProp.ValueKind != JsonValueKind.String ||
+                    !IsSimpleSpdxId(licenseProp.GetString()))
                     return false;
                 if (!visitedPaths.Add(resolvedPath))
                     continue;
                 var version = verProp.GetString()!;
-                if (seenPairs.Add((name, version)))
-                    closure.Add((name, version));
+                var license = licenseProp.GetString()!;
+                if (seenPairs.TryGetValue((name, version), out var previousLicense))
+                {
+                    if (!string.Equals(previousLicense, license, StringComparison.Ordinal)) return false;
+                }
+                else
+                {
+                    seenPairs.Add((name, version), license);
+                    closure.Add((name, version, license));
+                }
                 if (entry.TryGetProperty("optionalDependencies", out var optDeps) &&
                     optDeps.ValueKind == JsonValueKind.Object && optDeps.EnumerateObject().Any())
                     return false;
@@ -363,6 +378,11 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             return false;
         }
     }
+
+    private static bool IsSimpleSpdxId(string? value) =>
+        value is { Length: > 0 and <= 128 } &&
+        Regex.IsMatch(value, @"\A[A-Za-z0-9][A-Za-z0-9.\-]*\z", RegexOptions.CultureInvariant) &&
+        value.ToUpperInvariant() is not ("AND" or "OR" or "WITH" or "NONE" or "NOASSERTION");
 
     private static bool TryResolveLockPackageEntry(JsonElement packages, string parentPath, string depName,
         out string resolvedPath, out JsonElement entry)

@@ -377,7 +377,7 @@ internal static class Lp04Checks
             ($"controls-{commit}/src/output.js", bundledScript),
             ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"u8.ToArray()),
             ($"controls-{commit}/package-lock.json",
-                "{\"name\":\"controls\",\"lockfileVersion\":3,\"packages\":{\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}},\"node_modules/lit-html\":{\"version\":\"3.3.3\"}}}"u8.ToArray()));
+                "{\"name\":\"controls\",\"lockfileVersion\":3,\"packages\":{\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}},\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}}}"u8.ToArray()));
         var (modeABnd, modeAAtt) = MakeProvenance(modeAPkg, modeAPkg, modeASrc);
         var modeARes = Dispatch5(modeAPkg, modeAPkg, modeABnd, modeAAtt, modeASrc);
         check(modeARes.BranchId == "provenance-notices-verified" && modeARes.Decision == "deterministic" &&
@@ -392,6 +392,48 @@ internal static class Lp04Checks
             stream.CopyTo(memory);
             return (Name: entry.FullName, Bytes: memory.ToArray());
         }).ToArray();
+        var mitNoticePackage = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", Encoding.UTF8.GetBytes("# Licenses\n\n## lit-html - 3.3.3 (MIT)\n\n" +
+                "Copyright 2017 Google LLC\n" + CanonicalLicenseBody.Clauses("MIT"))),
+            ("staticwebassets/bundle.js", bundledScript),
+            ("readiness-bundler-manifest.json", Manifest(bundledScript)));
+        var licenseOutcomes = new List<(bool Success, string Label)>();
+        foreach (var (label, license, positive) in new (string, string?, bool)[]
+        {
+            ("matching MIT", "\"MIT\"", true),
+            ("GPL-3.0-only versus MIT notice", "\"GPL-3.0-only\"", false),
+            ("BSD-3-Clause versus MIT notice", "\"BSD-3-Clause\"", false),
+            ("missing", null, false), ("null", "null", false), ("boolean", "true", false),
+            ("number", "1", false), ("object", "{}", false), ("array", "[]", false),
+            ("OR expression", "\"MIT OR Apache-2.0\"", false),
+            ("AND expression", "\"MIT AND Apache-2.0\"", false),
+            ("WITH expression", "\"MIT WITH Classpath-exception-2.0\"", false),
+            ("parenthesized", "\"(MIT)\"", false), ("case mismatch", "\"mit\"", false),
+            ("padded", "\" MIT\"", false), ("empty", "\"\"", false),
+            ("duplicate conflict", "\"GPL-3.0-only\",\"license\":\"MIT\"", false),
+            ("same-component matching", "\"MIT\"", true),
+            ("same-component conflicting", "\"GPL-3.0-only\"", false)
+        })
+        {
+            var text = "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\"" +
+                (license is null ? "" : ",\"license\":" + license) + "}}}";
+            if (label.StartsWith("same-component ", StringComparison.Ordinal))
+                text = "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"MIT\"," +
+                    "\"dependencies\":{\"lit-html\":\"3.3.3\"}},\"node_modules/lit-html/node_modules/lit-html\":" +
+                    "{\"version\":\"3.3.3\",\"license\":" + license + "}}}";
+            var source = BuildZip(sourceEntries.Select(entry => (entry.Name,
+                entry.Name.EndsWith("/package-lock.json", StringComparison.Ordinal) ?
+                    Encoding.UTF8.GetBytes(text) : entry.Bytes)).ToArray());
+            var (bundle, attestation) = MakeProvenance(mitNoticePackage, mitNoticePackage, source);
+            var result = Dispatch5(mitNoticePackage, mitNoticePackage, bundle, attestation, source);
+            var expected = positive ? "provenance-notices-verified" : "provenance-notices-unverified";
+            licenseOutcomes.Add((result.BranchId == expected, label + ": " + result.BranchId));
+            Console.WriteLine("Notice/lock license " + label + ": " + result.BranchId);
+        }
+        var licenseFailures = string.Join("; ", licenseOutcomes.Where(value => !value.Success).Select(value => value.Label));
+        foreach (var outcome in licenseOutcomes)
+            check(outcome.Success, "Notice/lock license regressions: " + licenseFailures);
+
         var jsonOutcomes = new List<(bool Success, string Label)>();
         void JsonCase(string label, string member, string text, bool positive = false)
         {
@@ -414,9 +456,9 @@ internal static class Lp04Checks
         JsonCase("package surrogate dependency name", "package.json", "{\"dependencies\":{\"\\uD800\":\"1.0.0\"}}");
         JsonCase("package surrogate dependency value", "package.json", "{\"dependencies\":{\"lit-html\":\"\\uD800\"}}");
         JsonCase("lock surrogate version", "package-lock.json",
-            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"\\uD800\"}}}");
+            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"\\uD800\",\"license\":\"BSD-3-Clause\"}}}");
         JsonCase("lock surrogate dependency name", "package-lock.json",
-            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"dependencies\":{\"\\uD800\":\"1.0.0\"}}}}");
+            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"dependencies\":{\"\\uD800\":\"1.0.0\"}}}}");
         foreach (var field in new[] { "bundleDependencies", "bundledDependencies", "optionalDependencies" })
         {
             foreach (var value in new[] { "true", "null", "0", "\"\"", "{}", "[]", "false" })
@@ -432,16 +474,16 @@ internal static class Lp04Checks
         {
             foreach (var value in new[] { "true", "false", "null", "0", "\"\"", "[]", "{}" })
                 JsonCase("lock " + field + "=" + value, "package-lock.json",
-                    "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"" + field + "\":" + value + "}}}",
+                    "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"" + field + "\":" + value + "}}}",
                     positive: value == "{}");
             JsonCase("lock root malformed " + field, "package-lock.json",
-                "{\"packages\":{\"\":{\"" + field + "\":false},\"node_modules/lit-html\":{\"version\":\"3.3.3\"}}}");
+                "{\"packages\":{\"\":{\"" + field + "\":false},\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}}}");
             JsonCase("lock unvisited malformed " + field, "package-lock.json",
-                "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\"},\"node_modules/dev-only\":{\"version\":\"1.0.0\",\"" +
+                "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"},\"node_modules/dev-only\":{\"version\":\"1.0.0\",\"" +
                 field + "\":[]}}}");
         }
         JsonCase("lock surrogate dependency value", "package-lock.json",
-            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"dependencies\":{\"other\":\"\\uD800\"}}}}");
+            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"dependencies\":{\"other\":\"\\uD800\"}}}}");
         foreach (var (escaped, valid) in new[]
         {
             ("\\uD800", false), ("\\uDC00", false), ("\\uD800x", false),
@@ -456,7 +498,7 @@ internal static class Lp04Checks
                 "{" + dependencyJson + ",\"ignored\":[null,false,42,{\"value\":\"" + escaped + "\"}]}", valid);
             JsonCase("package nested array name " + escaped, "package.json",
                 "{" + dependencyJson + ",\"ignored\":[{\"" + escaped + "\":null}]}", valid);
-            const string runtimePackage = "\"node_modules/lit-html\":{\"version\":\"3.3.3\"}";
+            const string runtimePackage = "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}";
             JsonCase("lock unvisited version " + escaped, "package-lock.json",
                 "{\"packages\":{" + runtimePackage + ",\"node_modules/dev-only\":{\"version\":\"" + escaped + "\"}}}", valid);
             JsonCase("lock ignored string " + escaped, "package-lock.json",
@@ -522,7 +564,7 @@ internal static class Lp04Checks
             if (e.FullName.EndsWith("package-lock.json", StringComparison.Ordinal))
                 bytes = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(bytes).Replace(
                     "\"version\":\"3.3.3\"", "\"version\":\"3.3.3\",\"dependencies\":{\"@lit-labs/ssr-dom-shim\":\"1.0.0\"}") .Replace(
-                    "\"node_modules/lit-html\":", "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.0.0\"},\"node_modules/lit-html\":"));
+                    "\"node_modules/lit-html\":", "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.0.0\",\"license\":\"MIT\"},\"node_modules/lit-html\":"));
             return (e.FullName, bytes);
         }).ToArray());
         var (ssrBnd, ssrAtt) = MakeProvenance(modeAPkg, modeAPkg, ssrSource);

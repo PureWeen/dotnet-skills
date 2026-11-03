@@ -74,7 +74,13 @@ The five input roles are `package`, `release-package`, `provenance-bundle`,
 `provenance-attestation` and `source-archive`. Source acquisition and verification
 receipts must be helper-admitted, not caller assertions. Mode A requires a digest-bound
 per-asset source/component map, lockfile runtime closure and SPDX-specific complete
-canonical notice clauses. All runtime dependencies require notices, including SSR shims.
+canonical notice clauses. Each version-matched notice heading's SPDX ID must exactly,
+case-sensitively equal that package's lock-entry `license`: one simple SPDX ID string,
+not an expression. Missing, non-string, duplicate/conflicting declarations, expressions
+and mismatches stay unverified. Repeated name/version entries must agree on the ID.
+Both labels are producer-declared metadata; agreement does not authenticate the actual
+dependency license or establish legal sufficiency. All runtime dependencies require
+notices, including SSR shims.
 Mode B stays unverified because source equality and absent banners do not prove authorship.
 Missing facts yield `provenance-notices-unverified`, preserving the full asset inventory.
 

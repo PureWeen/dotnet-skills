@@ -18,7 +18,7 @@
   "resolver/Lp02SourceAcquisition.cs": "02f29a86f10c42f82bedf638637cace7a1f090d8a636f4ab050977ddc1e72642",
   "resolver/Lp03DependencyLicensesResolver.cs": "25bc1686e69505bd398e1e1cdaad73e16e32c1cc5a59b2d13ca4367fd79ee3e9",
   "resolver/Lp03PackageEvidence.cs": "b3761466dc097e56da6816f97b103b7c82b77a0721ec445e3516b6ffea079fa1",
-  "resolver/Lp04NoticeCoverageResolver.cs": "fbbc93dab53c6d03e38f3d517a69fbabdb7e2191e6159df35411840c70370d32",
+  "resolver/Lp04NoticeCoverageResolver.cs": "b952c6fb7d499e34b457d0f69b7baa7b7c4b99fc6098e415d71e85e0dc06693d",
   "resolver/Lp04PackageEvidence.cs": "2e9719ad7ddfd29db764027bd84f1ea29b5a2d48c8eefc81f00f71a5a799828e",
   "resolver/Lp05LicenseExpressionResolver.cs": "6e4463543c9e10102ab6e0362a4836e7743110804d4cc40d581e7ea9ce6050cb",
   "resolver/Lp06RepositoryUrlResolver.cs": "df959674b583f7adaa6bb809d956ab5633f85878e70396819f7c3ef5d98b7fdd",

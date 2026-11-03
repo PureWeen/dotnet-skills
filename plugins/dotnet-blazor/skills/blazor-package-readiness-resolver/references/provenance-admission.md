@@ -82,7 +82,15 @@ optional dependencies in the runtime closure remain unverified.
 LP-04 Mode A requires this map for **every** selected web asset, with nonempty component
 sets consistent with the lockfile. It conservatively requires notices for the entire
 runtime closure, including SSR-named packages; no name/absence heuristic proves exclusion.
-Every version-matched notice's declared SPDX identifier must match the complete canonical
+Every covered lock entry must carry one `license` field containing a simple SPDX ID
+string (at most 128 characters, ASCII letters/digits/dot/hyphen, starting with a
+letter/digit; expression operators and NONE/NOASSERTION are unsupported). The
+version-matched notice heading's SPDX ID must exactly equal that string, case-sensitively.
+Missing, non-string, duplicate, expression or mismatched declarations stay unverified;
+repeated name/version entries at different paths must agree on the license.
+These are producer-declared metadata, not independent authentication of a dependency's
+actual license or a legal-sufficiency finding.
+Every version-matched notice's declared SPDX identifier must also match the complete canonical
 clauses of MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC or 0BSD. Only whitespace/case
 variation is normalized; unsupported/custom/incomplete text remains unverified. No
 dependency-archive equality exception is currently implemented. This check is not a legal
