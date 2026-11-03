@@ -20,6 +20,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
     private const int EntryLimit = 8 * 1024 * 1024;
     private const int TotalLimit = 32 * 1024 * 1024;
     private const int XmlLimit = 256 * 1024;
+    private const int LockfileLimit = 4 * 1024 * 1024;
     private const int XmlDepthLimit = 32;
     private const int XmlNodeLimit = 4096;
     private const int SnippetLimit = 160;
@@ -232,9 +233,14 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             return Unverified("source archive does not match the declared repository/commit root, attested workflow path or C# project layout");
 
         var sourceDigests = sourceFiles.Values.Select(bytes => Catalog.Digest(bytes)).ToHashSet(StringComparer.Ordinal);
+        var hasManifestEntry = HasBundlerManifestEntry(packageEntries);
+        AttestedViteBuildPlan? vitePlan = null;
+        if (!hasManifestEntry)
+            TryResolveAttestedViteBuildPlan(packageEntries, sourceFiles, rootPrefix, workflowPath, declaration.Id, out vitePlan);
         var compiledCount = 0;
         var exactSourceTextCount = 0;
         var builtWebAssetTextCount = 0;
+        var viteWebAssetTextCount = 0;
         foreach (var record in records.Where(item => item.Classification != "passive"))
         {
             if (record.Classification == "compiled")
@@ -256,8 +262,16 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                     record.Path.StartsWith("staticwebassets/", StringComparison.OrdinalIgnoreCase) &&
                     (record.Path.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
                      record.Path.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase)) &&
+                    hasManifestEntry &&
                     TryBundlerAsset(packageEntries, sourceFiles, rootPrefix, record.Path, record.Sha256, out _))
                     builtWebAssetTextCount++;
+                else if (record.Reason == "executable-source-text" &&
+                    record.Path.StartsWith("staticwebassets/", StringComparison.OrdinalIgnoreCase) &&
+                    (record.Path.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
+                     record.Path.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase)) &&
+                    !hasManifestEntry && vitePlan is not null &&
+                    TryAttestedViteScriptAsset(vitePlan, sourceFiles, rootPrefix, record.Path))
+                    viteWebAssetTextCount++;
                 else
                     return Unverified($"text candidate {record.Path} lacks exact source-blob or attested web-asset build correspondence");
             }
@@ -265,18 +279,22 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 return Unverified($"candidate {record.Path} has unsupported classification {record.Classification}");
         }
 
-        if (compiledCount + exactSourceTextCount + builtWebAssetTextCount == 0)
+        var totalBuiltScripts = builtWebAssetTextCount + viteWebAssetTextCount;
+        if (compiledCount + exactSourceTextCount + totalBuiltScripts == 0)
             return Unverified("no non-passive code candidates were evaluated");
 
+        var scriptSummary = viteWebAssetTextCount > 0 && builtWebAssetTextCount == 0
+            ? $"{viteWebAssetTextCount} attested Vite/npm build scripts"
+            : $"{builtWebAssetTextCount} digest-bound bundler-manifest scripts";
         var finding =
             $"SLSA v1 build provenance and source correspondence verified for {declaration.Id} {declaration.Version} " +
             $"at repository {repository} commit {declaration.Commit}: verified by gh attestation verify (Sigstore Tlog + Fulcio OIDC " +
             $"issuer https://token.actions.githubusercontent.com on github-hosted runner, receipt bound by SHA-256) binding release package SHA-256 " +
             $"{releasePackage.Identity.Sha256} to workflow {workflowPath}@{declaration.Commit}; all {pkgNonSig.Count} non-signature " +
             $"archive entries in package {package.Identity.Sha256} match the attested release package byte-for-byte; and all " +
-            $"{compiledCount + exactSourceTextCount + builtWebAssetTextCount} non-passive code candidates ({compiledCount} compiled PE/CLI " +
+            $"{compiledCount + exactSourceTextCount + totalBuiltScripts} non-passive code candidates ({compiledCount} compiled PE/CLI " +
             $"assemblies with matching source project/output identities, consistent metadata and no prebuilt source-tree binary, {exactSourceTextCount} exact source-blob text " +
-            $"matches, {builtWebAssetTextCount} digest-bound bundler-manifest scripts) correspond to the attested commit. " +
+            $"matches, {scriptSummary}) correspond to the attested commit. " +
             "Project/output correspondence is not a reproducible-build or exhaustive workflow/dataflow proof.";
         return new("LP-10", "lp10-binary-attribution", "1.1.0", "provenance-attributed",
             "deterministic", "applicable", input.Inputs,
@@ -656,6 +674,989 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         {
             return false;
         }
+    }
+
+    private static readonly string[] ViteNonShippingPrefixes =
+        ["samples/", "tests/", "test/", "demos/", "docs/", "stories/", "templates/", "benchmarks/"];
+    private static readonly string[] ViteThirdPartyDirMarkers =
+        ["/node_modules/", "/vendor/", "/third_party/", "/third-party/", "/external/", "/bower_components/", "/lib/", "/libs/"];
+    private static readonly string[] ViteConfigNames =
+        ["vite.config.mts", "vite.config.ts", "vite.config.mjs", "vite.config.js"];
+
+    internal sealed record AttestedViteBuildPlan(
+        string NpmDirPrefix,
+        string OutDir,
+        string? LicenseFileName,
+        HashSet<string> ExactScriptFileNames,
+        HashSet<string> InitializerBaseNames,
+        HashSet<string> ChunkNames,
+        HashSet<(string Dependency, string Subdir)> CopiedDependencyDirs);
+
+    internal static bool HasBundlerManifestEntry(Dictionary<string, byte[]> packageFiles) =>
+        packageFiles.Keys.Any(k => k.Equals("readiness-bundler-manifest.json", StringComparison.OrdinalIgnoreCase) ||
+            k.EndsWith("/readiness-bundler-manifest.json", StringComparison.OrdinalIgnoreCase));
+
+    internal static bool TryResolveAttestedViteBuildPlan(
+        Dictionary<string, byte[]> packageFiles,
+        Dictionary<string, byte[]> sourceFiles,
+        string rootPrefix,
+        string workflowPath,
+        string packageId,
+        out AttestedViteBuildPlan? plan)
+    {
+        plan = null;
+        if (HasBundlerManifestEntry(packageFiles))
+            return false;
+
+        var pkgJsonDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var lockJsonDirs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var hasShippingTsSource = false;
+        foreach (var fullPath in sourceFiles.Keys)
+        {
+            if (!fullPath.StartsWith(rootPrefix, StringComparison.Ordinal))
+                continue;
+            var rel = fullPath[rootPrefix.Length..];
+            if (ViteNonShippingPrefixes.Any(p => rel.StartsWith(p, StringComparison.OrdinalIgnoreCase)) ||
+                ViteThirdPartyDirMarkers.Any(m => ("/" + rel).Contains(m, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            var slash = rel.LastIndexOf('/');
+            var dir = slash >= 0 ? rel[..(slash + 1)] : "";
+            var file = slash >= 0 ? rel[(slash + 1)..] : rel;
+            if (file.Equals("package.json", StringComparison.OrdinalIgnoreCase))
+                pkgJsonDirs.Add(dir);
+            else if (file.Equals("package-lock.json", StringComparison.OrdinalIgnoreCase))
+                lockJsonDirs.Add(dir);
+            else if ((file.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) ||
+                      file.EndsWith(".mts", StringComparison.OrdinalIgnoreCase)) &&
+                     !file.EndsWith(".d.ts", StringComparison.OrdinalIgnoreCase) &&
+                     !file.EndsWith(".d.mts", StringComparison.OrdinalIgnoreCase) &&
+                     !ViteConfigNames.Contains(file, StringComparer.OrdinalIgnoreCase))
+                hasShippingTsSource = true;
+        }
+        if (!hasShippingTsSource || pkgJsonDirs.Count != 1 || lockJsonDirs.Count != 1)
+            return false;
+        var npmDir = pkgJsonDirs.First();
+        if (!npmDir.Equals(lockJsonDirs.First(), StringComparison.Ordinal) ||
+            npmDir is not ("" or "src/"))
+            return false;
+
+        if (!sourceFiles.TryGetValue(rootPrefix + npmDir + "package.json", out var pkgJsonBytes) ||
+            pkgJsonBytes.Length > XmlLimit ||
+            !sourceFiles.TryGetValue(rootPrefix + npmDir + "package-lock.json", out var lockJsonBytes) ||
+            lockJsonBytes.Length > LockfileLimit ||
+            !sourceFiles.TryGetValue(rootPrefix + workflowPath, out var wfBytes) ||
+            wfBytes.Length > XmlLimit)
+            return false;
+
+        var viteConfigMatches = ViteConfigNames
+            .Where(name => sourceFiles.ContainsKey(rootPrefix + npmDir + name))
+            .ToArray();
+        if (viteConfigMatches.Length != 1 ||
+            !sourceFiles.TryGetValue(rootPrefix + npmDir + viteConfigMatches[0], out var viteConfigBytes) ||
+            viteConfigBytes.Length > XmlLimit)
+            return false;
+
+        string pkgJsonText, lockJsonText, wfText, viteConfigText;
+        try
+        {
+            pkgJsonText = StrictUtf8.GetString(StripBom(pkgJsonBytes));
+            lockJsonText = StrictUtf8.GetString(StripBom(lockJsonBytes));
+            wfText = StrictUtf8.GetString(StripBom(wfBytes));
+            viteConfigText = StrictUtf8.GetString(StripBom(viteConfigBytes));
+            if (pkgJsonText.Contains('\0') || lockJsonText.Contains('\0') ||
+                wfText.Contains('\0') || viteConfigText.Contains('\0'))
+                return false;
+        }
+        catch (DecoderFallbackException)
+        {
+            return false;
+        }
+
+        var directDeps = new Dictionary<string, string>(StringComparer.Ordinal);
+        try
+        {
+            using var pkgDoc = JsonDocument.Parse(pkgJsonText, new JsonDocumentOptions { MaxDepth = 32 });
+            if (!JsonStringValidation.IsWellFormed(pkgDoc.RootElement) ||
+                pkgDoc.RootElement.ValueKind != JsonValueKind.Object ||
+                !pkgDoc.RootElement.TryGetProperty("scripts", out var scripts) ||
+                scripts.ValueKind != JsonValueKind.Object ||
+                !scripts.TryGetProperty("build", out var buildProp) ||
+                buildProp.ValueKind != JsonValueKind.String)
+                return false;
+            var buildScript = buildProp.GetString() ?? "";
+            if (!HasValidViteBuildScript(buildScript) ||
+                HasDisallowedPackageJsonLifecycleScripts(scripts))
+                return false;
+            if (pkgDoc.RootElement.TryGetProperty("dependencies", out var deps))
+            {
+                if (deps.ValueKind != JsonValueKind.Object)
+                    return false;
+                foreach (var prop in deps.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind != JsonValueKind.String ||
+                        string.IsNullOrWhiteSpace(prop.Name) ||
+                        string.IsNullOrWhiteSpace(prop.Value.GetString()))
+                        return false;
+                    directDeps[prop.Name] = prop.Value.GetString()!;
+                }
+            }
+
+            using var lockDoc = JsonDocument.Parse(lockJsonText, new JsonDocumentOptions { MaxDepth = 64 });
+            if (!JsonStringValidation.IsWellFormed(lockDoc.RootElement) ||
+                lockDoc.RootElement.ValueKind != JsonValueKind.Object ||
+                !lockDoc.RootElement.TryGetProperty("lockfileVersion", out var lvProp) ||
+                lvProp.ValueKind != JsonValueKind.Number ||
+                !lvProp.TryGetInt32(out var lv) || lv < 2 ||
+                !lockDoc.RootElement.TryGetProperty("packages", out var packages) ||
+                packages.ValueKind != JsonValueKind.Object ||
+                !packages.TryGetProperty("", out var rootPkgEntry) ||
+                rootPkgEntry.ValueKind != JsonValueKind.Object)
+                return false;
+            var rootLockDeps = new Dictionary<string, string>(StringComparer.Ordinal);
+            if (rootPkgEntry.TryGetProperty("dependencies", out var lockDeps))
+            {
+                if (lockDeps.ValueKind != JsonValueKind.Object)
+                    return false;
+                foreach (var prop in lockDeps.EnumerateObject())
+                {
+                    if (prop.Value.ValueKind != JsonValueKind.String)
+                        return false;
+                    rootLockDeps[prop.Name] = prop.Value.GetString() ?? "";
+                }
+            }
+            if (rootLockDeps.Count != directDeps.Count ||
+                directDeps.Any(kv => !rootLockDeps.TryGetValue(kv.Key, out var lockVer) || lockVer != kv.Value))
+                return false;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return false;
+        }
+
+        if (!VerifyWorkflowRunsNpmBuildInSingleJob(wfText, npmDir))
+            return false;
+
+        if (!TryParseViteConfig(viteConfigText, packageId, directDeps.Keys, sourceFiles, rootPrefix, npmDir, out plan))
+            return false;
+
+        return true;
+    }
+
+    private static ReadOnlySpan<byte> StripBom(byte[] bytes)
+    {
+        var span = bytes.AsSpan();
+        return span.StartsWith(new byte[] { 0xef, 0xbb, 0xbf }) ? span[3..] : span;
+    }
+
+    private static readonly string[] DisallowedLifecycleScripts =
+        ["prebuild", "postbuild", "preinstall", "install", "postinstall", "preprepare", "postprepare", "prepublish", "prepublishOnly", "dependencies"];
+
+    private static bool HasDisallowedPackageJsonLifecycleScripts(JsonElement scripts)
+    {
+        foreach (var hook in DisallowedLifecycleScripts)
+        {
+            if (scripts.TryGetProperty(hook, out _))
+                return true;
+        }
+        if (scripts.TryGetProperty("prepare", out var prepProp))
+        {
+            if (prepProp.ValueKind != JsonValueKind.String)
+                return true;
+            var prep = (prepProp.GetString() ?? "").Trim();
+            if (!Regex.IsMatch(prep, @"\Agit\s+config\s+core\.hooksPath\s+[A-Za-z0-9._/\-]+\z", RegexOptions.CultureInvariant))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool HasValidViteBuildScript(string script)
+    {
+        if (string.IsNullOrWhiteSpace(script) ||
+            script.Contains("||", StringComparison.Ordinal) ||
+            script.Contains(';') ||
+            script.Contains('\n') ||
+            script.Contains('\r') ||
+            script.Contains('`') ||
+            script.Contains('$'))
+            return false;
+
+        var hasViteBuild = false;
+        foreach (var segment in script.Split("&&", StringSplitOptions.None))
+        {
+            var trimmed = segment.Trim();
+            if (trimmed.Length == 0)
+                return false;
+            if (Regex.IsMatch(trimmed, @"\A(?:npx\s+)?vite\s+build\z", RegexOptions.CultureInvariant))
+            {
+                hasViteBuild = true;
+            }
+            else if (!Regex.IsMatch(trimmed, @"\A(?:npx\s+)?tsc(?:\s+(?:--noEmit|-p\s+[A-Za-z0-9._/\-]+))*\z", RegexOptions.CultureInvariant))
+            {
+                return false;
+            }
+        }
+        return hasViteBuild;
+    }
+
+    private sealed class WorkflowStepRecord
+    {
+        public string WorkingDir { get; set; } = "";
+        public bool HasIf { get; set; }
+        public bool HasContinueOnError { get; set; }
+        public List<string> RunLines { get; } = [];
+    }
+
+    private static bool TryNormalizeWorkflowDir(string rawDir, out string normalized)
+    {
+        normalized = "";
+        var trimmed = rawDir.Trim();
+        if (trimmed.Length == 0 || trimmed is "." or "./")
+            return true;
+        if (trimmed.StartsWith('/') || trimmed.StartsWith('\\') || trimmed.Contains('\\'))
+            return false;
+        if (trimmed.StartsWith("./", StringComparison.Ordinal))
+            trimmed = trimmed[2..];
+        trimmed = trimmed.TrimEnd('/');
+        if (trimmed.Length == 0)
+            return true;
+        var parts = trimmed.Split('/');
+        if (parts.Any(p => p.Length == 0 || p is "." or ".."))
+            return false;
+        normalized = string.Join("/", parts);
+        return true;
+    }
+
+    private static bool VerifyWorkflowRunsNpmBuildInSingleJob(string wfText, string npmDir)
+    {
+        var expectedWorkDir = npmDir.TrimEnd('/');
+        var inJobs = false;
+        var jobsIndent = -1;
+        var currentJobIndent = -1;
+        var jobWorkDir = "";
+        var jobHasIf = false;
+        var jobHasContinueOnError = false;
+        var inSteps = false;
+        var inRunBlock = false;
+        var inFoldedRunBlock = false;
+        var runBlockIndent = -1;
+        WorkflowStepRecord? currentStep = null;
+        var jobSteps = new List<WorkflowStepRecord>();
+
+        void FlushStep()
+        {
+            if (currentStep is not null)
+            {
+                jobSteps.Add(currentStep);
+                currentStep = null;
+            }
+            inRunBlock = false;
+            inFoldedRunBlock = false;
+        }
+
+        bool EvaluateJob()
+        {
+            FlushStep();
+            if (jobHasIf || jobHasContinueOnError)
+                return false;
+            var hasInstall = false;
+            var hasBuild = false;
+            var hasDotnetBuildOrPack = false;
+            foreach (var step in jobSteps)
+            {
+                if (step.HasIf || step.HasContinueOnError || step.RunLines.Count == 0)
+                    continue;
+                var rawDir = !string.IsNullOrEmpty(step.WorkingDir) ? step.WorkingDir : jobWorkDir;
+                var isExpectedNpmDir = TryNormalizeWorkflowDir(rawDir, out var effectiveDir) &&
+                                       string.Equals(effectiveDir, expectedWorkDir, StringComparison.Ordinal);
+                foreach (var cmdLine in step.RunLines)
+                {
+                    if (cmdLine.Contains("||", StringComparison.Ordinal))
+                        continue;
+                    foreach (var segment in Regex.Split(cmdLine, @"&&|;"))
+                    {
+                        var rawCmd = segment.Trim();
+                        if (rawCmd.Length == 0)
+                            continue;
+                        if (isExpectedNpmDir &&
+                            Regex.IsMatch(rawCmd, @"\Anpm\s+ci\z", RegexOptions.CultureInvariant))
+                        {
+                            hasInstall = true;
+                        }
+                        else if (hasInstall && isExpectedNpmDir &&
+                                 Regex.IsMatch(rawCmd, @"\Anpm\s+run(?:-script)?\s+build\z", RegexOptions.CultureInvariant))
+                        {
+                            hasBuild = true;
+                        }
+                        else if (hasInstall && hasBuild)
+                        {
+                            var cmd = rawCmd.TrimEnd('`').Trim();
+                            if (Regex.IsMatch(cmd, @"\Adotnet\s+(?:build|pack)(?:\s+|\z)", RegexOptions.CultureInvariant))
+                                hasDotnetBuildOrPack = true;
+                        }
+                    }
+                }
+            }
+            return hasInstall && hasBuild && hasDotnetBuildOrPack;
+        }
+
+        void ResetJob()
+        {
+            FlushStep();
+            jobSteps.Clear();
+            jobWorkDir = "";
+            jobHasIf = false;
+            jobHasContinueOnError = false;
+            inSteps = false;
+            inRunBlock = false;
+        }
+
+        var hasQualifyingJob = false;
+
+        foreach (var rawLine in wfText.Split('\n'))
+        {
+            var line = StripYamlComment(rawLine.TrimEnd('\r'));
+            if (string.IsNullOrWhiteSpace(line))
+                continue;
+            var indent = line.Length - line.TrimStart(' ').Length;
+            var trimmed = line.Trim();
+
+            if (inRunBlock)
+            {
+                if (indent > runBlockIndent)
+                {
+                    if (!inFoldedRunBlock)
+                        currentStep?.RunLines.Add(trimmed);
+                    continue;
+                }
+                inRunBlock = false;
+                inFoldedRunBlock = false;
+            }
+
+            if (indent == 0)
+            {
+                if (EvaluateJob())
+                    hasQualifyingJob = true;
+                ResetJob();
+                if (Regex.IsMatch(trimmed, @"\A['""]?defaults['""]?\s*(?::|\z)", RegexOptions.CultureInvariant))
+                    return false;
+                inJobs = trimmed == "jobs:";
+                jobsIndent = inJobs ? 0 : -1;
+                currentJobIndent = -1;
+                continue;
+            }
+
+            if (!inJobs)
+                continue;
+
+            if (currentJobIndent < 0 || indent <= currentJobIndent)
+            {
+                if (EvaluateJob())
+                    hasQualifyingJob = true;
+                if (indent > jobsIndent && trimmed.EndsWith(':'))
+                {
+                    ResetJob();
+                    currentJobIndent = indent;
+                }
+                continue;
+            }
+
+            if (trimmed == "steps:" && indent == currentJobIndent + 2)
+            {
+                inSteps = true;
+                continue;
+            }
+
+            if (inSteps && indent <= currentJobIndent + 2 && !trimmed.StartsWith("- ", StringComparison.Ordinal))
+            {
+                FlushStep();
+                inSteps = false;
+            }
+
+            if (inSteps && trimmed.StartsWith("- ", StringComparison.Ordinal))
+            {
+                FlushStep();
+                currentStep = new WorkflowStepRecord();
+            }
+
+            var normalized = trimmed.StartsWith("- ", StringComparison.Ordinal) ? trimmed[2..].TrimStart() : trimmed;
+            if (Regex.IsMatch(normalized, @"\A['""]?shell['""]?\s*:", RegexOptions.CultureInvariant))
+            {
+                var colonIdx = normalized.IndexOf(':');
+                var sh = normalized[(colonIdx + 1)..].Trim().Trim('\'', '"');
+                if (sh is not ("bash" or "sh" or "pwsh" or "powershell" or "cmd"))
+                {
+                    if (!inSteps) jobHasIf = true;
+                    else if (currentStep is not null) currentStep.HasIf = true;
+                }
+            }
+            if (normalized.StartsWith("if:", StringComparison.Ordinal))
+            {
+                if (!inSteps) jobHasIf = true;
+                else if (currentStep is not null) currentStep.HasIf = true;
+            }
+            else if (normalized.StartsWith("continue-on-error:", StringComparison.Ordinal))
+            {
+                var val = normalized["continue-on-error:".Length..].Trim();
+                if (!val.Equals("false", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!inSteps) jobHasContinueOnError = true;
+                    else if (currentStep is not null) currentStep.HasContinueOnError = true;
+                }
+            }
+            else if (normalized.StartsWith("working-directory:", StringComparison.Ordinal))
+            {
+                var wd = normalized["working-directory:".Length..].Trim().Trim('\'', '"');
+                if (!inSteps)
+                    jobWorkDir = wd;
+                else if (currentStep is not null)
+                    currentStep.WorkingDir = wd;
+            }
+            else if (inSteps && currentStep is not null && normalized.StartsWith("run:", StringComparison.Ordinal))
+            {
+                var afterRun = normalized["run:".Length..].Trim();
+                if (afterRun is "|" or "|-" or "|+")
+                {
+                    inRunBlock = true;
+                    inFoldedRunBlock = false;
+                    runBlockIndent = indent + (trimmed.Length - normalized.Length);
+                }
+                else if (afterRun.StartsWith('>'))
+                {
+                    inRunBlock = true;
+                    inFoldedRunBlock = true;
+                    runBlockIndent = indent + (trimmed.Length - normalized.Length);
+                }
+                else if (afterRun.Length > 0)
+                {
+                    currentStep.RunLines.Add(afterRun.Trim('\'', '"'));
+                }
+            }
+        }
+
+        if (EvaluateJob())
+            hasQualifyingJob = true;
+        return hasQualifyingJob;
+    }
+
+    private static string StripYamlComment(string line)
+    {
+        var inSingle = false;
+        var inDouble = false;
+        for (var i = 0; i < line.Length; i++)
+        {
+            var c = line[i];
+            if (c == '\'' && !inDouble) inSingle = !inSingle;
+            else if (c == '"' && !inSingle) inDouble = !inDouble;
+            else if (c == '#' && !inSingle && !inDouble && (i == 0 || char.IsWhiteSpace(line[i - 1])))
+                return line[..i];
+        }
+        return line;
+    }
+
+    private static void StripAndMaskJs(string text, out string stripped, out string masked)
+    {
+        var sbStripped = new StringBuilder(text.Length);
+        var sbMasked = new StringBuilder(text.Length);
+        char lastNonSpaceInMask = '\0';
+        var i = 0;
+        while (i < text.Length)
+        {
+            var c = text[i];
+            if (c == '/' && i + 1 < text.Length && text[i + 1] == '/')
+            {
+                i += 2;
+                while (i < text.Length && text[i] is not ('\r' or '\n'))
+                    i++;
+                continue;
+            }
+            if (c == '/' && i + 1 < text.Length && text[i + 1] == '*')
+            {
+                i += 2;
+                while (i + 1 < text.Length && !(text[i] == '*' && text[i + 1] == '/'))
+                {
+                    if (text[i] == '\n')
+                    {
+                        sbStripped.Append('\n');
+                        sbMasked.Append('\n');
+                    }
+                    i++;
+                }
+                if (i + 1 < text.Length)
+                    i += 2;
+                else
+                    break;
+                continue;
+            }
+            if (c is '\'' or '"' or '`')
+            {
+                var quote = c;
+                sbStripped.Append(c);
+                sbMasked.Append(c);
+                i++;
+                while (i < text.Length)
+                {
+                    var sc = text[i];
+                    if (sc == '\\' && i + 1 < text.Length)
+                    {
+                        sbStripped.Append(sc);
+                        sbStripped.Append(text[i + 1]);
+                        sbMasked.Append(sc == '\n' ? '\n' : ' ');
+                        sbMasked.Append(text[i + 1] == '\n' ? '\n' : ' ');
+                        i += 2;
+                        continue;
+                    }
+                    if (sc == quote)
+                    {
+                        sbStripped.Append(sc);
+                        sbMasked.Append(sc);
+                        i++;
+                        break;
+                    }
+                    sbStripped.Append(sc);
+                    sbMasked.Append(sc == '\n' ? '\n' : ' ');
+                    i++;
+                }
+                lastNonSpaceInMask = quote;
+                continue;
+            }
+            if (c == '/' && lastNonSpaceInMask is ':' or '=' or '(' or '[' or ',' or '!' or '&' or '|' or '?' or '{' or ';' or '\0')
+            {
+                sbStripped.Append(c);
+                sbMasked.Append(c);
+                i++;
+                var inCharClass = false;
+                while (i < text.Length && text[i] is not ('\r' or '\n'))
+                {
+                    var rc = text[i];
+                    if (rc == '\\' && i + 1 < text.Length)
+                    {
+                        sbStripped.Append(rc);
+                        sbStripped.Append(text[i + 1]);
+                        sbMasked.Append("  ");
+                        i += 2;
+                        continue;
+                    }
+                    if (rc == '[') inCharClass = true;
+                    else if (rc == ']') inCharClass = false;
+                    if (rc == '/' && !inCharClass)
+                    {
+                        sbStripped.Append(rc);
+                        sbMasked.Append(rc);
+                        i++;
+                        break;
+                    }
+                    sbStripped.Append(rc);
+                    sbMasked.Append(' ');
+                    i++;
+                }
+                while (i < text.Length && char.IsLetter(text[i]))
+                {
+                    sbStripped.Append(text[i]);
+                    sbMasked.Append(' ');
+                    i++;
+                }
+                lastNonSpaceInMask = '/';
+                continue;
+            }
+            sbStripped.Append(c);
+            sbMasked.Append(c);
+            if (!char.IsWhiteSpace(c))
+                lastNonSpaceInMask = c;
+            i++;
+        }
+        stripped = sbStripped.ToString();
+        masked = sbMasked.ToString();
+    }
+
+    private static bool TryExtractBalancedSlice(
+        string stripped,
+        string masked,
+        int openIdx,
+        char openChar,
+        char closeChar,
+        out string bodyStripped,
+        out string bodyMasked,
+        out int closeIdx)
+    {
+        bodyStripped = "";
+        bodyMasked = "";
+        closeIdx = -1;
+        if (openIdx < 0 || openIdx >= masked.Length || masked[openIdx] != openChar)
+            return false;
+        var depth = 0;
+        for (var i = openIdx; i < masked.Length; i++)
+        {
+            var c = masked[i];
+            if (c == openChar)
+                depth++;
+            else if (c == closeChar)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    closeIdx = i;
+                    bodyStripped = stripped[(openIdx + 1)..closeIdx];
+                    bodyMasked = masked[(openIdx + 1)..closeIdx];
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static bool TryParseViteConfig(
+        string viteConfigText,
+        string packageId,
+        IEnumerable<string> directDeps,
+        Dictionary<string, byte[]> sourceFiles,
+        string rootPrefix,
+        string npmDir,
+        out AttestedViteBuildPlan? plan)
+    {
+        plan = null;
+        StripAndMaskJs(viteConfigText, out var stripped, out var masked);
+        var exportMatches = Regex.Matches(masked, @"\bexport\s+default\s+defineConfig\s*\(", RegexOptions.CultureInvariant);
+        if (exportMatches.Count != 1)
+            return false;
+        var exportMatch = exportMatches[0];
+        var openParenIdx = exportMatch.Index + exportMatch.Length - 1;
+        if (!TryExtractBalancedSlice(stripped, masked, openParenIdx, '(', ')', out var configBody, out var configBodyMask, out var closeParenIdx))
+            return false;
+        if (stripped[(closeParenIdx + 1)..].Trim() is not ("" or ";"))
+            return false;
+        var trimmedMask = configBodyMask.Trim();
+        if (!((trimmedMask.StartsWith('{') && trimmedMask.EndsWith('}')) ||
+              Regex.IsMatch(trimmedMask, @"\breturn\s*\{", RegexOptions.CultureInvariant)))
+            return false;
+
+        var consts = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (Match m in Regex.Matches(masked[..exportMatch.Index],
+            @"\bconst\s+(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:;|\r?\n(?!\s*[+?.:\[`])|\z)",
+            RegexOptions.CultureInvariant))
+        {
+            consts[m.Groups["id"].Value] = stripped.Substring(m.Groups["lit"].Index, m.Groups["lit"].Length);
+        }
+
+        if (Regex.Matches(configBodyMask, @"(?<![A-Za-z0-9_$.])\boutDir\b", RegexOptions.CultureInvariant).Count != 1)
+            return false;
+        string? outDir = null;
+        var outDirMaskMatch = Regex.Match(configBodyMask,
+            @"\boutDir\s*:\s*(?:(?<q>['""])(?<lit>\s+)\k<q>|(?<id>[A-Za-z_$][A-Za-z0-9_$]*))\s*(?:,|\})",
+            RegexOptions.CultureInvariant);
+        if (outDirMaskMatch.Success)
+        {
+            if (outDirMaskMatch.Groups["id"].Success)
+                outDir = consts.GetValueOrDefault(outDirMaskMatch.Groups["id"].Value);
+            else
+                outDir = configBody.Substring(outDirMaskMatch.Groups["lit"].Index, outDirMaskMatch.Groups["lit"].Length);
+        }
+        else if (Regex.IsMatch(configBodyMask, @"(?<![A-Za-z0-9_$.])\boutDir\s*(?:,|\})", RegexOptions.CultureInvariant))
+        {
+            consts.TryGetValue("outDir", out outDir);
+        }
+
+        if (string.IsNullOrWhiteSpace(outDir) ||
+            outDir.Contains("..", StringComparison.Ordinal) ||
+            outDir.Contains('\\'))
+            return false;
+        var normalizedOutDir = (npmDir + outDir.Trim().TrimStart('.', '/')).TrimEnd('/');
+        if (normalizedOutDir is not ("wwwroot" or "src/wwwroot"))
+            return false;
+        if (sourceFiles.Keys.Any(k =>
+                k.StartsWith(rootPrefix + normalizedOutDir + "/", StringComparison.Ordinal) &&
+                (k.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
+                 k.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase) ||
+                 k.EndsWith(".cjs", StringComparison.OrdinalIgnoreCase) ||
+                 k.EndsWith(".css", StringComparison.OrdinalIgnoreCase))))
+            return false;
+        var projectDir = normalizedOutDir.Equals("wwwroot", StringComparison.Ordinal)
+            ? ""
+            : normalizedOutDir[..^"wwwroot".Length];
+        if (!sourceFiles.Keys.Any(k =>
+                k.StartsWith(rootPrefix + projectDir, StringComparison.Ordinal) &&
+                !k[(rootPrefix.Length + projectDir.Length)..].Contains('/') &&
+                k.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)))
+            return false;
+
+        string? licenseFile = null;
+        var licenseKeyMatches = Regex.Matches(configBodyMask, @"\blicense\s*:", RegexOptions.CultureInvariant);
+        if (licenseKeyMatches.Count > 1)
+            return false;
+        if (licenseKeyMatches.Count == 1)
+        {
+            if (!Regex.IsMatch(configBodyMask, @"\blicense\s*:\s*false\b\s*(?:,|\})", RegexOptions.CultureInvariant))
+            {
+                var licMaskMatch = Regex.Match(configBodyMask,
+                    @"\blicense\s*:\s*\{\s*fileName\s*:\s*(?:(?<q>['""])(?<lit>\s+)\k<q>|(?<id>[A-Za-z_$][A-Za-z0-9_$]*))\s*,?\s*\}\s*(?:,|\})",
+                    RegexOptions.CultureInvariant);
+                if (!licMaskMatch.Success)
+                    return false;
+                string? rawLic = licMaskMatch.Groups["id"].Success
+                    ? consts.GetValueOrDefault(licMaskMatch.Groups["id"].Value)
+                    : configBody.Substring(licMaskMatch.Groups["lit"].Index, licMaskMatch.Groups["lit"].Length);
+                if (string.IsNullOrWhiteSpace(rawLic) ||
+                    rawLic.Contains("..", StringComparison.Ordinal) ||
+                    rawLic.Contains('/') ||
+                    rawLic.Contains('\\'))
+                    return false;
+                licenseFile = rawLic;
+            }
+        }
+
+        var directDepSet = directDeps.ToHashSet(StringComparer.Ordinal);
+        var exactScripts = new HashSet<string>(StringComparer.Ordinal);
+        var initializerBases = new HashSet<string>(StringComparer.Ordinal);
+        var chunkNames = new HashSet<string>(StringComparer.Ordinal);
+        var copiedDirs = new HashSet<(string Dependency, string Subdir)>();
+
+        if (masked.Contains("emitFile", StringComparison.Ordinal) &&
+            Regex.IsMatch(configBodyMask, @"\bplugins\s*:\s*\[", RegexOptions.CultureInvariant))
+        {
+            if (consts.TryGetValue("initializer", out var initVal) &&
+                initVal.Equals(packageId + ".lib.module.js", StringComparison.Ordinal) &&
+                Regex.IsMatch(masked, @"\bfileName\s*:\s*initializer\b\s*(?:,|\})", RegexOptions.CultureInvariant))
+            {
+                initializerBases.Add(packageId);
+            }
+            foreach (Match initMask in Regex.Matches(masked, @"\bfileName\s*:\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
+                RegexOptions.CultureInvariant))
+            {
+                var litVal = stripped.Substring(initMask.Groups["lit"].Index, initMask.Groups["lit"].Length);
+                if (litVal.Equals(packageId + ".lib.module.js", StringComparison.Ordinal))
+                    initializerBases.Add(packageId);
+            }
+        }
+
+        var declaredEntries = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (Regex.IsMatch(configBodyMask, @"\binput\s*:\s*(?:entries\b\s*(?:,|\})|\{\s*\.\.\.entries\b)", RegexOptions.CultureInvariant))
+        {
+            foreach (Match entriesBlock in Regex.Matches(masked[..exportMatch.Index],
+                @"\bconst\s+entries\b[^=]*=\s*\{(?<body>[^}]+)\}", RegexOptions.CultureInvariant))
+            {
+                var bodyOffset = entriesBlock.Groups["body"].Index;
+                var bodyMask = entriesBlock.Groups["body"].Value;
+                var props = Regex.Matches(bodyMask,
+                    @"(?:(?<kq>['""])(?<k1>\s+)\k<kq>|(?<k2>[A-Za-z_$][A-Za-z0-9_$]*))\s*:\s*(?<vq>['""])(?<src>\s+)\k<vq>\s*(?:,|\z)",
+                    RegexOptions.CultureInvariant);
+                if (props.Count == 0 || props.Count != Regex.Matches(bodyMask, ":").Count)
+                    return false;
+                foreach (Match prop in props)
+                {
+                    var key = prop.Groups["k1"].Success
+                        ? stripped.Substring(bodyOffset + prop.Groups["k1"].Index, prop.Groups["k1"].Length)
+                        : prop.Groups["k2"].Value;
+                    var srcPath = stripped.Substring(bodyOffset + prop.Groups["src"].Index, prop.Groups["src"].Length);
+                    if (srcPath.Contains("..", StringComparison.Ordinal) ||
+                        !sourceFiles.ContainsKey(rootPrefix + npmDir + srcPath.TrimStart('.', '/')))
+                        return false;
+                    declaredEntries[key] = srcPath;
+                }
+            }
+        }
+        if (declaredEntries.Count == 0)
+            return false;
+
+        var declaredInputKeys = new HashSet<string>(declaredEntries.Keys, StringComparer.Ordinal);
+        foreach (Match inputBlock in Regex.Matches(configBodyMask, @"\binput\s*:\s*\{(?<body>[^}]+)\}", RegexOptions.CultureInvariant))
+        {
+            var bodyOffset = inputBlock.Groups["body"].Index;
+            var bodyMask = inputBlock.Groups["body"].Value;
+            var props = Regex.Matches(bodyMask,
+                @"(?:(?<kq>['""])(?<k1>\s+)\k<kq>|(?<k2>[A-Za-z_$][A-Za-z0-9_$]*))\s*:\s*(?<vq>['""])(?<val>\s+)\k<vq>\s*(?:,|\z)",
+                RegexOptions.CultureInvariant);
+            if (props.Count != Regex.Matches(bodyMask, ":").Count)
+                return false;
+            foreach (Match prop in props)
+            {
+                var key = prop.Groups["k1"].Success
+                    ? configBody.Substring(bodyOffset + prop.Groups["k1"].Index, prop.Groups["k1"].Length)
+                    : prop.Groups["k2"].Value;
+                var val = configBody.Substring(bodyOffset + prop.Groups["val"].Index, prop.Groups["val"].Length);
+                if (directDepSet.Contains(val))
+                    declaredInputKeys.Add(key);
+            }
+        }
+
+        var fixedKeys = new HashSet<string>(StringComparer.Ordinal);
+        if (Regex.IsMatch(configBodyMask, @"\bentryFileNames\s*:[^\r\n]*\bfixedNames\[", RegexOptions.CultureInvariant))
+        {
+            foreach (Match fixedBlock in Regex.Matches(masked[..exportMatch.Index],
+                @"\bconst\s+fixedNames\b[^=]*=\s*\{(?<body>[^}]+)\}", RegexOptions.CultureInvariant))
+            {
+                var bodyOffset = fixedBlock.Groups["body"].Index;
+                var bodyMask = fixedBlock.Groups["body"].Value;
+                var props = Regex.Matches(bodyMask,
+                    @"(?:(?<kq>['""])(?<k1>\s+)\k<kq>|(?<k2>[A-Za-z_$][A-Za-z0-9_$]*))\s*:\s*(?<vq>['""])(?<file>\s+)\k<vq>\s*(?:,|\z)",
+                    RegexOptions.CultureInvariant);
+                if (props.Count == 0 || props.Count != Regex.Matches(bodyMask, ":").Count)
+                    return false;
+                foreach (Match prop in props)
+                {
+                    var key = prop.Groups["k1"].Success
+                        ? stripped.Substring(bodyOffset + prop.Groups["k1"].Index, prop.Groups["k1"].Length)
+                        : prop.Groups["k2"].Value;
+                    var fileVal = stripped.Substring(bodyOffset + prop.Groups["file"].Index, prop.Groups["file"].Length);
+                    if (!Regex.IsMatch(fileVal, @"\A[A-Za-z0-9._\-]+\.m?js\z", RegexOptions.CultureInvariant) ||
+                        !declaredInputKeys.Contains(key))
+                        return false;
+                    fixedKeys.Add(key);
+                    exactScripts.Add(fileVal);
+                }
+            }
+        }
+
+        if (Regex.Matches(configBodyMask, @"\bentryFileNames\s*:", RegexOptions.CultureInvariant).Count != 1 ||
+            Regex.Matches(configBodyMask, @"\bchunkFileNames\s*:", RegexOptions.CultureInvariant).Count != 1)
+            return false;
+        var entryMaskMatch = Regex.Match(configBodyMask,
+            @"\bentryFileNames\s*:\s*(?:\(\s*[A-Za-z_$][A-Za-z0-9_$]*\s*\)\s*=>\s*fixedNames\s*\[\s*[A-Za-z_$][A-Za-z0-9_$]*\.name\s*\]\s*\?\?\s*)?(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
+            RegexOptions.CultureInvariant);
+        var chunkMaskMatch = Regex.Match(configBodyMask,
+            @"\bchunkFileNames\s*:\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
+            RegexOptions.CultureInvariant);
+        if (!entryMaskMatch.Success || !chunkMaskMatch.Success)
+            return false;
+        var entryBundlePattern = configBody.Substring(entryMaskMatch.Groups["lit"].Index, entryMaskMatch.Groups["lit"].Length);
+        var chunkBundlePattern = configBody.Substring(chunkMaskMatch.Groups["lit"].Index, chunkMaskMatch.Groups["lit"].Length);
+        if (!entryBundlePattern.Equals("[name].[hash].bundle.js", StringComparison.Ordinal) ||
+            !chunkBundlePattern.Equals("[name].[hash].bundle.js", StringComparison.Ordinal))
+            return false;
+
+        foreach (var entryKey in declaredEntries.Keys)
+        {
+            if (!fixedKeys.Contains(entryKey))
+                chunkNames.Add(entryKey);
+        }
+
+        var csMatch = Regex.Match(configBodyMask, @"\bcodeSplitting\s*:\s*\{", RegexOptions.CultureInvariant);
+        if (csMatch.Success &&
+            TryExtractBalancedSlice(configBody, configBodyMask, csMatch.Index + csMatch.Length - 1, '{', '}', out var csBody, out var csMask, out _))
+        {
+            var groupsMatch = Regex.Match(csMask, @"\bgroups\s*:\s*\[", RegexOptions.CultureInvariant);
+            if (groupsMatch.Success &&
+                TryExtractBalancedSlice(csBody, csMask, groupsMatch.Index + groupsMatch.Length - 1, '[', ']', out var groupsBody, out var groupsMask, out _))
+            {
+                foreach (Match groupMaskMatch in Regex.Matches(groupsMask,
+                    @"\{\s*name\s*:\s*['""]\s*['""]\s*,\s*test\s*:\s*/\s*/", RegexOptions.CultureInvariant))
+                {
+                    var groupLitMatch = Regex.Match(groupsBody.Substring(groupMaskMatch.Index, groupMaskMatch.Length),
+                        @"\bname\s*:\s*['""](?<g>[A-Za-z0-9._\-]+)['""]\s*,\s*test\s*:", RegexOptions.CultureInvariant);
+                    if (groupLitMatch.Success)
+                        chunkNames.Add(groupLitMatch.Groups["g"].Value);
+                }
+            }
+        }
+
+        foreach (var (fullPath, bytes) in sourceFiles)
+        {
+            if (!fullPath.StartsWith(rootPrefix + npmDir, StringComparison.Ordinal) ||
+                (!fullPath.EndsWith(".ts", StringComparison.OrdinalIgnoreCase) &&
+                 !fullPath.EndsWith(".mts", StringComparison.OrdinalIgnoreCase)) ||
+                bytes.Length > XmlLimit)
+                continue;
+            string tsText;
+            try
+            {
+                tsText = StrictUtf8.GetString(StripBom(bytes));
+            }
+            catch (DecoderFallbackException)
+            {
+                continue;
+            }
+            StripAndMaskJs(tsText, out var tsStripped, out var tsMasked);
+            foreach (Match maskedImport in Regex.Matches(tsMasked, @"\bimport\s*\(\s*['""]\s*['""]\s*\)", RegexOptions.CultureInvariant))
+            {
+                var slice = tsStripped.Substring(maskedImport.Index, maskedImport.Length);
+                var dynImport = Regex.Match(slice,
+                    @"\Aimport\s*\(\s*['""](?<dep>@?[A-Za-z0-9._\-]+(?:/[A-Za-z0-9._\-]+)?)['""]\s*\)\z",
+                    RegexOptions.CultureInvariant);
+                if (dynImport.Success)
+                {
+                    var dep = dynImport.Groups["dep"].Value;
+                    if (directDepSet.Contains(dep))
+                        chunkNames.Add(dep);
+                }
+            }
+        }
+
+        foreach (Match cpMask in Regex.Matches(masked,
+            @"\bcpSync\s*\(\s*(?<q1>['""])\s+\k<q1>\s*,\s*(?:`\s+`|(?<q2>['""])\s+\k<q2>)",
+            RegexOptions.CultureInvariant))
+        {
+            var cpMatch = Regex.Match(stripped.Substring(cpMask.Index, cpMask.Length),
+                @"\AcpSync\s*\(\s*['""]node_modules/(?<dep>@?[A-Za-z0-9._\-]+(?:/[A-Za-z0-9._\-]+)?)/(?<sub1>[A-Za-z0-9._\-]+)['""]\s*,\s*(?:`\$\{outDir\}/(?<sub2>[A-Za-z0-9._\-]+)`|['""](?<litOut>[A-Za-z0-9._/\-]+)/wwwroot/(?<sub3>[A-Za-z0-9._\-]+)['""])\z",
+                RegexOptions.CultureInvariant);
+            if (!cpMatch.Success)
+                continue;
+            var dep = cpMatch.Groups["dep"].Value;
+            var sub1 = cpMatch.Groups["sub1"].Value;
+            var sub2 = cpMatch.Groups["sub2"].Success ? cpMatch.Groups["sub2"].Value : cpMatch.Groups["sub3"].Value;
+            if (cpMatch.Groups["litOut"].Success)
+            {
+                var litOutDir = (npmDir + cpMatch.Groups["litOut"].Value.TrimStart('.', '/') + "/wwwroot").TrimStart('/');
+                if (!litOutDir.Equals(normalizedOutDir, StringComparison.Ordinal))
+                    continue;
+            }
+            if (sub1 == sub2 && directDepSet.Contains(dep))
+                copiedDirs.Add((dep, sub1));
+        }
+
+        if (exactScripts.Count == 0 && initializerBases.Count == 0 && chunkNames.Count == 0)
+            return false;
+
+        plan = new AttestedViteBuildPlan(npmDir, normalizedOutDir, licenseFile,
+            exactScripts, initializerBases, chunkNames, copiedDirs);
+        return true;
+    }
+
+    internal static bool TryAttestedViteScriptAsset(
+        AttestedViteBuildPlan plan,
+        Dictionary<string, byte[]> sourceFiles,
+        string rootPrefix,
+        string assetPath)
+    {
+        if (!assetPath.StartsWith("staticwebassets/", StringComparison.Ordinal))
+            return false;
+        var relPath = assetPath["staticwebassets/".Length..];
+        if (relPath.Length == 0 || relPath.Contains('/'))
+            return false;
+        if (sourceFiles.ContainsKey(rootPrefix + plan.OutDir + "/" + relPath))
+            return false;
+        if (plan.ExactScriptFileNames.Contains(relPath))
+            return true;
+        foreach (var initBase in plan.InitializerBaseNames)
+        {
+            if (relPath.Equals(initBase + ".lib.module.js", StringComparison.Ordinal) ||
+                Regex.IsMatch(relPath, @"\A" + Regex.Escape(initBase) + @"\.[A-Za-z0-9_\-]{6,16}\.lib\.module\.js\z",
+                    RegexOptions.CultureInvariant))
+                return true;
+        }
+        var chunkMatch = Regex.Match(relPath,
+            @"\A(?<chunk>[A-Za-z0-9._\-]+)\.[A-Za-z0-9_\-]{6,16}\.bundle\.js\z",
+            RegexOptions.CultureInvariant);
+        return chunkMatch.Success && plan.ChunkNames.Contains(chunkMatch.Groups["chunk"].Value);
+    }
+
+    internal static bool TryAttestedViteCssAsset(
+        AttestedViteBuildPlan plan,
+        Dictionary<string, byte[]> sourceFiles,
+        string rootPrefix,
+        string assetPath,
+        HashSet<string> verifiedDeps)
+    {
+        if (!assetPath.StartsWith("staticwebassets/", StringComparison.Ordinal) ||
+            !assetPath.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var relPath = assetPath["staticwebassets/".Length..];
+        if (sourceFiles.ContainsKey(rootPrefix + plan.OutDir + "/" + relPath))
+            return false;
+        var slash = relPath.IndexOf('/');
+        if (slash <= 0)
+            return false;
+        var topSubdir = relPath[..slash];
+        return plan.CopiedDependencyDirs.Any(pair =>
+            pair.Subdir.Equals(topSubdir, StringComparison.Ordinal) &&
+            verifiedDeps.Contains(pair.Dependency));
     }
     private static bool VerifyAssemblyMetadataConsistency(byte[] bytes, string expectedRepository, string expectedCommit)
     {

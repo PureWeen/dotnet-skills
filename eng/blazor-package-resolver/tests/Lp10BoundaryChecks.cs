@@ -908,6 +908,239 @@ internal static class Lp10BoundaryChecks
                 Reject("duplicate JSON " + surface, () => Dispatch(pkgBytes, releaseBytes, bundle,
                     BuildAttestation(pkgBytes, releaseBytes, bundle, sourceBytes), sourceBytes));
             }
+
+            const string viteConfigText =
+                "import { defineConfig } from 'vite';\n" +
+                "const outDir = 'wwwroot';\n" +
+                "const initializer = 'Example.Controls.lib.module.js';\n" +
+                "const entries = { app: 'assets/index.ts', api: 'assets/lib.ts' };\n" +
+                "const fixedNames = { api: 'index.js' };\n" +
+                "function emitInit() { return { name: 'init', generateBundle() { this.emitFile({ type: 'asset', fileName: initializer }); } }; }\n" +
+                "export default defineConfig({\n" +
+                "  plugins: [emitInit()],\n" +
+                "  build: {\n" +
+                "    outDir,\n" +
+                "    license: { fileName: 'THIRD-PARTY-LICENSES.md' },\n" +
+                "    rolldownOptions: {\n" +
+                "      input: entries,\n" +
+                "      output: {\n" +
+                "        entryFileNames: (chunk) => fixedNames[chunk.name] ?? '[name].[hash].bundle.js',\n" +
+                "        chunkFileNames: '[name].[hash].bundle.js',\n" +
+                "        codeSplitting: { groups: [{ name: 'vendor', test: /vendor/ }] }\n" +
+                "      }\n" +
+                "    }\n" +
+                "  }\n" +
+                "});\n";
+            const string viteWorkflowText =
+                "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n" +
+                "    defaults:\n      run:\n        working-directory: ./src\n" +
+                "    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n";
+            var vitePkgJson = "{\"name\":\"controls\",\"scripts\":{\"build\":\"vite build && tsc\"},\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"u8.ToArray();
+            var viteLockJson = "{\"name\":\"controls\",\"lockfileVersion\":3,\"packages\":{\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}},\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}}}"u8.ToArray();
+            var vitePkg = BuildZip(
+                ("Example.Controls.nuspec", nuspec),
+                ("staticwebassets/Example.Controls.a1b2c3d4.lib.module.js", builtJs),
+                ("staticwebassets/app.a1b2c3d4.bundle.js", builtJs),
+                ("staticwebassets/vendor.a1b2c3d4.bundle.js", builtJs),
+                ("staticwebassets/lit-html.a1b2c3d4.bundle.js", builtJs),
+                ("staticwebassets/index.js", builtJs));
+            var viteSrc = BuildZip(
+                ($"controls-{commit}/.github/workflows/release.yml", Encoding.UTF8.GetBytes(viteWorkflowText)),
+                ($"controls-{commit}/src/Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+                ($"controls-{commit}/src/package.json", vitePkgJson),
+                ($"controls-{commit}/src/package-lock.json", viteLockJson),
+                ($"controls-{commit}/src/vite.config.ts", Encoding.UTF8.GetBytes(viteConfigText)),
+                ($"controls-{commit}/src/tsconfig.json", "{\"compilerOptions\":{\"outDir\":\"wwwroot\"}}"u8.ToArray()),
+                ($"controls-{commit}/src/assets/index.ts", "export const load = () => import('lit-html');"u8.ToArray()),
+                ($"controls-{commit}/src/assets/lib.ts", "export const y = 2;"u8.ToArray()));
+            var viteBundle = BundleFor(vitePkg);
+            var vitePositive = Dispatch(vitePkg, vitePkg, viteBundle,
+                BuildAttestation(vitePkg, vitePkg, viteBundle, viteSrc), viteSrc);
+            Check(vitePositive.BranchId == "provenance-attributed" &&
+                vitePositive.Finding!.Contains("5 attested Vite/npm build scripts", StringComparison.Ordinal),
+                $"Attested Vite build scripts must attribute (got {vitePositive.BranchId}: {vitePositive.MissingFact})");
+
+            var viteExtraJsPkg = BuildZip(
+                ("Example.Controls.nuspec", nuspec),
+                ("staticwebassets/index.js", builtJs),
+                ("staticwebassets/undeclared.js", builtJs));
+            var viteExtraBundle = BundleFor(viteExtraJsPkg);
+            Reject("Vite undeclared staticwebassets script", () => Dispatch(viteExtraJsPkg, viteExtraJsPkg, viteExtraBundle,
+                BuildAttestation(viteExtraJsPkg, viteExtraJsPkg, viteExtraBundle, viteSrc), viteSrc));
+
+            var viteWwwrootPkg = BuildZip(
+                ("Example.Controls.nuspec", nuspec),
+                ("wwwroot/index.js", builtJs));
+            var viteWwwrootBundle = BundleFor(viteWwwrootPkg);
+            Reject("Vite wwwroot path outside staticwebassets", () => Dispatch(viteWwwrootPkg, viteWwwrootPkg, viteWwwrootBundle,
+                BuildAttestation(viteWwwrootPkg, viteWwwrootPkg, viteWwwrootBundle, viteSrc), viteSrc));
+
+            var vitePrebuiltSrc = BuildZip(
+                ($"controls-{commit}/.github/workflows/release.yml", Encoding.UTF8.GetBytes(viteWorkflowText)),
+                ($"controls-{commit}/src/Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+                ($"controls-{commit}/src/package.json", vitePkgJson),
+                ($"controls-{commit}/src/package-lock.json", viteLockJson),
+                ($"controls-{commit}/src/vite.config.ts", Encoding.UTF8.GetBytes(viteConfigText)),
+                ($"controls-{commit}/src/tsconfig.json", "{}"u8.ToArray()),
+                ($"controls-{commit}/src/assets/index.ts", "export const load = () => import('lit-html');"u8.ToArray()),
+                ($"controls-{commit}/src/assets/lib.ts", "export const y = 2;"u8.ToArray()),
+                ($"controls-{commit}/src/wwwroot/existing.js", "export const prebuilt = true;"u8.ToArray()));
+            Reject("Vite precommitted wwwroot JS in source archive", () => Dispatch(vitePkg, vitePkg, viteBundle,
+                BuildAttestation(vitePkg, vitePkg, viteBundle, vitePrebuiltSrc), vitePrebuiltSrc));
+
+            byte[] MakeViteSrc(string? wfOverride = null, byte[]? pkgJsonOverride = null, string? configOverride = null, string? indexTsOverride = null) =>
+                BuildZip(
+                    ($"controls-{commit}/.github/workflows/release.yml", Encoding.UTF8.GetBytes(wfOverride ?? viteWorkflowText)),
+                    ($"controls-{commit}/src/Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+                    ($"controls-{commit}/src/package.json", pkgJsonOverride ?? vitePkgJson),
+                    ($"controls-{commit}/src/package-lock.json", viteLockJson),
+                    ($"controls-{commit}/src/vite.config.ts", Encoding.UTF8.GetBytes(configOverride ?? viteConfigText)),
+                    ($"controls-{commit}/src/tsconfig.json", "{\"compilerOptions\":{\"outDir\":\"wwwroot\"}}"u8.ToArray()),
+                    ($"controls-{commit}/src/assets/index.ts", Encoding.UTF8.GetBytes(indexTsOverride ?? "export const load = () => import('lit-html');")),
+                    ($"controls-{commit}/src/assets/lib.ts", "export const y = 2;"u8.ToArray()));
+
+            foreach (var (label, wf) in new (string, string)[]
+            {
+                ("commented-out npm ci in workflow",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      # - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("conditional npm run build step (if: after inline run:)",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n        if: false\n      - run: dotnet pack\n"),
+                ("conditional npm run build step (if: after multiline run: |)",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: |\n          npm run build\n        if: false\n      - run: dotnet pack\n"),
+                ("continue-on-error after multiline run: |",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: |\n          npm run build\n        continue-on-error: true\n      - run: dotnet pack\n"),
+                ("wrong working-directory after multiline run: |",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: |\n          npm run build\n        working-directory: ./other\n      - run: dotnet pack\n"),
+                ("parent traversal working-directory ../src",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ../src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("embedded traversal working-directory src/../src",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: src/../src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("backslash working-directory .\\src",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: .\\src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("job-level if: false placed after steps:",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n      - uses: actions/upload-artifact@v4\n    if: false\n"),
+                ("job-level continue-on-error: true placed after steps:",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n      - uses: actions/upload-artifact@v4\n    continue-on-error: true\n"),
+                ("npm install instead of npm ci",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm install\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("missing npm run build in workflow",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: dotnet pack\n"),
+                ("folded YAML scalar run: >",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: >\n          npm ci\n          npm run build\n          dotnet pack\n"),
+                ("folded YAML scalar run: >-",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: >-\n          npm ci\n          npm run build\n          dotnet pack\n"),
+                ("folded YAML scalar run: >+",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: >+\n          npm ci\n          npm run build\n          dotnet pack\n"),
+                ("top-level defaults: before jobs:",
+                    "name: release\ndefaults:\n  run:\n    working-directory: ./other\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("top-level defaults: after jobs:",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\ndefaults:\n  run:\n    working-directory: ./other\n"),
+                ("top-level flow-style defaults: after jobs:",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n\"defaults\" : { run: { working-directory: ./other } }\n"),
+                ("disallowed step shell override",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n        shell: echo {0}\n      - run: dotnet pack\n"),
+                ("disallowed job defaults shell override",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n        shell: echo {0}\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("trailing backtick on npm ci",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci `\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("trailing backtick on npm run build",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build `\n      - run: dotnet pack\n")
+            })
+            {
+                var badWfSrc = MakeViteSrc(wfOverride: wf);
+                Reject("Vite " + label, () => Dispatch(vitePkg, vitePkg, viteBundle,
+                    BuildAttestation(vitePkg, vitePkg, viteBundle, badWfSrc), badWfSrc));
+            }
+
+            var dotnetBacktickWfSrc = MakeViteSrc(wfOverride:
+                "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: |\n          dotnet pack `\n            -c Release\n  sign-assemblies:\n    runs-on: windows-latest\n    steps:\n      - run: >\n          dotnet tool run sign code\n");
+            Check(Dispatch(vitePkg, vitePkg, viteBundle,
+                BuildAttestation(vitePkg, vitePkg, viteBundle, dotnetBacktickWfSrc), dotnetBacktickWfSrc).BranchId == "provenance-attributed",
+                "Expected multiline dotnet pack with trailing backtick continuation and downstream job run: > to be accepted");
+
+            var reverseDecoyCfgSrc = MakeViteSrc(configOverride:
+                viteConfigText.Replace("    outDir,",
+                    "    note: \"outDir: '../bad', license: { fileName: '../bad.md' }, entryFileNames: '[name].js', chunkFileNames: '[name].js'\",\n    outDir: 'wwwroot',",
+                    StringComparison.Ordinal));
+            Check(Dispatch(vitePkg, vitePkg, viteBundle,
+                BuildAttestation(vitePkg, vitePkg, viteBundle, reverseDecoyCfgSrc), reverseDecoyCfgSrc).BranchId == "provenance-attributed",
+                "Expected invalid property decoys inside a string literal alongside valid properties to be accepted");
+
+            foreach (var badHook in new[] { "prebuild", "postbuild", "preinstall", "install", "postinstall", "preprepare", "postprepare", "prepublish", "prepublishOnly", "dependencies" })
+            {
+                var badHookSrc = MakeViteSrc(pkgJsonOverride: Encoding.UTF8.GetBytes(
+                    $"{{\"name\":\"controls\",\"scripts\":{{\"build\":\"vite build && tsc\",\"{badHook}\":\"node inject.js\"}},\"dependencies\":{{\"lit-html\":\"^3.3.3\"}}}}"));
+                Reject("Vite disallowed " + badHook + " lifecycle script in package.json", () => Dispatch(vitePkg, vitePkg, viteBundle,
+                    BuildAttestation(vitePkg, vitePkg, viteBundle, badHookSrc), badHookSrc));
+            }
+
+            foreach (var (cfgLabel, cfgText) in new (string, string)[]
+            {
+                ("trailing config outside export default defineConfig",
+                    "import { defineConfig } from 'vite';\nexport default defineConfig({});\n" +
+                    viteConfigText.Replace("export default defineConfig(", "const unused = (", StringComparison.Ordinal)),
+                ("trailing executable template literal after valid defineConfig",
+                    viteConfigText.TrimEnd() + "\n`${process.env.NODE_ENV = \"overridden\"}`\n"),
+                ("invalid outDir concatenation expression",
+                    viteConfigText.Replace("    outDir,", "    outDir: 'wwwroot' + '/../bad',", StringComparison.Ordinal)),
+                ("invalid outDir multiline concatenation expression",
+                    viteConfigText.Replace("    outDir,", "    outDir: 'wwwroot'\n      + '/../bad',", StringComparison.Ordinal)),
+                ("string decoy outDir before and after invalid outDir",
+                    viteConfigText.Replace("    outDir,",
+                        "    decoy1: \"outDir: 'wwwroot'\", outDir: '../bad', decoy2: \"outDir: 'wwwroot'\",", StringComparison.Ordinal)),
+                ("invalid initializer fileName identifier concatenation",
+                    viteConfigText.Replace("fileName: initializer", "fileName: initializer + '.x'", StringComparison.Ordinal)),
+                ("invalid initializer fileName literal concatenation",
+                    viteConfigText.Replace("fileName: initializer", "fileName: 'Example.Controls.lib.module.js' + '.x'", StringComparison.Ordinal)),
+                ("invalid entries value concatenation",
+                    viteConfigText.Replace("api: 'assets/lib.ts'", "api: 'assets/lib.ts' + '.x'", StringComparison.Ordinal)),
+                ("invalid fixedNames value concatenation",
+                    viteConfigText.Replace("api: 'index.js'", "api: 'index.js' + '.x'", StringComparison.Ordinal)),
+                ("invalid license.fileName path traversal",
+                    viteConfigText.Replace("'THIRD-PARTY-LICENSES.md'", "'../NOTICE.md'", StringComparison.Ordinal)),
+                ("string decoy license.fileName before and after invalid license path",
+                    viteConfigText.Replace("license: { fileName: 'THIRD-PARTY-LICENSES.md' }",
+                        "note1: \"license: { fileName: 'THIRD-PARTY-LICENSES.md' }\", license: { fileName: '../NOTICE.md' }, note2: \"license: { fileName: 'THIRD-PARTY-LICENSES.md' }\"",
+                        StringComparison.Ordinal)),
+                ("missing entryFileNames bundle pattern",
+                    viteConfigText.Replace("entryFileNames: (chunk) => fixedNames[chunk.name] ?? '[name].[hash].bundle.js'",
+                        "entryFileNames: (chunk) => fixedNames[chunk.name] ?? '[name].js'", StringComparison.Ordinal)),
+                ("missing chunkFileNames bundle pattern",
+                    viteConfigText.Replace("chunkFileNames: '[name].[hash].bundle.js'",
+                        "chunkFileNames: '[name].js'", StringComparison.Ordinal)),
+                ("string decoy entryFileNames before and after invalid entryFileNames",
+                    viteConfigText.Replace("entryFileNames: (chunk) => fixedNames[chunk.name] ?? '[name].[hash].bundle.js'",
+                        "d1: \"entryFileNames: '[name].[hash].bundle.js'\", entryFileNames: '[name].js', d2: \"entryFileNames: '[name].[hash].bundle.js'\"",
+                        StringComparison.Ordinal)),
+                ("string decoy chunkFileNames before and after invalid chunkFileNames",
+                    viteConfigText.Replace("chunkFileNames: '[name].[hash].bundle.js'",
+                        "d1: \"chunkFileNames: '[name].[hash].bundle.js'\", chunkFileNames: '[name].js', d2: \"chunkFileNames: '[name].[hash].bundle.js'\"",
+                        StringComparison.Ordinal)),
+                ("string decoy inside codeSplitting.groups array",
+                    viteConfigText.Replace("groups: [{ name: 'vendor', test: /vendor/ }]",
+                        "groups: [\"name: 'vendor', test: /vendor/\"]", StringComparison.Ordinal))
+            })
+            {
+                var badCfgSrc = MakeViteSrc(configOverride: cfgText);
+                Reject("Vite " + cfgLabel, () => Dispatch(vitePkg, vitePkg, viteBundle,
+                    BuildAttestation(vitePkg, vitePkg, viteBundle, badCfgSrc), badCfgSrc));
+            }
+
+            var commentedImportSrc = MakeViteSrc(indexTsOverride: "// import('lit-html');\nexport const x = 'import(\"lit-html\")';");
+            Reject("Vite commented-out or string-literal dynamic import", () => Dispatch(vitePkg, vitePkg, viteBundle,
+                BuildAttestation(vitePkg, vitePkg, viteBundle, commentedImportSrc), commentedImportSrc));
+
+            foreach (var manifestEntryName in new[] { "readiness-bundler-manifest.json", "READINESS-BUNDLER-MANIFEST.JSON" })
+            {
+                var viteWithBadManifest = BuildZip(
+                    ("Example.Controls.nuspec", nuspec),
+                    ("staticwebassets/index.js", builtJs),
+                    (manifestEntryName, "{\"schema_version\":1,\"assets\":[]}"u8.ToArray()));
+                var badManifestBundle = BundleFor(viteWithBadManifest);
+                Reject("Vite fallback disabled when " + manifestEntryName + " is present", () =>
+                    Dispatch(viteWithBadManifest, viteWithBadManifest, badManifestBundle,
+                        BuildAttestation(viteWithBadManifest, viteWithBadManifest, badManifestBundle, viteSrc), viteSrc));
+            }
         }
         Check(failures.Count == 0, "Re-review fail-closed regressions: " + string.Join("; ", failures));
         Console.WriteLine("LP-10 strict helper/source/per-entry provenance regressions passed.");

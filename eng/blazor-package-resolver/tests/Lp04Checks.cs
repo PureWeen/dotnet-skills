@@ -636,5 +636,197 @@ internal static class Lp04Checks
         var badModeARes = Dispatch5(badModeAPkg, badModeAPkg, badModeABnd, badModeAAtt, modeASrc);
         check(badModeARes.BranchId == "provenance-notices-unverified" && badModeARes.Decision == "escalated",
             "LP-04 Mode A rejects incomplete THIRD-PARTY-LICENSES.md");
+
+        // Attested Vite build.license Mode A positive & negative boundary checks
+        const string viteConfig =
+            "import { defineConfig } from 'vite';\n" +
+            "import { cpSync } from 'node:fs';\n" +
+            "const outDir = 'wwwroot';\n" +
+            "const entries = { index: 'assets/index.ts' };\n" +
+            "cpSync('node_modules/lit-html/themes', `${outDir}/themes`);\n" +
+            "export default defineConfig({\n" +
+            "  build: {\n" +
+            "    outDir,\n" +
+            "    license: { fileName: 'THIRD-PARTY-LICENSES.md' },\n" +
+            "    rolldownOptions: {\n" +
+            "      input: entries,\n" +
+            "      output: {\n" +
+            "        entryFileNames: '[name].[hash].bundle.js',\n" +
+            "        chunkFileNames: '[name].[hash].bundle.js',\n" +
+            "        codeSplitting: { groups: [{ name: 'lit', test: /lit/ }] }\n" +
+            "      }\n" +
+            "    }\n" +
+            "  }\n" +
+            "});\n";
+        const string viteWorkflow =
+            "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n" +
+            "    defaults:\n      run:\n        working-directory: ./src\n" +
+            "    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n";
+        var viteCss = "/* theme css */\n.igx-button { color: red; }\n"u8.ToArray();
+        var viteTplBytes = Encoding.UTF8.GetBytes(
+            "# Licenses\n\nThe app bundles dependencies which contain the following licenses:\n\n" +
+            Encoding.UTF8.GetString(tplBytes)["# Licenses\n\n".Length..]);
+        var vitePkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", viteTplBytes),
+            ("staticwebassets/index.a1b2c3d4.bundle.js", bundledScript),
+            ("staticwebassets/themes/light/bootstrap.css", viteCss));
+        var viteLockWithExcluded =
+            "{\"name\":\"controls\",\"lockfileVersion\":3,\"packages\":{" +
+            "\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}}," +
+            "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"dependencies\":{\"@types/trusted-types\":\"^2.0.0\",\"@lit-labs/ssr-dom-shim\":\"^1.6.0\"}}," +
+            "\"node_modules/@types/trusted-types\":{\"version\":\"2.0.7\",\"license\":\"MIT\"}," +
+            "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\"}}}";
+        byte[] BuildViteSource(string lockJson, string configText = viteConfig, (string Name, byte[] Bytes)? extraEntry = null)
+        {
+            var entries = new List<(string, byte[])>
+            {
+                ($"controls-{commit}/.github/workflows/release.yml", Encoding.UTF8.GetBytes(viteWorkflow)),
+                ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+                ($"controls-{commit}/src/assets/index.ts", sourceScript),
+                ($"controls-{commit}/src/vite.config.ts", Encoding.UTF8.GetBytes(configText)),
+                ($"controls-{commit}/src/tsconfig.json", "{\"compilerOptions\":{\"outDir\":\"wwwroot\"}}"u8.ToArray()),
+                ($"controls-{commit}/src/package.json", "{\"name\":\"controls\",\"scripts\":{\"build\":\"vite build && tsc\"},\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"u8.ToArray()),
+                ($"controls-{commit}/src/package-lock.json", Encoding.UTF8.GetBytes(lockJson))
+            };
+            if (extraEntry is { } extra)
+                entries.Add(extra);
+            return BuildZip(entries.ToArray());
+        }
+        var viteSrcPos = BuildViteSource(viteLockWithExcluded);
+        var (viteBndPos, viteAttPos) = MakeProvenance(vitePkg, vitePkg, viteSrcPos);
+        var viteResPos = Dispatch5(vitePkg, vitePkg, viteBndPos, viteAttPos, viteSrcPos);
+        check(viteResPos.BranchId == "provenance-notices-verified" && viteResPos.Decision == "deterministic" &&
+            viteResPos.Finding!.Contains("@lit-labs/ssr-dom-shim@1.6.0, @types/trusted-types@2.0.7", StringComparison.Ordinal),
+            $"LP-04 Vite build.license Mode A positive failed: {viteResPos.BranchId} ({viteResPos.MissingFact})");
+
+        // Negative 1: extra notice section not in lockfile closure (noticeSections subset-of closure check)
+        var extraSectionTpl = Encoding.UTF8.GetBytes(
+            Encoding.UTF8.GetString(viteTplBytes) +
+            "\n\n## unrelated-pkg - 1.0.0 (MIT)\n\nCopyright 2026 Other\n" +
+            CanonicalLicenseBody.Clauses("MIT"));
+        var extraSectionPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", extraSectionTpl),
+            ("staticwebassets/index.a1b2c3d4.bundle.js", bundledScript),
+            ("staticwebassets/themes/light/bootstrap.css", viteCss));
+        var (extraSecBnd, extraSecAtt) = MakeProvenance(extraSectionPkg, extraSectionPkg, viteSrcPos);
+        var extraSecRes = Dispatch5(extraSectionPkg, extraSectionPkg, extraSecBnd, extraSecAtt, viteSrcPos);
+        check(extraSecRes.BranchId == "provenance-notices-unverified" &&
+            extraSecRes.MissingFact!.Contains("unrelated-pkg@1.0.0", StringComparison.Ordinal),
+            "LP-04 rejects notice sections not present in runtime closure");
+
+        // Negative 2: excluded @types/* package with non-canonical / copyleft license (e.g. GPL-3.0-only, LicenseRef-Custom, lowercase mit)
+        foreach (var badExcludedLicense in new[] { "GPL-3.0-only", "LicenseRef-Custom", "mit" })
+        {
+            var badLock = viteLockWithExcluded.Replace("\"version\":\"2.0.7\",\"license\":\"MIT\"",
+                $"\"version\":\"2.0.7\",\"license\":\"{badExcludedLicense}\"", StringComparison.Ordinal);
+            var badSrc = BuildViteSource(badLock);
+            var (badBnd, badAtt) = MakeProvenance(vitePkg, vitePkg, badSrc);
+            var badRes = Dispatch5(vitePkg, vitePkg, badBnd, badAtt, badSrc);
+            check(badRes.BranchId == "provenance-notices-unverified" &&
+                badRes.MissingFact!.Contains("@types/trusted-types@2.0.7", StringComparison.Ordinal),
+                $"LP-04 rejects excluded @types package with {badExcludedLicense} license");
+        }
+
+        // Negative 3: @lit-labs/ssr-dom-shim with dependencies, main, exports, optionalDependencies, or peerDependencies in package-lock.json
+        var ssrWithResolvableSubdepLock = viteLockWithExcluded.Replace(
+            "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\"}",
+            "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\",\"dependencies\":{\"other\":\"1.0.0\"}}," +
+            "\"node_modules/other\":{\"version\":\"1.0.0\",\"license\":\"MIT\"}",
+            StringComparison.Ordinal);
+        var ssrWithSubdepTpl = Encoding.UTF8.GetBytes(
+            Encoding.UTF8.GetString(viteTplBytes) +
+            "\n\n## other - 1.0.0 (MIT)\n\nCopyright 2026 Other\n" +
+            CanonicalLicenseBody.Clauses("MIT"));
+        var ssrWithSubdepPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", ssrWithSubdepTpl),
+            ("staticwebassets/index.a1b2c3d4.bundle.js", bundledScript),
+            ("staticwebassets/themes/light/bootstrap.css", viteCss));
+        var ssrSubdepSrc = BuildViteSource(ssrWithResolvableSubdepLock);
+        var (ssrSubdepBnd, ssrSubdepAtt) = MakeProvenance(ssrWithSubdepPkg, ssrWithSubdepPkg, ssrSubdepSrc);
+        var ssrSubdepRes = Dispatch5(ssrWithSubdepPkg, ssrWithSubdepPkg, ssrSubdepBnd, ssrSubdepAtt, ssrSubdepSrc);
+        check(ssrSubdepRes.BranchId == "provenance-notices-unverified" &&
+            ssrSubdepRes.MissingFact!.Contains("@lit-labs/ssr-dom-shim@1.6.0", StringComparison.Ordinal),
+            "LP-04 rejects @lit-labs/ssr-dom-shim when it declares sub-dependencies");
+
+        foreach (var extraField in new[]
+        {
+            "\"main\":\"index.js\"",
+            "\"exports\":{\".\":\"./index.js\"}",
+            "\"optionalDependencies\":{}",
+            "\"peerDependencies\":{}"
+        })
+        {
+            var badSsrLock = viteLockWithExcluded.Replace(
+                "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\"}",
+                "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\"," + extraField + "}",
+                StringComparison.Ordinal);
+            var badSsrSrc = BuildViteSource(badSsrLock);
+            var (badSsrBnd, badSsrAtt) = MakeProvenance(vitePkg, vitePkg, badSsrSrc);
+            var badSsrRes = Dispatch5(vitePkg, vitePkg, badSsrBnd, badSsrAtt, badSsrSrc);
+            check(badSsrRes.BranchId == "provenance-notices-unverified" &&
+                badSsrRes.MissingFact!.Contains("@lit-labs/ssr-dom-shim@1.6.0", StringComparison.Ordinal),
+                $"LP-04 rejects @lit-labs/ssr-dom-shim with {extraField}");
+        }
+
+        foreach (var malformedDepsField in new[]
+        {
+            "\"dependencies\":[]",
+            "\"dependencies\":\"x\"",
+            "\"dependencies\":null"
+        })
+        {
+            var badSsrLock = viteLockWithExcluded.Replace(
+                "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\"}",
+                "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\"," + malformedDepsField + "}",
+                StringComparison.Ordinal);
+            var badSsrSrc = BuildViteSource(badSsrLock);
+            var (badSsrBnd, badSsrAtt) = MakeProvenance(vitePkg, vitePkg, badSsrSrc);
+            var badSsrRes = Dispatch5(vitePkg, vitePkg, badSsrBnd, badSsrAtt, badSsrSrc);
+            check(badSsrRes.BranchId == "provenance-notices-unverified",
+                $"LP-04 rejects @lit-labs/ssr-dom-shim with malformed {malformedDepsField}");
+        }
+
+        // Negative 4: unmapped CSS file outside declared cpSync destination
+        var unmappedCssPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", viteTplBytes),
+            ("staticwebassets/index.a1b2c3d4.bundle.js", bundledScript),
+            ("staticwebassets/unmapped/other.css", viteCss));
+        var (unmappedCssBnd, unmappedCssAtt) = MakeProvenance(unmappedCssPkg, unmappedCssPkg, viteSrcPos);
+        check(Dispatch5(unmappedCssPkg, unmappedCssPkg, unmappedCssBnd, unmappedCssAtt, viteSrcPos).BranchId ==
+            "provenance-notices-unverified", "LP-04 rejects CSS outside declared cpSync target directory");
+
+        // Negative 5: THIRD-PARTY-LICENSES.md committed in source archive (by path or normalized text, including >512 KiB)
+        var committedNoticeByPathOnlySrc = BuildViteSource(viteLockWithExcluded,
+            extraEntry: ($"controls-{commit}/docs/THIRD-PARTY-LICENSES.md", "# Unrelated placeholder\n"u8.ToArray()));
+        var (committedPathBnd, committedPathAtt) = MakeProvenance(vitePkg, vitePkg, committedNoticeByPathOnlySrc);
+        check(Dispatch5(vitePkg, vitePkg, committedPathBnd, committedPathAtt, committedNoticeByPathOnlySrc).BranchId ==
+            "provenance-notices-unverified", "LP-04 rejects nested static */THIRD-PARTY-LICENSES.md path in source archive");
+
+        var largePadding = new string('x', 530 * 1024);
+        var largeViteTplLf = Encoding.UTF8.GetString(viteTplBytes).Replace(
+            "Copyright 2026 Google LLC",
+            $"Copyright 2026 Google LLC ({largePadding})",
+            StringComparison.Ordinal);
+        var largeViteTplBytes = Encoding.UTF8.GetBytes(largeViteTplLf);
+        var largeViteTplCrlfBytes = Encoding.UTF8.GetBytes(largeViteTplLf.Replace("\n", "\r\n", StringComparison.Ordinal));
+        var largeVitePkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", largeViteTplBytes),
+            ("staticwebassets/index.a1b2c3d4.bundle.js", bundledScript),
+            ("staticwebassets/themes/light/bootstrap.css", viteCss));
+        var committedLargeNoticeSrc = BuildViteSource(viteLockWithExcluded,
+            extraEntry: ($"controls-{commit}/docs/STATIC-NOTICE-COPY.txt", largeViteTplCrlfBytes));
+        var (committedBnd, committedAtt) = MakeProvenance(largeVitePkg, largeVitePkg, committedLargeNoticeSrc);
+        check(Dispatch5(largeVitePkg, largeVitePkg, committedBnd, committedAtt, committedLargeNoticeSrc).BranchId ==
+            "provenance-notices-unverified", "LP-04 rejects >512 KiB static notice file matching normalized text under a different filename");
     }
 }

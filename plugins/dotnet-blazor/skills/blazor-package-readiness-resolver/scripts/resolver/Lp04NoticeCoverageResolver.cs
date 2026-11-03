@@ -156,19 +156,59 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             return unverified("source archive lacks a valid package-lock.json covering declared runtime npm dependencies with single SPDX license IDs");
 
         var closureComponents = closure.Select(dependency => (dependency.Name, dependency.Version)).ToHashSet();
-        foreach (var asset in inventory.Assets)
+        var hasManifestEntry = Lp10BinaryAttributionResolver.HasBundlerManifestEntry(prov.PackageEntries);
+        Lp10BinaryAttributionResolver.AttestedViteBuildPlan? vitePlan = null;
+        if (!hasManifestEntry)
         {
-            if (!Lp10BinaryAttributionResolver.TryBundlerAsset(prov.PackageEntries, prov.SourceFiles,
-                    prov.RootPrefix, asset.Path, asset.Sha256, out var components) || components.Count == 0 ||
-                components.Any(component => !closureComponents.Contains(component)))
-                return unverified($"bundled web asset {asset.Path} lacks a digest-bound per-asset source/component map consistent with the lockfile");
+            Lp10BinaryAttributionResolver.TryResolveAttestedViteBuildPlan(
+                prov.PackageEntries, prov.SourceFiles, prov.RootPrefix, prov.WorkflowPath,
+                prov.Declaration.Id, out vitePlan);
         }
+
+        if (hasManifestEntry)
+        {
+            foreach (var asset in inventory.Assets)
+            {
+                if (!Lp10BinaryAttributionResolver.TryBundlerAsset(prov.PackageEntries, prov.SourceFiles,
+                        prov.RootPrefix, asset.Path, asset.Sha256, out var components) || components.Count == 0 ||
+                    components.Any(component => !closureComponents.Contains(component)))
+                    return unverified($"bundled web asset {asset.Path} lacks a digest-bound per-asset source/component map consistent with the lockfile");
+            }
+        }
+        else if (vitePlan is null ||
+                 !string.Equals(vitePlan.LicenseFileName, noticeFile, StringComparison.Ordinal) ||
+                 !IsGeneratedViteLicenseNotice(noticeFile, noticeText, vitePlan, prov))
+        {
+            return unverified("package lacks either a digest-bound per-asset bundler manifest or an attested Vite build.license notice configuration");
+        }
+
         var noticeSections = ParseNoticeSections(noticeText);
+        if (noticeSections.Count == 0)
+            return unverified($"root notice file {noticeFile} contains no valid third-party notice sections");
+
+        var closureMap = closure.ToDictionary(c => (c.Name, c.Version), c => c.License);
+        foreach (var ((secName, secVer), sec) in noticeSections)
+        {
+            if (!closureMap.TryGetValue((secName, secVer), out var expectedSpdx) ||
+                !string.Equals(sec.Spdx, expectedSpdx, StringComparison.Ordinal) ||
+                !CanonicalLicenseBody.Matches(sec.Spdx, sec.Body))
+                return unverified($"root notice file {noticeFile} contains an unverified or lockfile-mismatched notice entry for {secName}@{secVer}");
+        }
+
         var verifiedPackages = new List<string>();
+        var excludedLockEntries = new List<string>();
         foreach (var (pkgName, pkgVersion, pkgLicense) in closure)
         {
             if (!noticeSections.TryGetValue((pkgName, pkgVersion), out var section))
             {
+                if (vitePlan is not null &&
+                    CanonicalLicenseBody.Clauses(pkgLicense) is not null &&
+                    !IsPackageNamePresentInAssets(pkgName, inventory, prov.PackageEntries) &&
+                    IsViteExcludedNonBrowserDependency(pkgName, pkgVersion, lockEntry.Value))
+                {
+                    excludedLockEntries.Add($"{pkgName}@{pkgVersion}");
+                    continue;
+                }
                 return unverified($"root notice file {noticeFile} is missing a version-matched entry for runtime npm dependency {pkgName}@{pkgVersion}");
             }
             if (!string.Equals(section.Spdx, pkgLicense, StringComparison.Ordinal))
@@ -179,6 +219,20 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         }
         if (verifiedPackages.Count == 0)
             return unverified($"root notice file {noticeFile} verified zero runtime npm dependencies");
+
+        if (vitePlan is not null)
+        {
+            var verifiedSet = verifiedPackages.ToHashSet(StringComparer.Ordinal);
+            foreach (var asset in inventory.Assets)
+            {
+                var isAttributed = (asset.Path.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
+                                    asset.Path.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase))
+                    ? Lp10BinaryAttributionResolver.TryAttestedViteScriptAsset(vitePlan, prov.SourceFiles, prov.RootPrefix, asset.Path)
+                    : Lp10BinaryAttributionResolver.TryAttestedViteCssAsset(vitePlan, prov.SourceFiles, prov.RootPrefix, asset.Path, verifiedSet);
+                if (!isAttributed)
+                    return unverified($"bundled web asset {asset.Path} does not correspond to a declared Vite build output or copied dependency asset directory");
+            }
+        }
 
         foreach (var asset in inventory.Assets)
         {
@@ -204,14 +258,21 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         }
 
         var distinctPackages = verifiedPackages.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var orderedExcluded = excludedLockEntries.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
+        var assetAttributionPhrase = vitePlan is not null
+            ? "correspond to declared Vite build outputs"
+            : "have digest-bound producer-declared component/source maps";
+        var closureExclusionPhrase = orderedExcluded.Length > 0
+            ? $" (plus {orderedExcluded.Length} validated non-bundled type-only/SSR-shim lockfile entries: {string.Join(", ", orderedExcluded)})"
+            : "";
         var finding =
             $"{summary} SLSA v1 build provenance and third-party web-asset notice coverage verified for {prov.Declaration.Id} " +
             $"{prov.Declaration.Version} at repository {prov.Repository} commit {prov.Declaration.Commit} (workflow {prov.WorkflowPath}, " +
-            $"attested release package SHA-256 {prov.ReleasePackageSha256}): all {inventory.Assets.Count} shipped web assets have " +
-            $"digest-bound producer-declared component/source maps, with {runtimeDeps.Count} direct and {distinctPackages.Length} total " +
-            $"runtime npm dependencies in package-lock.json, " +
+            $"attested release package SHA-256 {prov.ReleasePackageSha256}): all {inventory.Assets.Count} shipped web assets " +
+            $"{assetAttributionPhrase}, with {runtimeDeps.Count} direct and {distinctPackages.Length} bundled " +
+            $"runtime npm dependencies in package-lock.json{closureExclusionPhrase}, " +
             $"and root {noticeFile} plus {licenseFile} preserve version-matched SPDX identifiers, copyright attributions, and full license texts " +
-            $"for the entire declared runtime closure ({string.Join(", ", distinctPackages)}). " +
+            $"for the entire bundled runtime closure ({string.Join(", ", distinctPackages)}). " +
             "This does not independently prove bundler-map completeness, exhaustive third-party discovery or legal sufficiency.";
         return new(RowId, ResolverId, Version, "provenance-notices-verified", "deterministic", "applicable",
             input.Inputs,
@@ -443,6 +504,93 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 holders.Add(holder);
         }
         return holders;
+    }
+
+    private static bool IsGeneratedViteLicenseNotice(string noticeFile, string noticeText,
+        Lp10BinaryAttributionResolver.AttestedViteBuildPlan vitePlan,
+        Lp10BinaryAttributionResolver.VerifiedProvenanceContext prov)
+    {
+        if (!noticeText.TrimStart().StartsWith("# Licenses", StringComparison.Ordinal) ||
+            !noticeText.Contains("The app bundles dependencies which contain the following licenses:", StringComparison.Ordinal))
+            return false;
+        if (!prov.PackageEntries.TryGetValue(noticeFile, out var pkgNoticeBytes))
+            return false;
+        var normalizedPkgNotice = noticeText.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+        foreach (var (srcPath, srcBytes) in prov.SourceFiles)
+        {
+            var relSrcPath = srcPath.StartsWith(prov.RootPrefix, StringComparison.Ordinal)
+                ? srcPath[prov.RootPrefix.Length..]
+                : srcPath;
+            if (relSrcPath.Equals(noticeFile, StringComparison.OrdinalIgnoreCase) ||
+                relSrcPath.EndsWith("/" + noticeFile, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (srcBytes.AsSpan().SequenceEqual(pkgNoticeBytes))
+                return false;
+            if (TryStrictUtf8(srcBytes, out var srcText) &&
+                srcText.Replace("\r\n", "\n", StringComparison.Ordinal).Trim().Equals(normalizedPkgNotice, StringComparison.Ordinal))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool IsPackageNamePresentInAssets(string pkgName, BundledWebAssetsEvidence inventory,
+        Dictionary<string, byte[]> packageEntries)
+    {
+        var shortName = pkgName.Contains('/') ? pkgName[(pkgName.LastIndexOf('/') + 1)..] : pkgName;
+        foreach (var asset in inventory.Assets)
+        {
+            if (!packageEntries.TryGetValue(asset.Path, out var raw) || !TryStrictUtf8(raw, out var text))
+                return true;
+            if (text.Contains(pkgName, StringComparison.OrdinalIgnoreCase) ||
+                (shortName.Length >= 6 && text.Contains(shortName, StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+        return false;
+    }
+
+    private static bool IsViteExcludedNonBrowserDependency(string pkgName, string pkgVersion, byte[] lockBytes)
+    {
+        if (!pkgName.StartsWith("@types/", StringComparison.Ordinal) &&
+            !string.Equals(pkgName, "@lit-labs/ssr-dom-shim", StringComparison.Ordinal))
+            return false;
+        if (!TryStrictUtf8(lockBytes, out var text))
+            return false;
+        try
+        {
+            using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = 64 });
+            if (!doc.RootElement.TryGetProperty("packages", out var packages) ||
+                packages.ValueKind != JsonValueKind.Object)
+                return false;
+            var matchedAny = false;
+            foreach (var prop in packages.EnumerateObject())
+            {
+                if (!prop.Name.Equals("node_modules/" + pkgName, StringComparison.Ordinal) &&
+                    !prop.Name.EndsWith("/node_modules/" + pkgName, StringComparison.Ordinal))
+                    continue;
+                if (prop.Value.ValueKind != JsonValueKind.Object ||
+                    !prop.Value.TryGetProperty("version", out var verProp) ||
+                    verProp.GetString() != pkgVersion)
+                    continue;
+                matchedAny = true;
+                if (prop.Value.TryGetProperty("dependencies", out var deps) &&
+                    (deps.ValueKind != JsonValueKind.Object || deps.EnumerateObject().Any()))
+                    return false;
+                if (prop.Value.TryGetProperty("optionalDependencies", out _) ||
+                    prop.Value.TryGetProperty("peerDependencies", out _) ||
+                    prop.Value.TryGetProperty("bin", out _) ||
+                    prop.Value.TryGetProperty("main", out _) ||
+                    prop.Value.TryGetProperty("module", out _) ||
+                    prop.Value.TryGetProperty("browser", out _) ||
+                    prop.Value.TryGetProperty("exports", out _) ||
+                    prop.Value.TryGetProperty("hasInstallScript", out _))
+                    return false;
+            }
+            return matchedAny;
+        }
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+        {
+            return false;
+        }
     }
 
 }
