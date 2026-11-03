@@ -69,10 +69,14 @@ bytes, not independent exhaustive verification of bundler internals.
 LP-04's supported source dependency profile validates every property name and string
 value in both entire source dependency JSON documents before use, including ignored
 metadata, nested arrays and unvisited lock entries. Malformed strings, including escaped
-unpaired surrogates, remain unverified; valid surrogate pairs are permitted. The same
+unpaired surrogates, remain unverified; valid surrogate pairs are permitted. Every object
+also rejects duplicate decoded property names using ordinal comparison, even for equal
+values or ignored fields. Different-case names are distinct; repeating a name in separate
+objects is permitted. The same
 whole-document check applies to the bundler manifest, provenance bundle/decoded statement
 and helper admission envelope/decoded payload. SPDX/npm admission already walks every
-name and string with strict UTF-8 conversion. Root `optionalDependencies` must be an empty
+name and string with strict UTF-8 conversion and rejects ordinal duplicates per object.
+Root `optionalDependencies` must be an empty
 object; `bundleDependencies` / `bundledDependencies` may only be `false` or empty arrays
 for a positive. Nonempty declarations and other shapes stay unverified. In every
 lockfile package entry (including root and unvisited entries), present `dependencies`

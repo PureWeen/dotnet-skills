@@ -856,6 +856,58 @@ internal static class Lp10BoundaryChecks
                         BuildAttestation(pkgBytes, releaseBytes, alteredBundle, sourceBytes), sourceBytes));
                 }
             }
+            foreach (var (label, json, valid) in new[]
+            {
+                ("identical root", "{\"key\":1,\"key\":1}", false),
+                ("conflicting root", "{\"key\":1,\"key\":2}", false),
+                ("decoded escaped name", "{\"key\":1,\"\\u006bey\":2}", false),
+                ("nested array", "{\"ignored\":[{\"key\":1,\"key\":2}]}", false),
+                ("case-distinct", "{\"key\":1,\"Key\":2}", true),
+                ("independent objects", "[{\"key\":1},{\"key\":2}]", true)
+            })
+            {
+                using var document = JsonDocument.Parse(json);
+                if (JsonStringValidation.IsWellFormed(document.RootElement) != valid)
+                    failures.Add("Duplicate JSON direct " + label);
+            }
+            const string duplicateMember = "\"ignored\":[{\"key\":1,\"key\":2}]";
+            foreach (var surface in new[] { "envelope", "payload" })
+            {
+                var receipt = surface == "envelope" ? WithMember(validAtt, duplicateMember) :
+                    ProvenanceTestAdmission.SignPayload(WithMember(ProvenanceTestAdmission.Payload(validAtt), duplicateMember));
+                using var opened = HelperAdmission.Open(receipt);
+                if (opened is not null) failures.Add("Duplicate JSON direct helper " + surface);
+                Reject("duplicate JSON helper " + surface,
+                    () => Dispatch(pkgBytes, releaseBytes, bundleBytes, receipt, sourceBytes));
+            }
+            foreach (var member in new[] { "\"schema_version\":1", duplicateMember })
+            {
+                var manifest = WithMember(JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    schema_version = 1,
+                    assets = new[] { new { path = "staticwebassets/built.js", sha256 = Catalog.Digest(builtJs),
+                        inputs = new[] { new { path = "src/index.ts",
+                            sha256 = Catalog.Digest("export const unrelated = 0;"u8.ToArray()) } },
+                        components = new[] { new { name = "example", version = "1.0.0" } } } }
+                }), member);
+                var package = BuildZip(("Example.Controls.nuspec", nuspec), ("wwwroot/matched.js", matchedJs),
+                    ("staticwebassets/built.js", builtJs), ("readiness-bundler-manifest.json", manifest));
+                var bundle = BundleFor(package);
+                if (Lp10BinaryAttributionResolver.TryBundlerAsset(
+                    new Dictionary<string, byte[]> { ["readiness-bundler-manifest.json"] = manifest },
+                    new Dictionary<string, byte[]> { [$"controls-{commit}/src/index.ts"] = "export const unrelated = 0;"u8.ToArray() },
+                    $"controls-{commit}/", "staticwebassets/built.js", Catalog.Digest(builtJs), out _))
+                    failures.Add("Duplicate JSON direct manifest " + member);
+                Reject("duplicate JSON manifest " + member, () => Dispatch(package, package, bundle,
+                    BuildAttestation(package, package, bundle, unmatchedWithLock), unmatchedWithLock));
+            }
+            foreach (var surface in new[] { "bundle", "statement" })
+            {
+                var bundle = surface == "bundle" ? WithMember(bundleBytes, duplicateMember) :
+                    BundleFor(releaseBytes, duplicateMember);
+                Reject("duplicate JSON " + surface, () => Dispatch(pkgBytes, releaseBytes, bundle,
+                    BuildAttestation(pkgBytes, releaseBytes, bundle, sourceBytes), sourceBytes));
+            }
         }
         Check(failures.Count == 0, "Re-review fail-closed regressions: " + string.Join("; ", failures));
         Console.WriteLine("LP-10 strict helper/source/per-entry provenance regressions passed.");

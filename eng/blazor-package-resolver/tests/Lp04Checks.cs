@@ -435,14 +435,15 @@ internal static class Lp04Checks
             check(outcome.Success, "Notice/lock license regressions: " + licenseFailures);
 
         var jsonOutcomes = new List<(bool Success, string Label)>();
-        void JsonCase(string label, string member, string text, bool positive = false)
+        void JsonCase(string label, string member, string text, bool positive = false, byte[]? package = null)
         {
+            package ??= modeAPkg;
             var source = BuildZip(sourceEntries.Select(entry => (entry.Name,
                 entry.Name.EndsWith("/" + member, StringComparison.Ordinal) ? Encoding.UTF8.GetBytes(text) : entry.Bytes)).ToArray());
             try
             {
-                var (bundle, attestation) = MakeProvenance(modeAPkg, modeAPkg, source);
-                var result = Dispatch5(modeAPkg, modeAPkg, bundle, attestation, source);
+                var (bundle, attestation) = MakeProvenance(package, package, source);
+                var result = Dispatch5(package, package, bundle, attestation, source);
                 var expected = positive ? "provenance-notices-verified" : "provenance-notices-unverified";
                 jsonOutcomes.Add((result.BranchId == expected, label + ": " + result.BranchId));
                 Console.WriteLine("Delta LP-04 JSON " + label + ": " + result.BranchId);
@@ -453,6 +454,45 @@ internal static class Lp04Checks
             }
         }
         const string dependencyJson = "\"dependencies\":{\"lit-html\":\"^3.3.3\"}";
+        const string mitEntry = "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"MIT\"}";
+        const string gplEntry = "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"GPL-3.0-only\"}";
+        foreach (var (label, first, second) in new[]
+        {
+            ("GPL then MIT", gplEntry, mitEntry), ("MIT then GPL", mitEntry, gplEntry)
+        })
+        {
+            JsonCase("duplicate lock package path " + label, "package-lock.json",
+                "{\"packages\":{" + first + "," + second + "}}", package: mitNoticePackage);
+            JsonCase("duplicate lock packages property " + label, "package-lock.json",
+                "{\"packages\":{" + first + "},\"packages\":{" + second + "}}", package: mitNoticePackage);
+        }
+        JsonCase("duplicate package dependency key", "package.json",
+            "{\"dependencies\":{\"lit-html\":\"^3.3.3\",\"lit-html\":\"^3.3.3\"}}");
+        JsonCase("duplicate package dependencies property", "package.json",
+            "{" + dependencyJson + "," + dependencyJson + "}");
+        JsonCase("duplicate package ignored key", "package.json",
+            "{" + dependencyJson + ",\"description\":1,\"description\":2}");
+        JsonCase("duplicate package escaped key", "package.json",
+            "{" + dependencyJson + ",\"description\":1,\"\\u0064escription\":2}");
+        JsonCase("duplicate package nested array key", "package.json",
+            "{" + dependencyJson + ",\"ignored\":[{\"same\":1,\"same\":2}]}");
+        const string bsdEntry = "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}";
+        JsonCase("duplicate lock ignored key", "package-lock.json",
+            "{\"packages\":{" + bsdEntry + "},\"ignored\":1,\"ignored\":2}");
+        JsonCase("duplicate lock nested array key", "package-lock.json",
+            "{\"packages\":{" + bsdEntry + "},\"ignored\":[{\"same\":1,\"same\":2}]}");
+        JsonCase("duplicate lock unvisited key", "package-lock.json",
+            "{\"packages\":{" + bsdEntry + ",\"node_modules/dev-only\":{\"version\":\"1\",\"version\":\"2\"}}}");
+        JsonCase("duplicate lock version", "package-lock.json",
+            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}}}");
+        JsonCase("duplicate lock identical license", "package-lock.json",
+            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"license\":\"BSD-3-Clause\"}}}");
+        JsonCase("ordinal package distinct keys", "package.json",
+            "{" + dependencyJson + ",\"ignored\":{\"same\":1,\"Same\":2}}", positive: true);
+        JsonCase("package independent object keys", "package.json",
+            "{" + dependencyJson + ",\"ignored\":[{\"same\":1},{\"same\":2}]}", positive: true);
+        JsonCase("lock independent and ordinal keys", "package-lock.json",
+            "{\"packages\":{" + bsdEntry + "},\"ignored\":[{\"same\":1,\"Same\":2},{\"same\":3}]}", positive: true);
         JsonCase("package surrogate dependency name", "package.json", "{\"dependencies\":{\"\\uD800\":\"1.0.0\"}}");
         JsonCase("package surrogate dependency value", "package.json", "{\"dependencies\":{\"lit-html\":\"\\uD800\"}}");
         JsonCase("lock surrogate version", "package-lock.json",

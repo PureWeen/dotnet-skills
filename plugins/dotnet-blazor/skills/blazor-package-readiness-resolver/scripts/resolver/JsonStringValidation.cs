@@ -15,8 +15,12 @@ internal static class JsonStringValidation
         switch (value.ValueKind)
         {
             case JsonValueKind.Object:
+                var names = new HashSet<string>(StringComparer.Ordinal);
                 foreach (var property in value.EnumerateObject())
-                    if (!WellFormedUtf16(property.Name) || !Visit(property.Value)) return false;
+                {
+                    var name = property.Name;
+                    if (!names.Add(name) || !WellFormedUtf16(name) || !Visit(property.Value)) return false;
+                }
                 return true;
             case JsonValueKind.Array:
                 return value.EnumerateArray().All(Visit);

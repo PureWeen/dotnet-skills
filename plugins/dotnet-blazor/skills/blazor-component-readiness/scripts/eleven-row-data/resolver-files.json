@@ -9,7 +9,7 @@
   "resolver/data/requirement-basis.json": "5f39232d19fce5c5ea40e3f6949b3b4f695fed616a75446e3a42e8015c05cd5e",
   "resolver/data/rubric.json": "0153ba6982fd1102df9193d3bc2b1957bac1e3478bd0d6cef5a78b0e6daa31cd",
   "resolver/HelperAdmission.cs": "664801054d016f63449f5aba8b43de21ae57830dfd0fad6012601acd492ffbc6",
-  "resolver/JsonStringValidation.cs": "ff9e1298d37fc5c562179b8ab89cfacf26d7ea29b8d56147c4fc24f1c9ce30eb",
+  "resolver/JsonStringValidation.cs": "12c9b736a184dac3e88f293645149a2225c7d64e54aca8a680172824b070ecf1",
   "resolver/Lp01ArchiveIntegrity.cs": "75a46337230c7388ef57e76ae3160f37cee989b9977fd7b3b1b90a6ce1e19744",
   "resolver/Lp01CaseFold.cs": "d1504000e32c37bd0947da2e7936913e6fb995a83cc33140620f0011609db529",
   "resolver/Lp01LicensePolicyResolver.cs": "a70587c9c8191846d75c33f83c86e0dc0a959176b7f5228f5077a5f4f4cc7d0a",

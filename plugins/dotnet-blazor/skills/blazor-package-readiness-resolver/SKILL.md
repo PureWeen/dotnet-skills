@@ -129,6 +129,7 @@ The helper-admitted provenance path requires a digest-bound per-asset source/com
 and complete SPDX-specific notices whose labels exactly match each covered lock entry's
 single SPDX `license` ID. Missing, non-string, expression or mismatched declarations stay
 unverified; agreement is still producer-declared metadata, not legal sufficiency.
+Reject duplicate decoded JSON property names in every object, including ignored fields.
 Mode B remains unverified: exact repository bytes do
 not prove authorship. Native `provenance-notices-verified` is not a report-validator bypass;
 separately admitted structured notice evidence is still required. Missing evidence resolves

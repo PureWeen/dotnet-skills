@@ -78,6 +78,8 @@ canonical notice clauses. Each version-matched notice heading's SPDX ID must exa
 case-sensitively equal that package's lock-entry `license`: one simple SPDX ID string,
 not an expression. Missing, non-string, duplicate/conflicting declarations, expressions
 and mismatches stay unverified. Repeated name/version entries must agree on the ID.
+Entire package.json/package-lock.json documents reject duplicate decoded property names
+in any object (ordinal comparison), including ignored fields and equal repeated values.
 Both labels are producer-declared metadata; agreement does not authenticate the actual
 dependency license or establish legal sufficiency. All runtime dependencies require
 notices, including SSR shims.
