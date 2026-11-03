@@ -261,6 +261,52 @@ class SbomCollectionTests(unittest.TestCase):
                 for name in ("release-package.nupkg", "provenance-bundle.json", "provenance-attestation.json"):
                     (capture / name).unlink(missing_ok=True)
             saved_receipt = (capture / "provenance-attestation.json").read_bytes()
+            valid_payload = tool.base64.b64encode(
+                b'{"_type":"https://in-toto.io/Statement/v1","predicateType":"https://slsa.dev/provenance/v1"}'
+            ).decode("ascii")
+            valid_bundle = {"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+                            "dsseEnvelope": {"payloadType": "application/vnd.in-toto+json", "payload": valid_payload}}
+            for raw_bad in (
+                b"null",
+                b"[]",
+                b"123",
+                b'"str"',
+                b'{"predicateType":"https://cyclonedx.org/bom","predicateType":"https://slsa.dev/provenance/v1"}',
+                b'{"predicateType":"https://slsa.dev/provenance/v1","nested":{"k":1,"k":2}}',
+                b'{"predicateType":"https://slsa.dev/provenance/v1","nan":NaN}',
+            ):
+                bad_payload = tool.base64.b64encode(raw_bad).decode("ascii")
+                bad_bundle = {"mediaType": "application/vnd.dev.sigstore.bundle.v0.3+json",
+                              "dsseEnvelope": {"payloadType": "application/vnd.in-toto+json", "payload": bad_payload}}
+                multi = root / "attestations.json"
+                multi.unlink(missing_ok=True)
+                tool.dump(multi, {"attestations": [{"bundle": bad_bundle}, {"bundle": valid_bundle}]})
+                clear_admission()
+                with mock.patch.object(tool.subprocess, "run", return_value=mock_completed):
+                    tool.provenance_inputs(capture, package_pin, metadata, collector,
+                                           mock.Mock(release_nupkg=release, provenance_bundle=multi), b"k" * 32)
+                self.assertEqual(tool.load(capture / "provenance-bundle.json"), valid_bundle)
+                only_bad = root / "only-bad-attestations.json"
+                only_bad.unlink(missing_ok=True)
+                tool.dump(only_bad, {"attestations": [{"bundle": bad_bundle}]})
+                clear_admission()
+                with self.assertRaisesRegex(ValueError, "No SLSA v1 provenance bundle found"):
+                    tool.provenance_inputs(capture, package_pin, metadata, collector,
+                                           mock.Mock(release_nupkg=release, provenance_bundle=only_bad), b"k" * 32)
+            for bad_stdout in (
+                '[{"verificationResult":{}, "verificationResult":{}}]',
+                '[{"verificationResult":{"k":1,"k":2}}]',
+                '[{"verificationResult":{"n":NaN}}]',
+                '[{"verificationResult":{"n":Infinity}}]',
+                '[{"verificationResult":{"n":-Infinity}}]',
+            ):
+                clear_admission()
+                with mock.patch.object(tool.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=bad_stdout, stderr="")):
+                    tool.provenance_inputs(capture, package_pin, metadata, collector,
+                                           mock.Mock(release_nupkg=release, provenance_bundle=bundle), b"k" * 32)
+                rejected = json.loads(tool.base64.b64decode(tool.load(capture / "provenance-attestation.json")["payload"]))
+                self.assertEqual(rejected["verification"], [])
+                self.assertEqual(rejected["verification_status"], "unverified")
             clear_admission()
             with mock.patch.object(tool.subprocess, "run", return_value=mock.Mock(returncode=1, stderr="no", stdout="")):
                 tool.provenance_inputs(capture, package_pin, metadata, collector,

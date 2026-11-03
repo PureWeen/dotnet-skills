@@ -766,10 +766,14 @@ def provenance_inputs(capture, package_pin, metadata, collector, args, admission
             dsse = item["bundle"].get("dsseEnvelope")
             if isinstance(dsse, dict) and isinstance(dsse.get("payload"), str):
                 try:
-                    stmt = json.loads(base64.b64decode(dsse["payload"]).decode("utf-8"))
+                    stmt = json.loads(
+                        base64.b64decode(dsse["payload"]).decode("utf-8"),
+                        object_pairs_hook=unique,
+                        parse_constant=lambda value: require(False, "Nonfinite JSON value."),
+                    )
                 except Exception:
                     stmt = {}
-                if stmt.get("predicateType") == "https://slsa.dev/provenance/v1":
+                if isinstance(stmt, dict) and stmt.get("predicateType") == "https://slsa.dev/provenance/v1":
                     selected = item["bundle"]
                     break
         require(selected is not None, "No SLSA v1 provenance bundle found in attestations document.")
@@ -792,7 +796,11 @@ def provenance_inputs(capture, package_pin, metadata, collector, args, admission
     verification_status = "unverified"
     if completed.returncode == 0:
         try:
-            verification = json.loads(completed.stdout)
+            verification = json.loads(
+                completed.stdout,
+                object_pairs_hook=unique,
+                parse_constant=lambda value: require(False, "Nonfinite JSON value."),
+            )
         except (ValueError, TypeError):
             verification = []
         if isinstance(verification, list) and verification:
