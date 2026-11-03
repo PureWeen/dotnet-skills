@@ -399,11 +399,30 @@ internal static class Lp04Checks
             check(!CanonicalLicenseBody.Matches(id, full[..^40]), "B3 truncated canonical " + id);
             check(!CanonicalLicenseBody.Matches(id == "MIT" ? "BSD-2-Clause" : "MIT", full),
                 "B3 mismatched declared SPDX " + id);
+            if (id != "Apache-2.0")
+            {
+                var earlyGrant = string.Join(" ", clauses.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Take(5));
+                check(!CanonicalLicenseBody.Matches(id, "Copyright 2026 Example\n" + earlyGrant +
+                    "\nAdditional terms hidden before the real grant.\n" + clauses),
+                    "Re-review an early grant phrase must not hide a noncanonical preamble for " + id);
+            }
         }
         var incompleteBsd = "Copyright 2017 Google LLC\n" + CanonicalLicenseBody.BsdGrant.Split("1.")[0] +
             "\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED.";
         check(!CanonicalLicenseBody.Matches("BSD-3-Clause", incompleteBsd),
             "B3 old greater-than-180-character BSD fixture without canonical conditions must fail closed");
+
+        var hiddenPreambleTpl = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(tplBytes).Replace(
+            "Copyright 2017 Google LLC\n", "Copyright 2017 Google LLC\nRedistribution and use in source\n" +
+            "Additional terms hidden before the real grant.\n", StringComparison.Ordinal));
+        var hiddenPreamblePackage = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", hiddenPreambleTpl), ("staticwebassets/bundle.js", bundledScript),
+            ("readiness-bundler-manifest.json", Manifest(bundledScript)));
+        var (hiddenPreambleBundle, hiddenPreambleAttestation) =
+            MakeProvenance(hiddenPreamblePackage, hiddenPreamblePackage, modeASrc);
+        check(Dispatch5(hiddenPreamblePackage, hiddenPreamblePackage, hiddenPreambleBundle,
+            hiddenPreambleAttestation, modeASrc).BranchId == "provenance-notices-unverified",
+            "Re-review Mode A must reject an early grant phrase hiding noncanonical license terms");
 
         using var sourceZip = new ZipArchive(new MemoryStream(modeASrc), ZipArchiveMode.Read);
         var ssrSource = BuildZip(sourceZip.Entries.Select(e =>

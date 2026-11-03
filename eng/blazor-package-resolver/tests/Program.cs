@@ -10,6 +10,11 @@ var fixtureRoot = corpus.Root;
 var fixture = Path.Combine(fixtureRoot, "cases.json");
 var catalog = Catalog.Load(data);
 var registry = Registry.Bootstrap(catalog);
+if (args is ["lp10-provenance"] or ["lp10-provenance", _])
+{
+    Lp10BoundaryChecks.CheckProvenance(registry, args.Length == 2 ? args[1] : null);
+    return;
+}
 if (args is ["lp02"])
 {
     Lp02Checks.Run(registry, Path.Combine(fixtureRoot, "lp02"));

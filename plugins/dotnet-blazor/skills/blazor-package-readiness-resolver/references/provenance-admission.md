@@ -36,8 +36,13 @@ It then requires **positive per-entry correspondence**:
   `readiness-bundler-manifest.json` mapping that asset's exact digest to exact source inputs.
   Mere package.json/lockfile/JS presence never attributes an unmatched bundle.
 - PE/CLI DLLs: the shipped filename and CLR AssemblyDefinition name must agree, and a
-  safely parsed source `.csproj` must have that output name (one literal unconditional
-  `AssemblyName`, otherwise its filename). Existing repository/commit/informational-version
+  safely parsed source `.csproj` must have that output name. Accept one literal,
+  attribute-free leaf `AssemblyName` only in an unconditional `PropertyGroup` directly
+  under the root `Project`, with matching XML namespaces and no ancestor `Condition`.
+  MSBuild property/item/metadata expressions are unsupported. Use the project filename
+  only when **no `AssemblyName` exists anywhere in that project**. Multiple names or any
+  unsupported placement reject that project's correspondence; Target/ItemGroup descendants
+  never supply an output name or permit a filename fallback. Existing repository/commit/informational-version
   metadata must be consistent and the source tree must not contain the prebuilt DLL.
   This is a bounded project/output association, **not** proof that a workflow step invoked
   the project, evaluated MSBuild imports, selected particular source files, or reproduced

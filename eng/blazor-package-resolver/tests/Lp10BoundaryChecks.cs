@@ -359,7 +359,7 @@ internal static class Lp10BoundaryChecks
         }
     }
 
-    private static void CheckProvenance(Registry registry)
+    internal static void CheckProvenance(Registry registry, string? reReviewGroup = null)
     {
         const string commit = "1111111111111111111111111111111111111111";
         const string repoUrl = "https://github.com/example/controls";
@@ -634,6 +634,107 @@ internal static class Lp10BoundaryChecks
             BuildAttestation(assemblyPackage, assemblyPackage, assemblyBundle, matchingProjectSource), matchingProjectSource)
             .BranchId == "provenance-attributed", "B2 literal source AssemblyName must match shipped filename and CLR identity");
 
+        var failures = new List<string>();
+        void Reject(string name, Func<CaseResult> dispatch)
+        {
+            try
+            {
+                var result = dispatch();
+                Console.WriteLine($"Re-review {name}: {result.BranchId}");
+                if (result.BranchId != "provenance-unverified")
+                    failures.Add(name + ": " + result.BranchId);
+            }
+            catch (Exception ex)
+            {
+                failures.Add(name + ": threw " + ex.GetType().Name);
+            }
+        }
+
+        if (reReviewGroup is null or "assembly")
+        {
+            var prefix = $"controls-{commit}/";
+            foreach (var (label, file, xml) in new[]
+            {
+                ("target-nested", "Unrelated.csproj",
+                    "<Project><Target Name=\"NeverInvoked\"><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Target></Project>"),
+                ("item-group-nested", "Unrelated.csproj",
+                    "<Project><ItemGroup><AssemblyName>Example.Controls</AssemblyName></ItemGroup></Project>"),
+                ("item-group-property-group", "Unrelated.csproj",
+                    "<Project><ItemGroup><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></ItemGroup></Project>"),
+                ("target-direct", "Unrelated.csproj",
+                    "<Project><Target Name=\"NeverInvoked\"><AssemblyName>Example.Controls</AssemblyName></Target></Project>"),
+                ("project-direct", "Unrelated.csproj",
+                    "<Project><AssemblyName>Example.Controls</AssemblyName></Project>"),
+                ("conditional-group", "Unrelated.csproj",
+                    "<Project><PropertyGroup Condition=\"'$(Never)' == 'true'\"><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Project>"),
+                ("conditional-property", "Unrelated.csproj",
+                    "<Project><PropertyGroup><AssemblyName Condition=\"'$(Never)' == 'true'\">Example.Controls</AssemblyName></PropertyGroup></Project>"),
+                ("unsupported-name-forbids-filename-fallback", "Example.Controls.csproj",
+                    "<Project><Target Name=\"NeverInvoked\"><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Target></Project>"),
+                ("mixed-supported-unsupported-names", "Example.Controls.csproj",
+                    "<Project><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup><Target Name=\"NeverInvoked\"><PropertyGroup><AssemblyName>Other</AssemblyName></PropertyGroup></Target></Project>")
+            })
+            {
+                var projectBytes = Encoding.UTF8.GetBytes(xml);
+                var files = new Dictionary<string, byte[]> { [prefix + file] = projectBytes };
+                if (Lp10BinaryAttributionResolver.HasMatchingProject("lib/net10.0/Example.Controls.dll",
+                    peBlob.ToArray(), files, prefix))
+                    failures.Add("AssemblyName direct " + label);
+                var source = BuildZip(
+                    (prefix + ".github/workflows/release.yml", "name: release\n"u8.ToArray()),
+                    (prefix + file, projectBytes));
+                Reject("AssemblyName integration " + label, () => Dispatch(assemblyPackage, assemblyPackage,
+                    assemblyBundle, BuildAttestation(assemblyPackage, assemblyPackage, assemblyBundle, source), source));
+            }
+            Check(Lp10BinaryAttributionResolver.HasMatchingProject("lib/net10.0/Example.Controls.dll",
+                peBlob.ToArray(), new Dictionary<string, byte[]>
+                {
+                    [prefix + "Example.Controls.csproj"] = "<Project/>"u8.ToArray()
+                }, prefix), "Re-review filename fallback remains valid only without any AssemblyName");
+        }
+
+        if (reReviewGroup is null or "json")
+        {
+            foreach (var scalar in new[] { "1", "2147483648", "1.5", "\"1\"", "null", "true", "{}", "[]" })
+            {
+                var manifest = JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    schema_version = JsonSerializer.Deserialize<JsonElement>(scalar),
+                    assets = new[] { new { path = "staticwebassets/built.js", sha256 = Catalog.Digest(builtJs),
+                        inputs = new[] { new { path = "src/index.ts",
+                            sha256 = Catalog.Digest("export const unrelated = 0;"u8.ToArray()) } },
+                        components = new[] { new { name = "example", version = "1.0.0" } } } }
+                });
+                var package = BuildZip(("Example.Controls.nuspec", nuspec), ("wwwroot/matched.js", matchedJs),
+                    ("staticwebassets/built.js", builtJs), ("readiness-bundler-manifest.json", manifest));
+                var bundleNode = System.Text.Json.Nodes.JsonNode.Parse(bundleBytes)!;
+                bundleNode["dsseEnvelope"]!["payload"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(
+                    statementJson.Replace(releaseSha, Catalog.Digest(package), StringComparison.Ordinal)));
+                var bundle = Encoding.UTF8.GetBytes(bundleNode.ToJsonString());
+                if (scalar == "1")
+                {
+                    Check(Dispatch(package, package, bundle, BuildAttestation(package, package, bundle, unmatchedWithLock),
+                        unmatchedWithLock).BranchId == "provenance-attributed", "Re-review valid bound bundler manifest control");
+                    continue;
+                }
+                Reject("manifest schema " + scalar, () => Dispatch(package, package, bundle,
+                    BuildAttestation(package, package, bundle, unmatchedWithLock), unmatchedWithLock));
+
+                foreach (var field in new[] { "schema_version", "archive_size", "http_status" })
+                {
+                    var receipt = System.Text.Json.Nodes.JsonNode.Parse(ProvenanceTestAdmission.Payload(validAtt))!;
+                    var container = field == "schema_version" ? receipt :
+                        field == "archive_size" ? receipt["source_acquisition"]! :
+                        receipt["source_acquisition"]!["retrieval_attempt"]!;
+                    container[field] = System.Text.Json.Nodes.JsonNode.Parse(scalar);
+                    var attestation = ProvenanceTestAdmission.Sign(Encoding.UTF8.GetBytes(receipt.ToJsonString()),
+                        sourceBytes, repoUrl, commit, acquired: false);
+                    Reject("admission " + field + " " + scalar,
+                        () => Dispatch(pkgBytes, releaseBytes, bundleBytes, attestation, sourceBytes));
+                }
+            }
+        }
+        Check(failures.Count == 0, "Re-review fail-closed regressions: " + string.Join("; ", failures));
         Console.WriteLine("LP-10 strict helper/source/per-entry provenance regressions passed.");
     }
 

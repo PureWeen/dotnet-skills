@@ -1,7 +1,7 @@
 {
   "resolver/AssemblyInfo.cs": "4d519d41f8a71df8cbdec1704085613bfc00820ce280443e528c2297ff5357b0",
   "resolver/BlazorPackageResolver.csproj": "a40dda484648b3d40360ee01dacda408a05ab3af2d1c91ead4038969b7153949",
-  "resolver/CanonicalLicenseBody.cs": "d6116bee925df43cb30e95029f5d1d3f768f186ebb706d4758dd45e67065e432",
+  "resolver/CanonicalLicenseBody.cs": "3bdcd89fcc76a29cfe644a37faeb613931ab90c114d273b808f6afd70c5ee86b",
   "resolver/Cases.cs": "e2380751278384854ea2b71a2284d0c357b14c21f50a3005e9329fff77dec311",
   "resolver/Catalog.cs": "43cfc2c9f8b243bc1c38a4db213b4548a4d0302ea9cb7ec78ad849f4d1145669",
   "resolver/data/lp01-casefold-15.0.0.json": "1c1dd710665f23ad059dc9c5c986d48f9cad77c3f58de6cf0cad4590e066e7e7",
@@ -24,7 +24,7 @@
   "resolver/Lp07RepositoryCommitResolver.cs": "c4ec150cc42c771df97598f027b32842496ea21b5e1f9ae3aa4d9a691f38762e",
   "resolver/Lp08AuthorsResolver.cs": "eafc63f9d8ef6e1afe8801a82eace090460bc03afb34174eed50c6b6de30eb9c",
   "resolver/Lp09ProjectUrlResolver.cs": "a15544263f8a98ea2b3a4fdec8c6d467db8d0927498a29feb8cedb7e9bc5814c",
-  "resolver/Lp10BinaryAttributionResolver.cs": "8104e8b3b1e9c0209631dd88fffcc8ae26abad9c6ecbd66459a6ae87e8d4c6da",
+  "resolver/Lp10BinaryAttributionResolver.cs": "f271c354bc5013e91ad38cfb51d45f90cd9667bd29b53bc485afbb323f4acf97",
   "resolver/NpmPackageEvidence.cs": "7653ca779bfdbe24e020e205b715243fc3d3cfac25f500725f1d06095bdf8439",
   "resolver/NpmPackageIdentity.cs": "853285195e46b94eee0d8922c64aa5abe6f125dd947c607d9b67585aa141a198",
   "resolver/NuGetNuspecReader.cs": "1ab36917dc536301098e6490a9e6f1000e8d044b01395f10bdfaf1ea210dc4d2",

@@ -472,9 +472,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             if (doc is null) return false;
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object ||
-                !root.TryGetProperty("schema_version", out var schemaVer) ||
-                schemaVer.ValueKind != JsonValueKind.Number ||
-                schemaVer.GetInt32() != 1 ||
+                !HasInt32Property(root, "schema_version", 1) ||
                 !root.TryGetProperty("producer", out var producer) ||
                 producer.GetString() != ProvenanceProducer ||
                 !root.TryGetProperty("package_sha256", out var pkgSha) ||
@@ -558,15 +556,21 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             acquisition.GetProperty("package_sha256").GetString() == packageSha &&
             string.Equals(acquisition.GetProperty("repository_url").GetString(), repository, StringComparison.OrdinalIgnoreCase) &&
             acquisition.GetProperty("commit").GetString() == commit &&
-            acquisition.GetProperty("archive_size").GetInt32() == sourceSize &&
+            HasInt32Property(acquisition, "archive_size", sourceSize) &&
             retrieval.GetProperty("url").GetString() == "https://codeload.github.com/" +
                 repository["https://github.com/".Length..] + "/zip/" + commit &&
             retrieval.GetProperty("transport").GetString() == Lp02PublicSourceResolver.Transport &&
             retrieval.GetProperty("result").GetString() == "retrieved" &&
-            retrieval.GetProperty("http_status").GetInt32() == 200 &&
+            HasInt32Property(retrieval, "http_status", 200) &&
             capture.GetProperty("role").GetString() == "source-archive" &&
             capture.GetProperty("sha256").GetString() == sourceSha;
     }
+
+    private static bool HasInt32Property(JsonElement element, string name, int expected) =>
+        element.ValueKind == JsonValueKind.Object &&
+        element.TryGetProperty(name, out var value) &&
+        value.ValueKind == JsonValueKind.Number &&
+        value.TryGetInt32(out var number) && number == expected;
 
     internal static bool TrySourceRoot(Dictionary<string, byte[]> files, string expected, out string actual)
     {
@@ -590,11 +594,17 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 using var reader = XmlReader.Create(new MemoryStream(bytes), new XmlReaderSettings
                 { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = XmlLimit });
                 var project = XDocument.Load(reader);
+                var root = project.Root;
                 var names = project.Descendants().Where(item => item.Name.LocalName == "AssemblyName").ToArray();
-                if (project.Root?.Name.LocalName != "Project" || names.Length > 1 ||
+                if (root is null || root.Name.LocalName != "Project" || names.Length > 1 ||
                     names.Any(item => item.HasAttributes || item.HasElements ||
+                        item.Name != root.Name.Namespace + "AssemblyName" ||
+                        item.Parent?.Name != root.Name.Namespace + "PropertyGroup" ||
+                        item.Parent?.Parent != root ||
                         item.Ancestors().Any(parent => parent.Attribute("Condition") is not null))) continue;
                 var output = names.Length == 1 ? names[0].Value.Trim() : Path.GetFileNameWithoutExtension(path);
+                if (output.Contains("$(", StringComparison.Ordinal) || output.Contains("@(", StringComparison.Ordinal) ||
+                    output.Contains("%(", StringComparison.Ordinal)) continue;
                 if (output == name && path.StartsWith(prefix, StringComparison.Ordinal)) return true;
             }
             catch (XmlException) { }
@@ -612,7 +622,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         try
         {
             using var doc = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 16 });
-            if (doc.RootElement.GetProperty("schema_version").GetInt32() != 1) return false;
+            if (!HasInt32Property(doc.RootElement, "schema_version", 1)) return false;
             var assets = doc.RootElement.GetProperty("assets").EnumerateArray().ToArray();
             if (assets.Length is 0 or > 4096 ||
                 assets.Select(a => a.GetProperty("path").GetString()).Distinct(StringComparer.Ordinal).Count() != assets.Length)

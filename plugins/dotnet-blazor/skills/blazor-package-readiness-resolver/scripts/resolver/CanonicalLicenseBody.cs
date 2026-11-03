@@ -263,7 +263,7 @@ internal static class CanonicalLicenseBody
         var firstWords = string.Join(@"\s+", clauses.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .Take(5).Select(Regex.Escape));
         var grantStart = Regex.Match(body, firstWords, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        if (!grantStart.Success) return false;
+        if (!grantStart.Success || Normalize(body[grantStart.Index..]) != canonical) return false;
         var lines = body[..grantStart.Index]
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         return lines.Any(line => line.StartsWith("Copyright", StringComparison.OrdinalIgnoreCase)) &&
