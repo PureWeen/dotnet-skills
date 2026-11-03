@@ -265,7 +265,8 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         try
         {
             using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = 32 });
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            if (!JsonStringValidation.IsWellFormed(doc.RootElement) ||
+                doc.RootElement.ValueKind != JsonValueKind.Object)
                 return false;
             if (doc.RootElement.TryGetProperty("dependencies", out var deps))
             {
@@ -309,7 +310,8 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         try
         {
             using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = 64 });
-            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+            if (!JsonStringValidation.IsWellFormed(doc.RootElement) ||
+                doc.RootElement.ValueKind != JsonValueKind.Object ||
                 !doc.RootElement.TryGetProperty("packages", out var packages) ||
                 packages.ValueKind != JsonValueKind.Object)
                 return false;

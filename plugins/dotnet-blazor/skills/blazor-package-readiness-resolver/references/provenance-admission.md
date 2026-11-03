@@ -66,8 +66,13 @@ Each selected entry has `path` and `sha256` for the packaged asset, nonempty `in
 submit a separate unauthenticated map. This is a producer declaration tied to signed
 bytes, not independent exhaustive verification of bundler internals.
 
-LP-04's supported source dependency profile rejects malformed JSON strings, including
-escaped unpaired surrogates, as unverified. Root `optionalDependencies` must be an empty
+LP-04's supported source dependency profile validates every property name and string
+value in both entire source dependency JSON documents before use, including ignored
+metadata, nested arrays and unvisited lock entries. Malformed strings, including escaped
+unpaired surrogates, remain unverified; valid surrogate pairs are permitted. The same
+whole-document check applies to the bundler manifest, provenance bundle/decoded statement
+and helper admission envelope/decoded payload. SPDX/npm admission already walks every
+name and string with strict UTF-8 conversion. Root `optionalDependencies` must be an empty
 object; `bundleDependencies` / `bundledDependencies` may only be `false` or empty arrays
 for a positive. Nonempty declarations and other shapes stay unverified. In every
 lockfile package entry (including root and unvisited entries), present `dependencies`

@@ -16,11 +16,15 @@ internal static class HelperAdmission
             if (keyText is null || keyText.Length != 64) return null;
             var key = Convert.FromHexString(keyText);
             using var envelope = JsonDocument.Parse(receipt);
+            if (!JsonStringValidation.IsWellFormed(envelope.RootElement)) return null;
             var payload = Convert.FromBase64String(envelope.RootElement.GetProperty("payload").GetString()!);
             var supplied = Convert.FromHexString(envelope.RootElement.GetProperty("hmac_sha256").GetString()!);
             if (!CryptographicOperations.FixedTimeEquals(HMACSHA256.HashData(key, payload), supplied))
                 return null;
-            return JsonDocument.Parse(payload, new JsonDocumentOptions { MaxDepth = 32 });
+            var document = JsonDocument.Parse(payload, new JsonDocumentOptions { MaxDepth = 32 });
+            if (JsonStringValidation.IsWellFormed(document.RootElement)) return document;
+            document.Dispose();
+            return null;
         }
         catch (Exception ex) when (ex is JsonException or FormatException or InvalidOperationException or
             KeyNotFoundException or ArgumentException)

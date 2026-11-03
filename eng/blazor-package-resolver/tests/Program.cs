@@ -744,7 +744,7 @@ var allowed = new HashSet<string>(StringComparer.Ordinal)
       "Lp05LicenseExpressionResolver.cs",
       "Lp06RepositoryUrlResolver.cs", "Lp07RepositoryCommitResolver.cs",
       "Lp08AuthorsResolver.cs", "Lp09ProjectUrlResolver.cs",
-      "Lp10BinaryAttributionResolver.cs", "HelperAdmission.cs", "CanonicalLicenseBody.cs",
+      "Lp10BinaryAttributionResolver.cs", "HelperAdmission.cs", "CanonicalLicenseBody.cs", "JsonStringValidation.cs",
       "NuGetNuspecReader.cs", "NuGetPackageIdentity.cs",
       "Spdx22InventoryAdmission.cs", "NpmPackageIdentity.cs", "NpmPackageEvidence.cs",
       "Pi01StrongNameResolver.cs", "Pi01PeInspector.cs" };

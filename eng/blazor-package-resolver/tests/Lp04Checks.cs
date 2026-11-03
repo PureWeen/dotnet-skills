@@ -442,6 +442,32 @@ internal static class Lp04Checks
         }
         JsonCase("lock surrogate dependency value", "package-lock.json",
             "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"dependencies\":{\"other\":\"\\uD800\"}}}}");
+        foreach (var (escaped, valid) in new[]
+        {
+            ("\\uD800", false), ("\\uDC00", false), ("\\uD800x", false),
+            ("\\uDC00\\uD800", false), ("\\uD83D\\uDE00", true)
+        })
+        {
+            JsonCase("package ignored string " + escaped, "package.json",
+                "{" + dependencyJson + ",\"description\":\"" + escaped + "\"}", valid);
+            JsonCase("package ignored name " + escaped, "package.json",
+                "{" + dependencyJson + ",\"" + escaped + "\":null}", valid);
+            JsonCase("package nested array string " + escaped, "package.json",
+                "{" + dependencyJson + ",\"ignored\":[null,false,42,{\"value\":\"" + escaped + "\"}]}", valid);
+            JsonCase("package nested array name " + escaped, "package.json",
+                "{" + dependencyJson + ",\"ignored\":[{\"" + escaped + "\":null}]}", valid);
+            const string runtimePackage = "\"node_modules/lit-html\":{\"version\":\"3.3.3\"}";
+            JsonCase("lock unvisited version " + escaped, "package-lock.json",
+                "{\"packages\":{" + runtimePackage + ",\"node_modules/dev-only\":{\"version\":\"" + escaped + "\"}}}", valid);
+            JsonCase("lock ignored string " + escaped, "package-lock.json",
+                "{\"packages\":{" + runtimePackage + "},\"ignored\":\"" + escaped + "\"}", valid);
+            JsonCase("lock ignored name " + escaped, "package-lock.json",
+                "{\"packages\":{" + runtimePackage + "},\"" + escaped + "\":null}", valid);
+            JsonCase("lock nested array string " + escaped, "package-lock.json",
+                "{\"packages\":{" + runtimePackage + "},\"ignored\":[{\"value\":\"" + escaped + "\"}]}", valid);
+            JsonCase("lock unvisited name " + escaped, "package-lock.json",
+                "{\"packages\":{" + runtimePackage + ",\"node_modules/dev-only\":{\"version\":\"1.0.0\",\"" + escaped + "\":null}}}", valid);
+        }
         var jsonFailures = string.Join("; ", jsonOutcomes.Where(value => !value.Success).Select(value => value.Label));
         foreach (var outcome in jsonOutcomes)
             check(outcome.Success, "Delta JSON regressions: " + jsonFailures);

@@ -27,7 +27,11 @@ internal static class ProvenanceTestAdmission
                 },
                 capture_receipt = new { role = "source-archive", sha256 = Catalog.Digest(source) }
             });
-        var payload = Encoding.UTF8.GetBytes(doc.ToJsonString());
+        return SignPayload(Encoding.UTF8.GetBytes(doc.ToJsonString()));
+    }
+
+    internal static byte[] SignPayload(byte[] payload)
+    {
         Environment.SetEnvironmentVariable("BLAZOR_PROVENANCE_ADMISSION_KEY", Convert.ToHexString(Key));
         return JsonSerializer.SerializeToUtf8Bytes(new
         {

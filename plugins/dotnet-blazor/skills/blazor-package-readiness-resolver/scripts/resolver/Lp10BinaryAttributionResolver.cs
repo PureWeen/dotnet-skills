@@ -347,7 +347,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         {
             _ = StrictUtf8.GetCharCount(content.Span);
             using var doc = JsonDocument.Parse(content, new JsonDocumentOptions { MaxDepth = 32 });
-            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            if (!JsonStringValidation.IsWellFormed(doc.RootElement) ||
+                doc.RootElement.ValueKind != JsonValueKind.Object)
                 return false;
             var bundles = new List<JsonElement>();
             if (doc.RootElement.TryGetProperty("attestations", out var attArray) &&
@@ -401,7 +402,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 _ = StrictUtf8.GetCharCount(payloadBytes);
                 using var stmtDoc = JsonDocument.Parse(payloadBytes, new JsonDocumentOptions { MaxDepth = 32 });
                 var stmt = stmtDoc.RootElement;
-                if (stmt.ValueKind != JsonValueKind.Object ||
+                if (!JsonStringValidation.IsWellFormed(stmt) ||
+                    stmt.ValueKind != JsonValueKind.Object ||
                     !stmt.TryGetProperty("_type", out var stmtType) ||
                     stmtType.GetString() != "https://in-toto.io/Statement/v1" ||
                     !stmt.TryGetProperty("predicateType", out var predType) ||
@@ -628,7 +630,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         try
         {
             using var doc = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 16 });
-            if (!HasInt32Property(doc.RootElement, "schema_version", 1)) return false;
+            if (!JsonStringValidation.IsWellFormed(doc.RootElement) ||
+                !HasInt32Property(doc.RootElement, "schema_version", 1)) return false;
             var assets = doc.RootElement.GetProperty("assets").EnumerateArray().ToArray();
             if (assets.Length is 0 or > 4096 ||
                 assets.Select(a => a.GetProperty("path").GetString()).Distinct(StringComparer.Ordinal).Count() != assets.Length)

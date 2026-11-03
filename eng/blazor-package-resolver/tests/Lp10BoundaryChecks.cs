@@ -790,6 +790,72 @@ internal static class Lp10BoundaryChecks
                         () => Dispatch(pkgBytes, releaseBytes, bundleBytes, attestation, sourceBytes));
                 }
             }
+            static byte[] WithMember(byte[] json, string member)
+            {
+                var text = Encoding.UTF8.GetString(json);
+                return Encoding.UTF8.GetBytes(text.Insert(text.LastIndexOf('}'), "," + member));
+            }
+            byte[] BundleFor(byte[] package, string? statementMember = null)
+            {
+                var statement = Encoding.UTF8.GetBytes(statementJson.Replace(releaseSha, Catalog.Digest(package),
+                    StringComparison.Ordinal));
+                if (statementMember is not null) statement = WithMember(statement, statementMember);
+                var node = System.Text.Json.Nodes.JsonNode.Parse(bundleBytes)!;
+                node["dsseEnvelope"]!["payload"] = Convert.ToBase64String(statement);
+                return Encoding.UTF8.GetBytes(node.ToJsonString());
+            }
+            void UnicodeDispatch(string label, bool valid, Func<CaseResult> dispatch)
+            {
+                if (valid)
+                    Check(dispatch().BranchId == "provenance-attributed", "Unicode paired-surrogate control " + label);
+                else
+                    Reject("Unicode ignored/unvisited " + label, dispatch);
+            }
+            foreach (var (label, member, valid) in new[]
+            {
+                ("string", "\"ignored\":\"\\uD800\"", false),
+                ("name", "\"\\uD800\":null", false),
+                ("nested array", "\"ignored\":[null,false,42,{\"value\":\"\\uDC00\"}]", false),
+                ("valid pair", "\"ignored\":[{\"\\uD83D\\uDE00\":\"\\uD83D\\uDE00\"}]", true)
+            })
+            {
+                foreach (var surface in new[] { "envelope", "payload" })
+                {
+                    var receipt = surface == "envelope" ? WithMember(validAtt, member) :
+                        ProvenanceTestAdmission.SignPayload(WithMember(ProvenanceTestAdmission.Payload(validAtt), member));
+                    using var opened = HelperAdmission.Open(receipt);
+                    if ((opened is not null) != valid) failures.Add("Unicode direct helper " + surface + " " + label);
+                    UnicodeDispatch("helper " + surface + " " + label, valid,
+                        () => Dispatch(pkgBytes, releaseBytes, bundleBytes, receipt, sourceBytes));
+                }
+
+                var manifest = WithMember(JsonSerializer.SerializeToUtf8Bytes(new
+                {
+                    schema_version = 1,
+                    assets = new[] { new { path = "staticwebassets/built.js", sha256 = Catalog.Digest(builtJs),
+                        inputs = new[] { new { path = "src/index.ts",
+                            sha256 = Catalog.Digest("export const unrelated = 0;"u8.ToArray()) } },
+                        components = new[] { new { name = "example", version = "1.0.0" } } } }
+                }), member);
+                var package = BuildZip(("Example.Controls.nuspec", nuspec), ("wwwroot/matched.js", matchedJs),
+                    ("staticwebassets/built.js", builtJs), ("readiness-bundler-manifest.json", manifest));
+                var bundle = BundleFor(package);
+                if (Lp10BinaryAttributionResolver.TryBundlerAsset(
+                    new Dictionary<string, byte[]> { ["readiness-bundler-manifest.json"] = manifest },
+                    new Dictionary<string, byte[]> { [$"controls-{commit}/src/index.ts"] = "export const unrelated = 0;"u8.ToArray() },
+                    $"controls-{commit}/", "staticwebassets/built.js", Catalog.Digest(builtJs), out _) != valid)
+                    failures.Add("Unicode direct manifest " + label);
+                UnicodeDispatch("manifest " + label, valid, () => Dispatch(package, package, bundle,
+                    BuildAttestation(package, package, bundle, unmatchedWithLock), unmatchedWithLock));
+
+                foreach (var surface in new[] { "bundle", "statement" })
+                {
+                    var alteredBundle = surface == "bundle" ? WithMember(bundleBytes, member) :
+                        BundleFor(releaseBytes, member);
+                    UnicodeDispatch(surface + " " + label, valid, () => Dispatch(pkgBytes, releaseBytes, alteredBundle,
+                        BuildAttestation(pkgBytes, releaseBytes, alteredBundle, sourceBytes), sourceBytes));
+                }
+            }
         }
         Check(failures.Count == 0, "Re-review fail-closed regressions: " + string.Join("; ", failures));
         Console.WriteLine("LP-10 strict helper/source/per-entry provenance regressions passed.");
