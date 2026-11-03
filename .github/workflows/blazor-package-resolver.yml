@@ -5,7 +5,6 @@ on:
     paths:
       - "eng/blazor-package-resolver/**"
       - "plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/**"
-      - "plugins/dotnet-blazor/skills/blazor-component-readiness/**"
       - ".github/workflows/blazor-package-resolver.yml"
       - "global.json"
   push:
@@ -13,7 +12,6 @@ on:
     paths:
       - "eng/blazor-package-resolver/**"
       - "plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/**"
-      - "plugins/dotnet-blazor/skills/blazor-component-readiness/**"
       - ".github/workflows/blazor-package-resolver.yml"
       - "global.json"
   workflow_dispatch:
@@ -47,5 +45,7 @@ jobs:
         run: dotnet run --project eng/blazor-package-resolver/tests/ResolverChecks.csproj --no-build
       - name: Replay synthetic cases
         run: python eng/blazor-package-resolver/tests/corpus.py replay foundation
+      - name: Check deterministic autofill policy and contracts
+        run: python eng/blazor-package-resolver/tests/test_autofill.py
       - name: Check installed offline resolver and report handoff
         run: python eng/blazor-package-resolver/tests/test_shipping.py

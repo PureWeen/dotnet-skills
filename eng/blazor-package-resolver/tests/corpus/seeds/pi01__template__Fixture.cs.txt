@@ -1,6 +1,0 @@
-namespace Pi01Fixture;
-
-public sealed class Example
-{
-    public int Value => 1;
-}

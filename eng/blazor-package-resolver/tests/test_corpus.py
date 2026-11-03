@@ -59,8 +59,7 @@ def main():
             raise ValueError("Parent preservation accepted unreviewed bytes: " + name)
     print("Named LP-01 parent allowance accepted; eight unreviewed result/input/contract changes rejected.")
     name = "lp04/cases.json"
-    before_lp04 = subprocess.check_output(["git", "show",
-        corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/" + name])
+    before_lp04 = corpus.historical_parent_bytes(fixtures, name)
     current_lp04 = json.loads((fixtures / name).read_bytes())
     corpus.check_parent_file(name, before_lp04, encoded(current_lp04))
     for label, change in (
@@ -83,8 +82,7 @@ def main():
             raise ValueError("LP-04 D-lite parent preservation accepted " + label)
     for row in [f"lp{i:02}" for i in range(1, 11) if i != 4] + ["pi01"]:
         name = row + "/cases.json"
-        before_row = subprocess.check_output(["git", "show",
-            corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/" + name])
+        before_row = corpus.historical_parent_bytes(fixtures, name)
         changed = json.loads((fixtures / name).read_bytes())
         changed["cases"][0]["expected"]["missing_fact"] = "Unapproved cross-row change"
         try:
@@ -133,8 +131,7 @@ def main():
             raise ValueError("LP-02 parent preservation accepted " + label)
     print("Named LP-02 public-availability allowance accepted; six unrelated changes rejected.")
     for name in corpus.LP03_LEGACY_PINS:
-        before_lp03 = subprocess.check_output(["git", "show",
-            corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/" + name])
+        before_lp03 = corpus.historical_parent_bytes(fixtures, name)
         current_lp03 = json.loads((fixtures / name).read_bytes())
         corpus.check_parent_file(name, before_lp03, encoded(current_lp03))
         for label, change in (
@@ -159,8 +156,7 @@ def main():
     for row in ("lp01", "lp03", "pi01"):
         for filename in ("cases.json", "acceptance.json"):
             name = row + "/" + filename
-            historical_bytes = subprocess.check_output(["git", "show",
-                corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/" + name])
+            historical_bytes = corpus.historical_parent_bytes(fixtures, name)
             current_namespace = json.loads((fixtures / name).read_bytes())
             corpus.check_parent_file(name, historical_bytes, encoded(current_namespace))
             for label, change in (
@@ -179,10 +175,27 @@ def main():
                     pass
                 else:
                     raise ValueError("Nuspec namespace parent allowance accepted " + row + ": " + label)
-    before_foundation = subprocess.check_output(["git", "show",
-        corpus.ACCEPTED + ":eng/blazor-package-resolver/tests/fixtures/cases.json"])
+    before_foundation = corpus.historical_parent_bytes(fixtures, "cases.json")
     current_foundation = (fixtures / "cases.json").read_bytes()
     corpus.check_parent_file("cases.json", before_foundation, current_foundation)
+    corpus.check(set(corpus._parent_patches()["pins"]) == {name for name, _, _ in lock["files"]},
+                 "Historical parent pin set differs from locked corpus")
+    for name, _, _ in lock["files"]:
+        current_bytes = (fixtures / name).read_bytes()
+        corpus.check_parent_file(name, corpus.historical_parent_bytes(fixtures, name, allow_git=True), current_bytes)
+        corpus.check_parent_file(name, corpus.historical_parent_bytes(fixtures, name, allow_git=False), current_bytes)
+    unpatched = fixtures / "lp05/cases.json"
+    saved_unpatched = unpatched.read_bytes()
+    try:
+        unpatched.write_bytes(saved_unpatched + b" ")
+        try:
+            corpus.historical_parent_bytes(fixtures, "lp05/cases.json", allow_git=False)
+        except ValueError:
+            pass
+        else:
+            raise ValueError("Unpatched parent pin failed to reject drifted file without git")
+    finally:
+        unpatched.write_bytes(saved_unpatched)
     for changed in (
         current_foundation.replace(b'"1.1.0"', b'"1.2.0"', 1),
         current_foundation.replace(b'"missing-policy"', b'"unreviewed"', 1),
@@ -255,9 +268,6 @@ def main():
         raw = json.dumps(value).encode()
         (store / "recipes.json").write_bytes(raw)
         edit_lock(store, lambda item: item.update(recipes_sha256=corpus.sha(raw)))
-    reject("missing seed", lambda store: (store / "seeds" / lock["seeds"][0][0]).unlink())
-    reject("extra seed", lambda store: (store / "seeds/extra.txt").write_bytes(b"extra"))
-    reject("changed seed", lambda store: (store / "seeds" / lock["seeds"][0][0]).write_bytes(b"wrong"))
     reject("changed bank", lambda store: (store / "chunks.bin").write_bytes(b"wrong"))
     reject("changed recipe", lambda store: (store / "recipes.json").write_bytes(b"{}"))
     reject("changed expectation", lambda store: (store / "expectations.json").write_bytes(b"{}"))
@@ -274,7 +284,7 @@ def main():
         store, lambda item: item["files"].__setitem__(next(iter(item["files"])), ["repair-archive", []])))
     reject("resource limit", lambda store: edit_lock(
         store, lambda item: item.__setitem__("files", item["files"] * 2)))
-    corpus.check(runs == 15, "Missing finite rejection recipe")
+    corpus.check(runs == 12, "Missing finite rejection recipe")
     with tempfile.TemporaryDirectory(prefix="corpus-existing-") as work:
         try:
             corpus.materialize(work)
@@ -282,7 +292,7 @@ def main():
             pass
         else:
             raise ValueError("Existing output root was overwritten")
-    print("16 fixed materializer rejection/overwrite checks passed;",
+    print("13 fixed materializer rejection/overwrite checks passed;",
           len(lock["files"]), "paths /", sum(pin[1] for pin in lock["files"]), "locked bytes.")
 
 

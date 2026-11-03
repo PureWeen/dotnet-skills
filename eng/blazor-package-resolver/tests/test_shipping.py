@@ -20,15 +20,14 @@ REPO = HERE.parents[2]
 
 
 def lp03_installed_checks(plugin, work):
-    """Run the installed helper, replacing only build launchers with prebuilt trusted DLLs."""
+    """Run the installed helper, replacing only build launchers with the prebuilt trusted DLL."""
     from oracles.lp03_sbom_expectations import sbom, package, encoded
-    script = plugin / "skills/blazor-component-readiness/scripts/autofill-eleven.py"
+    script = plugin / "skills/blazor-package-readiness-resolver/scripts/autofill-eleven.py"
     loaded = runpy.run_path(str(script), run_name="lp03_installed_test")
     tool = loaded["run_command"].__globals__
     resolver = REPO / "eng/blazor-package-resolver/bin/Debug/net10.0/BlazorPackageResolver.dll"
-    validator = REPO / "plugins/dotnet-blazor/skills/blazor-component-readiness/scripts/validator/bin/Debug/net11.0/BlazorComponentReadiness.Validator.dll"
-    if not resolver.is_file() or not validator.is_file():
-        raise ValueError("Build the trusted resolver and validator with --no-restore before --lp03.")
+    if not resolver.is_file():
+        raise ValueError("Build the trusted resolver with --no-restore before --lp03.")
     original_tools, original_collector = tool["Tools"], tool["Collector"]
     calls = []
     selected_bytes = package("example.dependency")
@@ -46,24 +45,13 @@ def lp03_installed_checks(plugin, work):
     class PrebuiltTools(original_tools):
         def command(self, args, output=None):
             if len(args) > 2 and args[0] == sys.executable and str(self.resolver) in args:
-                args = ["dotnet", str(resolver), *args[-2:]]
-            elif any(str(a).endswith(("run-validator.ps1", "run-validator.sh")) for a in args):
-                destination = self.work / "validator-build/bin/Release/net11.0"
-                destination.mkdir(parents=True)
-                for path in validator.parent.iterdir():
-                    if path.is_file():
-                        shutil.copyfile(path, destination / path.name)
-                args = ["dotnet", str(destination / validator.name), "help"]
+                idx = args.index(str(self.resolver))
+                args = ["dotnet", str(resolver), *args[idx + 1:]]
             return super().command(args, output)
 
     class MockCollector(original_collector):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, **kwargs, transport=transport)
-
-    env = os.environ.copy()
-    env["READINESS_SKILL_ROOT"] = str(plugin / "skills/blazor-component-readiness")
-    def v(*args):
-        return run(["dotnet", str(validator), *map(str, args)], work, env)
 
     for label, status, expression, online, designated, supplied, feed in (
         ("offline-exact-plus-extra", "verified", "MIT", False, True, True, "nuget.org"),
@@ -85,21 +73,13 @@ def lp03_installed_checks(plugin, work):
         nupkg.write_bytes(package("example.controls", dependencies='<dependencies><dependency id="example.dependency" version="0.5.0"/></dependencies>'))
         document = root / "release.spdx.json"
         document.write_bytes(encoded(sbom()))
-        candidates0, candidates = root / "candidates0.json", root / "candidates.json"
-        draft, confirmed = root / "input.draft.json", root / "input.confirmed.json"
-        v("inputs", "candidates", "init", "--acquisition", "published", "--package-locator", "sample.nupkg",
-          "--package-method", "local-file", "--source-availability", "closed-source", "--output", candidates0)
-        v("inputs", "candidates", "add-retrieval", "--input", candidates0, "--subject", "package",
-          "--locator", "sample.nupkg", "--method", "local-file", "--result", "succeeded", "--output", candidates)
-        v("inputs", "discover", "--root", root, "--nupkg", nupkg, "--candidates", candidates, "--output", draft)
-        v("inputs", "confirm", "--root", root, "--draft", draft, "--output", confirmed)
         dependencies = []
         if supplied:
             for name, content in (("dependency.nupkg", selected_bytes), ("extra.nupkg", package("extra"))):
                 path = root / name
                 path.write_bytes(content)
                 dependencies.append(str(path))
-        args = Namespace(confirmed=str(confirmed), candidates=str(candidates), nupkg=str(nupkg),
+        args = Namespace(nupkg=str(nupkg), source_availability="closed-source",
                          dependency=dependencies, dependency_directory=None, source_archive=None,
                          allow_network=online, nuget_feed=feed, release_sbom=str(document) if designated else None,
                          row_packets=None)
@@ -134,14 +114,7 @@ def lp03_installed_checks(plugin, work):
             if label == "offline-exact-plus-extra":
                 if len([p for p in lp03_request["inputs"] if p["role"].startswith("dependency-")]) != 1:
                     raise ValueError("Extra supplied archive leaked into authoritative inventory.")
-                check = Namespace(command="check", confirmed=receipt["manifest"], state=receipt["state"],
-                                  assessment=receipt["assessment"])
-                tool["continue_command"](check, root)
-                rebound = tool["continue_command"](Namespace(command="rebind", confirmed=receipt["manifest"],
-                    state=receipt["state"], unrelated_evidence=[]), root)
-                if tool["load"](rebound["state"])["captured_at"] != state["captured_at"]:
-                    raise ValueError("Rebind fabricated a capture timestamp.")
-                check.state, check.assessment = rebound["state"], rebound["assessment"]
+                check = Namespace(command="check", state=receipt["state"], assessment=receipt["assessment"])
                 tool["continue_command"](check, root)
                 legacy = dict(state)
                 legacy["producer"] = "eleven-row-handoff/1.3.0"
@@ -162,7 +135,7 @@ def lp03_installed_checks(plugin, work):
                     pass
                 else:
                     raise ValueError("Changed raw SBOM was accepted by saved state.")
-            print(f"Installed LP-03 {label}: {status}; {len(calls)} mocked requests; real native/validator; PI rows untouched.")
+            print(f"Installed LP-03 {label}: {status}; {len(calls)} mocked requests; real native resolver; PI rows untouched.")
 
 
 def run(command, cwd, env=None, code=0):
@@ -176,7 +149,7 @@ def run(command, cwd, env=None, code=0):
 def lp04_installed_checks(plugin, work):
     from oracles.lp04_dlite_expectations import inventory, result
     helper = plugin / "skills/blazor-package-readiness-resolver/scripts/run-resolver.py"
-    loaded = runpy.run_path(str(plugin / "skills/blazor-component-readiness/scripts/autofill-eleven.py"),
+    loaded = runpy.run_path(str(plugin / "skills/blazor-package-readiness-resolver/scripts/autofill-eleven.py"),
                             run_name="lp04_installed_test")
     cases, expected = [], {}
     fixtures = (
@@ -216,60 +189,6 @@ def lp04_installed_checks(plugin, work):
         raise ValueError("Installed LP-04 omitted a case.")
     print("Installed LP-04: five complete independent expectations passed, including full inventory, "
           "empty not-tested wording, unsupported roots/compressed variants and v1 refusal; no network/models.")
-
-
-def report_command(consumer):
-    shell = shutil.which("pwsh") if os.name == "nt" else shutil.which("bash")
-    if shell is None:
-        raise ValueError("No supported shell for the report validator.")
-    launcher = consumer / "scripts/validator" / ("run-validator.ps1" if os.name == "nt" else "run-validator.sh")
-    return ([shell, "-NoProfile", "-File", str(launcher)] if os.name == "nt"
-            else [shell, str(launcher)])
-
-
-def reader_help_installed_checks(plugin, work):
-    command = report_command(plugin / "skills/blazor-component-readiness")
-    build = work / "reader-help-build"
-    build.mkdir()
-    root = work / "reader-help-input"
-    revision = root / "revision"
-    revision.mkdir(parents=True)
-    (revision / "sentinel.txt").write_bytes(b"Help must not read or change a revision.")
-    output = root / "reader-output"
-    before = {p.relative_to(work): hashlib.sha256(p.read_bytes()).hexdigest()
-              for directory in (plugin, root) for p in directory.rglob("*") if p.is_file()}
-    paths_before = {p.relative_to(work) for p in work.rglob("*")
-                    if not p.is_relative_to(build)}
-    env = os.environ.copy()
-    env.update(READINESS_TEMP=str(build), DOTNET_GENERATE_ASPNET_CERTIFICATE="false",
-               DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1", DOTNET_CLI_TELEMETRY_OPTOUT="1",
-               DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE="true")
-    help_forms = ([], ["--help"], ["-h"], ["render", "--help"], ["render", "-h"],
-                  ["verify", "--help"], ["verify", "-h"])
-    for args in help_forms:
-        text = run([*command, "reader", *args], work, env)
-        if not all(value in text for value in (b"Deterministic partner-preview reader",
-                                               b"readiness-validator reader render",
-                                               b"readiness-validator reader verify")):
-            raise ValueError(f"Reader help omitted its usage for {args}.")
-    malformed = (
-        ["unknown", "--help"],
-        ["unknown", "-h"],
-        ["render", "--help", "--root", str(root), "--revision", str(revision), "--output", str(output)],
-        ["verify", "-h", "--output", str(output)],
-        ["render", "--root", str(root), "--revision", str(revision), "--output", str(output), "--help"],
-        ["render", "--root", "--help"],
-    )
-    for args in malformed:
-        run([*command, "reader", *args], work, env, code=2)
-    after = {p.relative_to(work): hashlib.sha256(p.read_bytes()).hexdigest()
-             for directory in (plugin, root) for p in directory.rglob("*") if p.is_file()}
-    paths_after = {p.relative_to(work) for p in work.rglob("*")
-                   if not p.is_relative_to(build)}
-    if after != before or paths_after != paths_before:
-        raise ValueError("Reader help changed the installed plugin, inputs or paths outside its build cache.")
-    print("Installed reader help: seven help forms, six usage-error controls and unchanged "
-          "plugin/input paths passed through the real launcher; no report/network/models.")
 
 
 def inspection_checks(helper, assessment):
@@ -330,7 +249,7 @@ def inspection_checks(helper, assessment):
 
 
 def lp02_public_capture_checks(plugin, work, root):
-    script = plugin / "skills/blazor-component-readiness/scripts/autofill-eleven.py"
+    script = plugin / "skills/blazor-package-readiness-resolver/scripts/autofill-eleven.py"
     helper = plugin / "skills/blazor-package-readiness-resolver/scripts/run-resolver.py"
     tool = runpy.run_path(str(script), run_name="autofill_shipping_test")
     capture = root / "public-capture"
@@ -368,9 +287,9 @@ def lp02_public_capture_checks(plugin, work, root):
           "Razor, inherited build files and interior filename spaces are not false blockers.")
 
 
-def forged_provenance_shortcut_checks(plugin, work, root, receipt, command, env):
-    """B5: even registered native-result-shaped JSON cannot bypass the notice protocol."""
-    tool = runpy.run_path(str(plugin / "skills/blazor-component-readiness/scripts/autofill-eleven.py"),
+def forged_provenance_shortcut_checks(plugin, work, root, receipt):
+    """B5: caller-authored native-result-shaped JSON cannot bypass provenance admission."""
+    tool = runpy.run_path(str(plugin / "skills/blazor-package-readiness-resolver/scripts/autofill-eleven.py"),
                           run_name="forged_provenance_test")
     state = json.loads(Path(receipt["state"]).read_bytes())
     paths = {key: root / relative for key, relative in state["paths"].items()}
@@ -390,29 +309,46 @@ def forged_provenance_shortcut_checks(plugin, work, root, receipt, command, env)
                       {"path": "wwwroot/fake.js", "length": 1, "sha256": fake_sha}],
                       "unsupported_candidates": [], "inventory_sha256": inventory_sha})
     next(case for case in request["cases"] if case["row_id"] == "LP-04")["inputs"] = pins
-    forged_results, forged_request = root / "forged-results.json", root / "forged-request.json"
+    forged_dir = work / "forged-capture"
+    shutil.copytree(paths["resolve_request"].parent, forged_dir)
+    forged_results, forged_request = root / "forged-results.json", forged_dir / "resolve-request.json"
     forged_results.write_text(json.dumps(results), encoding="utf-8")
     forged_request.write_text(json.dumps(request), encoding="utf-8")
-    run([*command, "inputs", "candidates", "add-evidence", "--input", receipt["candidates"],
-         "--path", forged_results.name, "--kind", "document", "--output", str(root / "forged-candidates.json")], work, env)
-    run([*command, "inputs", "discover", "--root", str(root), "--nupkg", str(paths["package"]),
-         "--candidates", str(root / "forged-candidates.json"), "--output", str(root / "forged-draft.json")], work, env)
-    manifest = root / "forged-confirmed.json"
-    run([*command, "inputs", "confirm", "--root", str(root), "--draft", str(root / "forged-draft.json"),
-         "--output", str(manifest)], work, env)
     scratch = work / "forged-handoff"
     scratch.mkdir()
     tools = tool["Tools"](root, scratch)
     outputs = dict(paths, results=forged_results, resolve_request=forged_request)
-    bound, _ = tool["bind"](tools, root, scratch, manifest, paths["package"], outputs)
-    completed = subprocess.run([*command, "assessment", "validate", "--root", str(root), "--input", str(manifest),
-                               "--assessment", str(bound["assessment"]), "--evidence", str(bound["bundle"])],
-                              cwd=work, env=env, capture_output=True, timeout=240, check=False)
-    output = completed.stdout + completed.stderr
-    if completed.returncode != 1 or b"notice-coverage-v1" not in output:
-        raise ValueError(f"Forged provenance validation exited {completed.returncode}; expected exit 1 and the notice-protocol error: " +
-                         output.decode(errors="replace"))
-    print("B5 validator: registered caller-authored result with four unregistered provenance pins rejected.")
+    try:
+        tool["bind"](tools, root, scratch, paths["package"], outputs)
+    except ValueError as error:
+        if "Missing path:" not in str(error) and "Checked input missing or changed before handoff" not in str(error):
+            raise ValueError(f"Unexpected forged unregistered pin error: {error}") from error
+    else:
+        raise ValueError("Forged unregistered provenance pins were accepted by bind.")
+    # Now also materialize the four forged pins on disk with matching SHA-256 and verify HMAC rejection.
+    att_bytes = b'{"payload":"e30=","hmac_sha256":"' + (b"0" * 64) + b'"}'
+    att_sha = hashlib.sha256(att_bytes).hexdigest()
+    dummy_bytes = b"dummy"
+    dummy_sha = hashlib.sha256(dummy_bytes).hexdigest()
+    materialized_pins = [result["inputs"][0]]
+    for role in ("release-package", "provenance-bundle", "provenance-attestation", "source-archive"):
+        name = "unregistered-" + role + ".bin"
+        content, digest = (att_bytes, att_sha) if role == "provenance-attestation" else (dummy_bytes, dummy_sha)
+        (forged_dir / name).write_bytes(content)
+        materialized_pins.append({"role": role, "path": name, "sha256": digest})
+    result.update(inputs=materialized_pins,
+                  evidence_references=[f"input:{p['role']}:{p['sha256']}" for p in materialized_pins])
+    next(case for case in request["cases"] if case["row_id"] == "LP-04")["inputs"] = materialized_pins
+    forged_results.write_text(json.dumps(results), encoding="utf-8")
+    forged_request.write_text(json.dumps(request), encoding="utf-8")
+    try:
+        tool["bind"](tools, root, scratch, paths["package"], outputs)
+    except ValueError as error:
+        if "Unauthenticated provenance attestation" not in str(error):
+            raise ValueError(f"Unexpected forged HMAC error: {error}") from error
+    else:
+        raise ValueError("Forged unauthenticated provenance attestation was accepted by bind.")
+    print("B5 handoff: caller-authored result with unregistered or unauthenticated provenance pins rejected.")
 
 
 def autofill_checks(plugin, work, setup):
@@ -420,33 +356,21 @@ def autofill_checks(plugin, work, setup):
     root.mkdir()
     shutil.copyfile(setup, root / "setup.py")
     run([sys.executable, "setup.py"], root)
-    consumer = plugin / "skills/blazor-component-readiness"
-    script = consumer / "scripts/autofill-eleven.py"
-    helper = plugin / "skills/blazor-package-readiness-resolver/scripts/run-resolver.py"
+    skill = plugin / "skills/blazor-package-readiness-resolver"
+    script = skill / "scripts/autofill-eleven.py"
+    helper = skill / "scripts/run-resolver.py"
     inspection_checks(helper, root)
-    command = report_command(consumer)
     env = os.environ.copy()
-    env.update(READINESS_TEMP=str(work / "autofill-bootstrap"),
-               DOTNET_GENERATE_ASPNET_CERTIFICATE="false", DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1")
-    run([*command, "inputs", "candidates", "init", "--acquisition", "published",
-         "--package-locator", "sample.nupkg", "--package-method", "local-file",
-         "--source-availability", "unresolved", "--output", str(root / "candidates0.json")], work, env)
-    run([*command, "inputs", "candidates", "add-retrieval", "--input", str(root / "candidates0.json"),
-         "--subject", "package", "--locator", "sample.nupkg", "--method", "local-file",
-         "--result", "succeeded", "--output", str(root / "candidates.json")], work, env)
-    run([*command, "inputs", "discover", "--root", str(root), "--nupkg", str(root / "sample.nupkg"),
-         "--candidates", str(root / "candidates.json"), "--output", str(root / "input.draft.json")], work, env)
-    run([*command, "inputs", "confirm", "--root", str(root), "--draft", str(root / "input.draft.json"),
-         "--output", str(root / "input.confirmed.json")], work, env)
+    env.update(DOTNET_GENERATE_ASPNET_CERTIFICATE="false", DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1")
     packets = {"schema_version": 1, "cases": [{"case_id": "supplied-lp05", "row_id": "LP-05", "inputs": [
         {"role": "package", "path": "sample.nupkg", "sha256": hashlib.sha256((root / "sample.nupkg").read_bytes()).hexdigest()}
     ]}]}
     (root / "row-packets.json").write_text(json.dumps(packets), encoding="utf-8")
     invocation = [sys.executable, "-I", str(script)]
     output = run([*invocation, "run", "--root", str(root), "--nupkg", str(root / "sample.nupkg"),
-                  "--candidates", str(root / "candidates.json"), "--confirmed", str(root / "input.confirmed.json"),
-                  "--offline", "--nuget-feed", "dotnet-public", "--source-archive", str(root / "source.zip"),
-                  "--dependency", str(root / "dependency.nupkg"), "--row-packets", str(root / "row-packets.json")], work, env)
+                  "--source-availability", "unresolved", "--offline", "--nuget-feed", "dotnet-public",
+                  "--source-archive", str(root / "source.zip"), "--dependency", str(root / "dependency.nupkg"),
+                  "--row-packets", str(root / "row-packets.json")], work, env)
     receipt = json.loads(output)
     assessment = json.loads(Path(receipt["assessment"]).read_bytes())
     states = {row["id"]: row for row in assessment["rows"]}
@@ -457,7 +381,8 @@ def autofill_checks(plugin, work, setup):
             "LP-01 [approved-non-copyleft]" not in lp01["observation"] or
             "Declarations and named files do not establish owner authority" in lp01["observation"]):
         raise ValueError("An approved LP-01 package declaration must be verified without owner follow-up.")
-    if (len(states) != 60 or any(states[row]["status"] is None for row in assigned) or
+    if (len(states) != 60 or len(assessment.get("selected_ids", [])) != 60 or
+            any(states[row]["status"] is None for row in assigned) or
             any(row["status"] is not None for key, row in states.items() if key not in assigned) or
             assessment["completion_state"] != "incomplete" or
             "Microsoft.NET.Sdk.Razor" not in states["LP-02"]["observation"] or
@@ -471,78 +396,66 @@ def autofill_checks(plugin, work, setup):
         raise ValueError("Eleven-row autofill lost supported breadth or assigned outside its scope.")
     if states["LP-02"]["status"] != "not tested" or "LP-02 [observation-missing]" not in states["LP-02"]["observation"]:
         raise ValueError("A local source import must not invent anonymous public retrieval.")
-    check = [*invocation, "check", "--root", str(root), "--confirmed", receipt["manifest"], "--state", receipt["state"]]
+    check = [*invocation, "check", "--root", str(root), "--state", receipt["state"]]
     run([*check, "--assessment", receipt["assessment"]], work, env)
-    remaining = {"schema_version": 1, "rows": [{
-        "id": "PI-02", "status": "not tested", "observation": "The package-signature check was not performed.",
-        "evidence_ids": [], "owner_action": None, "assessment_follow_up": "Inspect the exact package signature.",
-        "not_applicable_rationale": None
-    }], "findings": [], "summary_groups": [], "completion_state": "incomplete"}
-    (root / "remaining-decisions.json").write_text(json.dumps(remaining))
-    run([*command, "assessment", "apply-decisions", "--assessment", receipt["assessment"],
-         "--decisions", str(root / "remaining-decisions.json"), "--output", str(root / "continued-draft.json")], work, env)
-    run([*command, "assessment", "canonicalize", "--assessment", str(root / "continued-draft.json"),
-         "--output", str(root / "continued-canonical.json")], work, env)
+    continued = json.loads(json.dumps(assessment))
+    pi02 = next(row for row in continued["rows"] if row["id"] == "PI-02")
+    pi02.update(status="not tested", observation="The package-signature check was not performed.",
+                assessment_follow_up="Inspect the exact package signature.")
+    (root / "continued-canonical.json").write_text(json.dumps(continued), encoding="utf-8")
     run([*check, "--assessment", str(root / "continued-canonical.json")], work, env)
     state = json.loads(Path(receipt["state"]).read_bytes())
     paths = {key: root / relative for key, relative in state["paths"].items()}
-    forged_provenance_shortcut_checks(plugin, work, root, receipt, command, env)
+    forged_provenance_shortcut_checks(plugin, work, root, receipt)
     if json.loads(paths["acquisition"].read_bytes())["nuget_feed"] != "dotnet-public":
         raise ValueError("The installed handoff lost the explicit Azure feed selection.")
     resolve = json.loads(paths["resolve_request"].read_bytes())
     supplied_case = next(case for case in resolve["cases"] if case["row_id"] == "LP-05")
     if supplied_case["inputs"][0]["path"] != "packet-lp-05-000.bin":
         raise ValueError("The installed handoff did not use the explicitly supplied checked row packet.")
-    run([*command, "evidence", "ledger-build", "--kind", "repository", "--subject", str(paths["identity"]),
-         "--draft", str(paths["evidence_draft"]), "--nupkg", str(root / "sample.nupkg"),
-         "--output", str(root / "rebuilt-same-subject-ledger.json")], work, env)
-    if json.loads((root / "rebuilt-same-subject-ledger.json").read_bytes()) != json.loads(paths["ledger"].read_bytes()):
-        raise ValueError("Rebuilding unchanged records under the same subject changed the ledger.")
     mutated = json.loads(json.dumps(assessment))
     next(row for row in mutated["rows"] if row["id"] == "LP-01")["observation"] = "Invented model replacement."
-    (root / "mutated-assessment.json").write_text(json.dumps(mutated))
+    (root / "mutated-assessment.json").write_text(json.dumps(mutated), encoding="utf-8")
     run([*check, "--assessment", str(root / "mutated-assessment.json")], work, env, code=2)
-    (root / "unrelated.json").write_text('{"other_rows":"additional retained evidence"}\n')
-    run([*command, "inputs", "candidates", "add-evidence", "--input", receipt["candidates"],
-         "--path", "unrelated.json", "--kind", "document", "--output", str(root / "next-candidates.json")], work, env)
-    run([*command, "inputs", "discover", "--root", str(root), "--nupkg", str(root / "sample.nupkg"),
-         "--candidates", str(root / "next-candidates.json"), "--output", str(root / "next.draft.json")], work, env)
-    run([*command, "inputs", "confirm", "--root", str(root), "--draft", str(root / "next.draft.json"),
-         "--output", str(root / "next.confirmed.json")], work, env)
-    rebound = json.loads(run([*invocation, "rebind", "--root", str(root), "--confirmed", str(root / "next.confirmed.json"),
-                             "--state", receipt["state"], "--unrelated-evidence", "unrelated.json"], work, env))
-    newer = json.loads(Path(rebound["assessment"]).read_bytes())
-    next_states = {row["id"]: row for row in newer["rows"]}
-    if any(states[row]["evidence_ids"] == next_states[row]["evidence_ids"] for row in assigned):
-        raise ValueError("Rebind retained stale subject-bound evidence IDs.")
-    if any(states[row]["observation"] != next_states[row]["observation"] for row in assigned):
-        raise ValueError("Rebind changed the unchanged eleven-row facts.")
-    if json.loads(Path(receipt["state"]).read_bytes())["captured_at"] != json.loads(Path(rebound["state"]).read_bytes())["captured_at"]:
-        raise ValueError("Rebind invented new capture metadata.")
-    run([*invocation, "check", "--root", str(root), "--confirmed", str(root / "next.confirmed.json"),
-         "--state", rebound["state"], "--assessment", rebound["assessment"]], work, env)
-    run([*check, "--assessment", rebound["assessment"]], work, env, code=2)
+    stale = json.loads(json.dumps(assessment))
+    stale["identity"]["nupkg_sha256"] = "0" * 64
+    (root / "stale-identity.json").write_text(json.dumps(stale), encoding="utf-8")
+    run([*check, "--assessment", str(root / "stale-identity.json")], work, env, code=2)
+    premature = json.loads(json.dumps(assessment))
+    premature["completion_state"] = "complete"
+    (root / "premature-complete.json").write_text(json.dumps(premature), encoding="utf-8")
+    run([*check, "--assessment", str(root / "premature-complete.json")], work, env, code=2)
+    bad_producer = json.loads(json.dumps(assessment))
+    bad_producer["producer"] = "forged-producer/1.0.0"
+    (root / "bad-producer.json").write_text(json.dumps(bad_producer), encoding="utf-8")
+    run([*check, "--assessment", str(root / "bad-producer.json")], work, env, code=2)
+    bool_schema = json.loads(json.dumps(assessment))
+    bool_schema["schema_version"] = True
+    (root / "bool-schema.json").write_text(json.dumps(bool_schema), encoding="utf-8")
+    run([*check, "--assessment", str(root / "bool-schema.json")], work, env, code=2)
+    float_schema = json.loads(json.dumps(assessment))
+    float_schema["schema_version"] = 1.0
+    (root / "float-schema.json").write_text(json.dumps(float_schema), encoding="utf-8")
+    run([*check, "--assessment", str(root / "float-schema.json")], work, env, code=2)
+    extra_key = json.loads(json.dumps(assessment))
+    extra_key["unexpected"] = True
+    (root / "extra-key.json").write_text(json.dumps(extra_key), encoding="utf-8")
+    run([*check, "--assessment", str(root / "extra-key.json")], work, env, code=2)
+    run([*invocation, "run", "--root", str(root), "--nupkg", str(root / "sample.nupkg"),
+         "--source-availability", "closed-source", "--source-archive", str(root / "source.zip"),
+         "--offline"], work, env, code=2)
     lp02_public_capture_checks(plugin, work, root)
-    lone = work / "autofill-single/blazor-component-readiness"
-    shutil.copytree(consumer, lone, ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
+    lone = work / "autofill-single/skills/blazor-package-readiness-resolver"
+    shutil.copytree(skill, lone, ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
+    (lone / "scripts/run-resolver.py").unlink()
     run([sys.executable, "-I", str(lone / "scripts/autofill-eleven.py"), "run", "--root", str(root),
-         "--nupkg", str(root / "sample.nupkg"), "--candidates", receipt["candidates"],
-         "--confirmed", receipt["manifest"], "--allow-network"], work, env, code=2)
+         "--nupkg", str(root / "sample.nupkg"), "--allow-network"], work, env, code=2)
     print("Installed eleven-row autofill: offline producer chain, eleven assigned/49 untouched, partial breadth, "
-          "unchanged-row check, changed-manifest rebind with new IDs/preserved capture time, stale identity and "
-          "model overwrite rejection, and single-skill no-acquisition failure passed.")
+          "unchanged-row check, stale identity and model overwrite rejection, closed-source boundary check, "
+          "and missing-launcher no-acquisition failure passed.")
 
 
 def certificate_launcher_checks(plugin, work):
-    consumer = plugin / "skills/blazor-component-readiness"
-    bash = shutil.which("bash")
-    pwsh = shutil.which("pwsh")
-    if not bash or (os.name == "nt" and not pwsh):
-        raise ValueError("Bash (and PowerShell on Windows) are required for launcher checks.")
-    launchers = [("bash", bash, consumer / "scripts/validator/run-validator.sh")]
-    if pwsh:
-        launchers.append(("pwsh", pwsh, consumer / "scripts/validator/run-validator.ps1"))
-
     shim_dir = work / "dotnet shim"
     shim_dir.mkdir()
     bash_shim = shim_dir / "dotnet"
@@ -574,89 +487,6 @@ def certificate_launcher_checks(plugin, work):
     for key in ("DOTNET_GENERATE_ASPNET_CERTIFICATE", "DOTNET_SKIP_FIRST_TIME_EXPERIENCE",
                 "DOTNET_CLI_HOME", "READINESS_TEMP"):
         clean_env.pop(key, None)
-    for name, shell, launcher in launchers:
-        probe = work / ("cert-shim-" + name)
-        probe.mkdir()
-        build = work / ("cert-build-" + name)
-        env = clean_env.copy()
-        env["PATH"] = str(shim_dir) + os.pathsep + env["PATH"]
-        env["READINESS_TEMP"] = str(build)
-
-        if name == "bash":
-            resolution = run([shell, "-c", "command -v dotnet"], probe, env).decode().strip()
-            if os.name == "nt":
-                resolution = run([shell, "-c", 'cygpath -w -- "$(command -v dotnet)"'],
-                                 probe, env).decode().strip()
-            expected_shim = bash_shim
-            command = [shell, str(launcher), "help"]
-        else:
-            resolution = run([shell, "-NoProfile", "-Command", "(Get-Command dotnet).Source"],
-                             probe, env).decode().strip()
-            expected_shim = cmd_shim if os.name == "nt" else bash_shim
-            command = [shell, "-NoProfile", "-File", str(launcher), "help"]
-        if not resolution or not Path(resolution).is_file() or not os.path.samefile(resolution, expected_shim):
-            raise ValueError(f"{name} resolved dotnet to {resolution!r}, not {expected_shim}.")
-        if build.exists():
-            raise ValueError(f"{name} launcher build directory was not fresh.")
-        result = subprocess.run(command, cwd=probe, env=env, capture_output=True,
-                                timeout=30, check=False)
-        record = probe / "shim-record"
-        if result.returncode != 3 or not record.is_file():
-            raise ValueError(f"{name} did not reach the intercepted SDK check: "
-                             f"exit={result.returncode}, stderr={result.stderr!r}")
-        values = dict(line.split("=", 1) for line in record.read_text(encoding="utf-8").splitlines())
-        if values.get("args") != "--version" or values.get("cert") != "false" or values.get("skip") != "1":
-            raise ValueError(f"{name} first dotnet call lacked launcher-owned bootstrap settings: {values}")
-        home = values.get("home", "")
-        if name == "bash" and os.name == "nt":
-            home = run([shell, "-c", 'cygpath -w -- "$1"', "_", home],
-                       probe, env).decode().strip()
-        if not home or not Path(home).is_dir() or Path(home).resolve().parent != build.resolve():
-            raise ValueError(f"{name} did not create an isolated launcher-owned CLI home: {home!r}")
-
-        cleanup_probe = work / ("cert-cleanup-" + name)
-        cleanup_probe.mkdir()
-        cleanup_env = env.copy()
-        cleanup_env.pop("READINESS_TEMP")
-        for key in ("TMPDIR", "TEMP", "TMP"):
-            cleanup_env[key] = str(work)
-        result = subprocess.run(command, cwd=cleanup_probe, env=cleanup_env, capture_output=True,
-                                timeout=30, check=False)
-        cleanup_record = cleanup_probe / "shim-record"
-        if result.returncode != 3 or not cleanup_record.is_file():
-            raise ValueError(f"{name} did not reach the intercepted SDK failure in cleanup mode: "
-                             f"exit={result.returncode}, stderr={result.stderr!r}")
-        cleanup_values = dict(line.split("=", 1) for line in
-                              cleanup_record.read_text(encoding="utf-8").splitlines())
-        cleanup_home = cleanup_values.get("home", "")
-        if name == "bash" and os.name == "nt":
-            cleanup_home = run([shell, "-c", 'cygpath -w -- "$1"', "_", cleanup_home],
-                               cleanup_probe, cleanup_env).decode().strip()
-        cleanup_path = Path(cleanup_home)
-        if (cleanup_values.get("args") != "--version" or
-                not cleanup_home or
-                not cleanup_path.parent.name.startswith("blazor-readiness-validator-") or
-                cleanup_path.parent.parent.resolve() != work.resolve() or
-                cleanup_path.exists() or cleanup_path.parent.exists()):
-            raise ValueError(f"{name} did not clean up its isolated CLI home on SDK failure: "
-                             f"{cleanup_values}")
-
-        real_env = clean_env.copy()
-        real_build = work / ("cert-real-build-" + name)
-        real_env["READINESS_TEMP"] = str(real_build)
-        if real_build.exists():
-            raise ValueError(f"{name} real validator CLI home was not fresh.")
-        result = subprocess.run(command, cwd=probe, env=real_env, capture_output=True,
-                                timeout=240, check=False)
-        if result.returncode != 0:
-            raise ValueError(f"{name} real first validator help failed: "
-                             f"exit={result.returncode}, stderr={result.stderr.decode(errors='replace')}")
-        if not (real_build / "cli-home").is_dir():
-            raise ValueError(f"{name} real first validator help did not create its isolated CLI home.")
-        output = (result.stdout + result.stderr).decode(errors="replace")
-        if re.search(r"ASP\.NET Core HTTPS development certificate|dotnet dev-certs https --trust|"
-                     r"development certificate.{0,60}(?:install|trust)", output, re.IGNORECASE):
-            raise ValueError(f"{name} first validator help emitted a development-certificate banner: {output}")
 
     resolver_probe = work / "cert-shim-resolver"
     resolver_probe.mkdir()
@@ -683,11 +513,20 @@ def certificate_launcher_checks(plugin, work):
             not home.parent.name.startswith("blazor-resolver-") or
             home.parent.parent != work):
         raise ValueError(f"Resolver first dotnet call lacked isolated launcher-owned settings: {values}")
-    print("Bash and available PowerShell launchers: first intercepted dotnet --version received "
-          "launcher-owned certificate/first-time settings and isolated CLI home; SDK failure "
-          "cleaned up automatic scratch; real first "
-          "validator help emitted no development-certificate installation/trust banner. "
-          "Resolver first --list-sdks received the same isolated settings.")
+    real_probe = work / "cert-real-resolver"
+    real_probe.mkdir()
+    real_result = subprocess.run([sys.executable, str(helper), "coverage"], cwd=real_probe,
+                                 env=clean_env, capture_output=True, timeout=240, check=False)
+    if real_result.returncode != 0:
+        raise ValueError(f"Resolver real first coverage failed: exit={real_result.returncode}, "
+                         f"stderr={real_result.stderr.decode(errors='replace')}")
+    output = (real_result.stdout + real_result.stderr).decode(errors="replace")
+    if re.search(r"ASP\.NET Core HTTPS development certificate|dotnet dev-certs https --trust|"
+                 r"development certificate.{0,60}(?:install|trust)", output, re.IGNORECASE):
+        raise ValueError(f"Resolver first coverage emitted a development-certificate banner: {output}")
+    print("Resolver launcher: first intercepted dotnet --list-sdks received launcher-owned "
+          "certificate/first-time settings and isolated CLI home; real first coverage emitted "
+          "no development-certificate installation/trust banner.")
 
 
 def sdk_checks(helper, work):
@@ -725,174 +564,50 @@ def sdk_checks(helper, work):
           "real SDK selection and unchanged caller SDK passed.")
 
 
-def worker_command(plugin, work):
-    consumer = plugin / "skills/blazor-component-readiness"
-    bash = (Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Git/bin/bash.exe"
-            if os.name == "nt" else shutil.which("bash"))
-    if not bash or not Path(bash).is_file():
-        raise ValueError("Bash is required to check the documented POSIX worker handoff.")
-    unit = work / "worker unit"
-    staged = unit / "plugin"
-    target = staged / "skills/blazor-component-readiness"
-    (target / "scripts").mkdir(parents=True)
-    shutil.copyfile(plugin / "plugin.json", staged / "plugin.json")
-    shutil.copyfile(consumer / "SKILL.md", target / "SKILL.md")
-    helper = target / "scripts/prepare-worker-launch.sh"
-    shutil.copy2(consumer / "scripts/prepare-worker-launch.sh", helper)
-    if os.name != "nt" and not os.access(helper, os.X_OK):
-        raise ValueError("The POSIX worker helper must be executable in the checkout.")
-    (unit / "worker-prompt-base.txt").write_text("Inspect local evidence without runtime execution.\n")
-    document = (consumer / "references/worker-execution.md").read_text()
-    start = document.index('bash "$PLUGIN/skills/blazor-component-readiness/scripts/prepare-worker-launch.sh"')
-    end = document.index('\n. "$CONTRACT"', start) + len('\n. "$CONTRACT"')
-    script = work / "documented-worker-command.sh"
-    script.write_text(
-        'set -euo pipefail\nUNIT="$PWD/worker unit"\nPLUGIN="$UNIT/plugin/../plugin"\n'
-        'CONTRACT="$UNIT/launch.env"\n' + document[start:end] +
-        '\nEXPECTED_PLUGIN="$(cd -- "$PLUGIN" && pwd -P)"\n'
-        '[[ "$PLUGIN_ROOT" = "$EXPECTED_PLUGIN" && "$CLI_PLUGIN_DIR" = "$EXPECTED_PLUGIN" ]]\n'
-        '[[ -f "$WORKER_PROMPT_FILE" ]]\n'
-        'grep -Fq "Explicit trusted plugin root: $EXPECTED_PLUGIN" "$WORKER_PROMPT_FILE"\n',
-        newline="\n")
-    run([str(bash), script.name], work)
-
-
 def isolated_checks(plugin, work, setup):
-    consumer = plugin / "skills/blazor-component-readiness"
-    data = plugin / "skills/blazor-package-readiness-resolver/scripts/resolver/data"
-    for name in ("rubric.json", "requirement-basis.json"):
-        if (consumer / "references" / name).read_bytes() != (data / name).read_bytes():
-            raise ValueError("Generated normative assets differ from their canonical sources.")
-    if (consumer / "plugin-manifest.json").read_bytes() != (plugin / "plugin.json").read_bytes():
-        raise ValueError("Generated plugin snapshot differs from its authority.")
     # Match ordinary skill-only staging, including a parent literally named "skills".
-    staged = work / "single/.agents/skills/blazor-component-readiness"
-    shutil.copytree(consumer, staged, ignore=shutil.ignore_patterns("bin", "obj"))
-    if (staged.parent / "blazor-package-readiness-resolver").exists() or (staged.parents[1] / "plugin.json").exists():
+    resolver = work / "resolver-single/.agents/skills/blazor-package-readiness-resolver"
+    shutil.copytree(plugin / "skills/blazor-package-readiness-resolver", resolver,
+                    ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
+    if (resolver.parents[1] / "plugin.json").exists():
         raise ValueError("Single-skill test accidentally staged a full plugin.")
     assessment = work / "single-assessment"
     assessment.mkdir()
     shutil.copyfile(setup, assessment / "setup.py")
-    grader = REPO / "tests/dotnet-blazor/blazor-component-readiness/fixtures/check_report.py"
-    shutil.copyfile(grader, assessment / "check_report.py")
     run([sys.executable, "setup.py"], assessment)
-    command = report_command(staged)
-    env = os.environ.copy()
-    env["READINESS_TEMP"] = str(work / "single-build")
-    run([*command, "inputs", "candidates", "init", "--acquisition", "published",
-         "--package-locator", "sample.nupkg", "--package-method", "local-file",
-         "--source-availability", "unresolved", "--output", str(assessment / "candidates0.json")], work, env)
-    run([*command, "inputs", "candidates", "add-component", "--input", str(assessment / "candidates0.json"),
-         "--id", "date-field", "--name", "DateField", "--mode", "interactive-server",
-         "--lifecycle-applicability", "not-applicable", "--lifecycle-rationale",
-         "This test control has no dynamic children.", "--output", str(assessment / "candidates1.json")], work, env)
-    run([*command, "inputs", "candidates", "add-retrieval", "--input", str(assessment / "candidates1.json"),
-         "--subject", "package", "--locator", "sample.nupkg", "--method", "local-file",
-         "--result", "succeeded", "--output", str(assessment / "candidates2.json")], work, env)
-    run([*command, "inputs", "discover", "--root", str(assessment), "--nupkg", str(assessment / "sample.nupkg"),
-         "--candidates", str(assessment / "candidates2.json"), "--output",
-         str(assessment / "discovered.json")], work, env)
-    run([*command, "inputs", "confirm", "--root", str(assessment), "--draft",
-         str(assessment / "discovered.json"), "--output", str(assessment / "confirmed.json")], work, env)
-    def initialize(kind, output):
-        return [*command, "assessment", "init", "--kind", kind, "--root", str(assessment),
-                "--input", str(assessment / "confirmed.json"), "--output", str(assessment / output),
-                *(["--component", "date-field"] if kind == "component" else [])]
-    for kind in ("component", "package"):
-        run(initialize(kind, kind + ".json"), work, env)
-        run([sys.executable, "check_report.py", kind + ".json", kind], assessment)
-    package = json.loads((assessment / "package.json").read_bytes())
-    decisions = {
-        "schema_version": 1,
-        "rows": [
-            {
-                "id": row["id"],
-                "status": "not tested",
-                "observation": ("Static-only installed-plugin decision payload proves file-driven "
-                                "draft authoring without embedding assessment prose in a shell command. " * 3).strip(),
-                "evidence_ids": [],
-                "owner_action": None,
-                "assessment_follow_up": "Supply requirement-specific evidence before completion.",
-                "not_applicable_rationale": None,
-            }
-            for row in package["rows"]
-        ],
-        "findings": [],
-        "summary_groups": [],
-        "completion_state": "incomplete",
-    }
-    decisions_path = assessment / "package.decisions.json"
-    decisions_path.write_text(json.dumps(decisions), encoding="utf-8")
-    if decisions_path.stat().st_size <= 32767:
-        raise ValueError("Decision-file regression payload must exceed the Windows command-line limit.")
-    run([*command, "assessment", "apply-decisions", "--assessment", str(assessment / "package.json"),
-         "--decisions", str(decisions_path), "--output", str(assessment / "package.draft.json")], work, env)
-    package_draft = json.loads((assessment / "package.draft.json").read_bytes())
-    if len(package_draft["rows"]) != 60 or any(row["status"] != "not tested" for row in package_draft["rows"]):
-        raise ValueError("File-driven assessment decisions did not update all package rows.")
-    duplicate = json.loads(json.dumps(decisions))
-    duplicate["rows"].append(duplicate["rows"][0])
-    (assessment / "duplicate.decisions.json").write_text(json.dumps(duplicate), encoding="utf-8")
-    run([*command, "assessment", "apply-decisions", "--assessment", str(assessment / "package.json"),
-         "--decisions", str(assessment / "duplicate.decisions.json"),
-         "--output", str(assessment / "duplicate.draft.json")], work, env, code=1)
-    unknown = json.loads(json.dumps(decisions))
-    unknown["rows"][0]["id"] = "UNKNOWN-ROW"
-    (assessment / "unknown.decisions.json").write_text(json.dumps(unknown), encoding="utf-8")
-    run([*command, "assessment", "apply-decisions", "--assessment", str(assessment / "package.json"),
-         "--decisions", str(assessment / "unknown.decisions.json"),
-         "--output", str(assessment / "unknown.draft.json")], work, env, code=1)
-    gold = json.loads((assessment / "component.json").read_bytes())
-    def reject(change):
-        value = json.loads(json.dumps(gold))
-        change(value)
-        (assessment / "mutated.json").write_text(json.dumps(value))
-        run([sys.executable, "check_report.py", "mutated.json", "component"], assessment, code=1)
-    reject(lambda value: value["selected_ids"].pop())
-    reject(lambda value: value.update(completion_state="complete"))
-    reject(lambda value: value["identity"]["input_manifest_sha256"].update(value="0" * 64))
-    reject(lambda value: value["rows"][0].update(status="verified"))
-    for name in ("rubric.json", "requirement-basis.json"):
-        path = staged / "references" / name
-        original = path.read_bytes()
-        try:
-            path.write_bytes(original + b"\n")
-            run(initialize("package", "drift-" + name), work, env, code=1)
-            if (assessment / ("drift-" + name)).exists():
-                raise ValueError("Normative drift produced an assessment.")
-        finally:
-            path.write_bytes(original)
-    snapshot = consumer / "plugin-manifest.json"
-    original = snapshot.read_bytes()
-    try:
-        snapshot.write_bytes(original + b"\n")
-        run([*report_command(consumer), "help"], work, env, code=1)
-    finally:
-        snapshot.write_bytes(original)
-    resolver = work / "resolver-single/skills/blazor-package-readiness-resolver"
-    shutil.copytree(plugin / "skills/blazor-package-readiness-resolver", resolver,
-                    ignore=shutil.ignore_patterns("bin", "obj"))
     result = run([sys.executable, str(resolver / "scripts/run-resolver.py"), "package", "sample.nupkg"], assessment)
     (assessment / "result.json").write_bytes(result)
     run([sys.executable, "setup.py", "result.json", "all"], assessment)
-    worker_command(plugin, work)
-    print("Single-skill staging: component 52/package 60 rows, file-driven >32K decision application "
-          "with duplicate/unknown rejection, four outcome-grader mutations, "
-          "two normative drift rejections, installed manifest drift rejection, standalone resolver "
-          "and exact documented Bash handoff passed; no worker was launched.")
+    autofill_script = resolver / "scripts/autofill-eleven.py"
+    receipt = json.loads(run([sys.executable, "-I", str(autofill_script), "run",
+                              "--root", str(assessment), "--nupkg", str(assessment / "sample.nupkg"),
+                              "--offline"], work))
+    run([sys.executable, "-I", str(autofill_script), "check",
+         "--root", str(assessment), "--state", receipt["state"], "--assessment", receipt["assessment"]], work)
+    data = resolver / "scripts/resolver/data"
+    for name in ("rubric.json", "requirement-basis.json"):
+        path = data / name
+        original = path.read_bytes()
+        try:
+            path.write_bytes(original + b"\n")
+            run([sys.executable, str(resolver / "scripts/run-resolver.py"), "coverage"], assessment, code=2)
+            run([sys.executable, "-I", str(autofill_script), "check",
+                 "--root", str(assessment), "--state", receipt["state"],
+                 "--assessment", receipt["assessment"]], work, code=2)
+        finally:
+            path.write_bytes(original)
+    print("Single-skill staging: standalone resolver package dispatch, standalone eleven-row autofill "
+          "run/check, and two normative catalog drift rejections passed without plugin.json.")
 
 
 def main():
-    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"], ["--autofill"], ["--lp03"], ["--lp04"], ["--reader-help"]):
-        raise ValueError("Supported options: --isolated, --launcher, --cert, --autofill, --lp03, --lp04, --reader-help")
+    if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"], ["--autofill"], ["--lp03"], ["--lp04"]):
+        raise ValueError("Supported options: --isolated, --launcher, --cert, --autofill, --lp03, --lp04")
     with tempfile.TemporaryDirectory(prefix="resolver-installed-") as work:
         work = Path(work)
         plugin = work / "plugin"
         shutil.copytree(REPO / "plugins/dotnet-blazor", plugin,
                         ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))
-        if sys.argv[1:] == ["--reader-help"]:
-            reader_help_installed_checks(plugin, work)
-            return
         if sys.argv[1:] == ["--lp03"]:
             lp03_installed_checks(plugin, work)
             return
@@ -948,83 +663,7 @@ def main():
         run([*invocation, "resolve", "malformed.json"], assessment, code=2)
         run([*invocation, "acquire-lp02", "sample.nupkg"], assessment, code=2)
         inspection_checks(helper, assessment)
-        consumer = plugin / "skills/blazor-component-readiness"
-        # Build/launch only the trusted report validator; assessed build targets remain inert.
-        command = report_command(consumer)
-        reader_help_installed_checks(plugin, work)
         certificate_launcher_checks(plugin, work)
-        env = os.environ.copy()
-        env["READINESS_TEMP"] = str(work / "report-build")
-        # The report validator intentionally requires the caller's active .NET 11 SDK.
-        run([*command, "help"], work, env)
-        reader = consumer / "scripts/source-reader/BlazorComponentReadiness.SourceReader.csproj"
-        run(["dotnet", "build", str(reader), "--artifacts-path", str(work / "reader-build"),
-             "--configfile", str(consumer / "scripts/validator/restore-offline.config"),
-             "--nologo", "--verbosity", "quiet", "-p:NuGetAudit=false"], work, env)
-        run(["dotnet", str(work / "reader-build/bin/BlazorComponentReadiness.SourceReader/debug/"
-                          "BlazorComponentReadiness.SourceReader.dll"), "--help"], work, env)
-        run([*command, "inputs", "candidates", "init", "--acquisition", "published",
-             "--package-locator", "sample.nupkg", "--package-method", "local-file",
-             "--source-availability", "unresolved", "--output", str(assessment / "candidates0.json")], work, env)
-        run([*command, "inputs", "candidates", "add-evidence", "--input", str(assessment / "candidates0.json"),
-             "--path", "result.json", "--kind", "document", "--output",
-             str(assessment / "candidates1.json")], work, env)
-        run([*command, "inputs", "candidates", "add-evidence", "--input", str(assessment / "candidates1.json"),
-             "--path", "observations.json", "--kind", "document", "--output",
-             str(assessment / "candidates1-observations.json")], work, env)
-        run([*command, "inputs", "candidates", "add-retrieval", "--input", str(assessment / "candidates1-observations.json"),
-             "--subject", "package", "--locator", "sample.nupkg", "--method", "local-file",
-             "--result", "succeeded", "--output", str(assessment / "candidates2.json")], work, env)
-        run([*command, "inputs", "discover", "--root", str(assessment), "--nupkg",
-             str(assessment / "sample.nupkg"), "--candidates", str(assessment / "candidates2.json"),
-             "--output", str(assessment / "discovered.json")], work, env)
-        run([*command, "inputs", "confirm", "--root", str(assessment), "--draft",
-             str(assessment / "discovered.json"), "--output", str(assessment / "confirmed.json")], work, env)
-        if "observations.json" not in json.dumps(json.loads((assessment / "confirmed.json").read_bytes())["evidence_inputs"]):
-            raise ValueError("Confirmed report input omitted the broader checked evidence observations.")
-        run([*command, "assessment", "init", "--kind", "package", "--root", str(assessment), "--input",
-             str(assessment / "confirmed.json"), "--output", str(assessment / "assessment.json")], work, env)
-        run([*command, "assessment", "export-identity", "--assessment", str(assessment / "assessment.json"),
-             "--output", str(assessment / "identity.json")], work, env)
-        claim = ("Retained byte inspection found build/assessment.targets matching a source entry, "
-                 "a Razor project with an ancestor Directory.Build.props, and a supplied dependency "
-                 "declaring MIT. This does not establish ownership, complete dependency closure, "
-                 "notice coverage or compiled build correspondence.")
-        run([*command, "evidence", "draft-add", "--output", str(assessment / "evidence-draft.json"),
-             "--claim", claim, "--scope", "repository-wide", "--kind", "reviewer-generated-analysis",
-             "--root", str(assessment), "--manifest", str(assessment / "confirmed.json"),
-             "--evidence-input", "observations.json", "--method", "package-evidence-observations/1.1.0",
-             "--captured-at", datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")], work, env)
-        run([*command, "evidence", "ledger-build", "--kind", "repository", "--subject",
-             str(assessment / "identity.json"), "--draft", str(assessment / "evidence-draft.json"),
-             "--nupkg", str(assessment / "sample.nupkg"), "--output",
-             str(assessment / "repository-ledger.json")], work, env)
-        run([*command, "evidence", "ledger-validate", "--ledger",
-             str(assessment / "repository-ledger.json")], work, env)
-        records = json.loads((assessment / "repository-ledger.json").read_bytes())["records"]
-        if len(records) != 1 or records[0]["claim"] != claim:
-            raise ValueError("Typed ledger did not preserve the checked observation and its limits.")
-        selected_id = records[0]["stable_id"]
-        run([*command, "evidence", "bundle", "--assessment", str(assessment / "identity.json"),
-             "--source-ledger", str(assessment / "repository-ledger.json"), "--ids", selected_id,
-             "--root", str(assessment), "--manifest", str(assessment / "confirmed.json"),
-             "--output", str(assessment / "evidence.json")], work, env)
-        decisions = {"schema_version": 1, "rows": [{
-            "id": "LP-10", "status": "not tested", "observation": claim, "evidence_ids": [selected_id],
-            "owner_action": None, "not_applicable_rationale": None,
-            "assessment_follow_up": "Obtain scoped ownership and build correspondence evidence before deciding LP-10."
-        }], "findings": [], "summary_groups": [], "completion_state": "incomplete"}
-        (assessment / "inspection-decisions.json").write_text(json.dumps(decisions), encoding="utf-8")
-        run([*command, "assessment", "apply-decisions", "--assessment", str(assessment / "assessment.json"),
-             "--decisions", str(assessment / "inspection-decisions.json"),
-             "--output", str(assessment / "inspection-draft.json")], work, env)
-        run([*command, "assessment", "canonicalize", "--assessment", str(assessment / "inspection-draft.json"),
-             "--output", str(assessment / "inspection-canonical.json")], work, env)
-        draft = json.loads((assessment / "inspection-canonical.json").read_bytes())
-        row = next(row for row in draft["rows"] if row["id"] == "LP-10")
-        if (row["observation"] != claim or row["evidence_ids"] != [selected_id] or
-                row["status"] != "not tested" or draft["completion_state"] != "incomplete"):
-            raise ValueError("Canonical draft lost partial evidence or promoted an unresolved row.")
         isolated_checks(plugin, work, setup)
         autofill_checks(plugin, work, setup)
         after = {p.relative_to(plugin): hashlib.sha256(p.read_bytes()).hexdigest()
@@ -1033,13 +672,6 @@ def main():
             raise ValueError("Installed plugin was modified by a launcher.")
         print("Installed offline launcher: coverage, package, checked request, two strict failures, "
               "acquisition rejection, hostile cwd isolation, six grader mutations and read-only plugin passed.")
-        print("Full-report handoff: retained JSON registered/discovered/confirmed; canonical shared "
-              "rubric admitted, trusted static source reader built, and separate 60-row package "
-              "draft initialized, not claimed complete.")
-        print("Broader checked inspection: Razor/inherited metadata, exact source match and supplied "
-              "dependency/license declaration preserved through confirmed inputs, a validated typed "
-              "ledger, an input-bound bundle and an unresolved canonical LP-10 draft observation; "
-              "changed input rejected, no row/approval/completeness claims manufactured.")
 
 
 if __name__ == "__main__":

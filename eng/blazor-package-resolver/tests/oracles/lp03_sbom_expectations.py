@@ -307,7 +307,7 @@ def main():
         policy_bytes = (assets / "lp01-policy-1.0.0.json").read_bytes()
         catalog_bytes = (assets / "spdx-licenses-3.27.0.json").read_bytes()
     else:
-        data = here.parents[3] / "plugins/dotnet-blazor/skills/blazor-component-readiness/scripts/eleven-row-data"
+        data = here.parents[3] / "plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/scripts/eleven-row-data"
         policy_bytes, catalog_bytes = (data / "policy.json").read_bytes(), (data / "corpus.json").read_bytes()
     if args.materialize:
         materialize(args.materialize, policy_bytes, catalog_bytes)

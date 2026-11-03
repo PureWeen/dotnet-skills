@@ -1,6 +1,0 @@
-namespace Pi01AlternateModule;
-
-public sealed class AlternateExample
-{
-    public int GetValue() => 23;
-}

@@ -669,13 +669,13 @@ class Tools:
     def __init__(self, root, work):
         self.root, self.work, self.sequence = root, work, 0
         self.skill = regular(Path(__file__).absolute().parent.parent, directory=True)
-        self.resolver = self.skill.parent / "blazor-package-readiness-resolver" / "scripts" / "run-resolver.py"
-        require(self.skill.parent.name == "skills" and (self.skill.parent.parent / "plugin.json").is_file() and
-                self.resolver.is_file(), "Resolver unavailable in single-skill staging; no acquisition attempted.")
+        self.resolver = self.skill / "scripts" / "run-resolver.py"
+        require(self.resolver.is_file(), "Bundled resolver launcher is missing; no acquisition attempted.")
         fingerprints = load(DATA / "resolver-files.json")
         sibling = self.resolver.parent
         actual = {p.relative_to(sibling).as_posix() for p in sibling.rglob("*")
-                  if p.is_file() and not any(part in ("bin", "obj", "__pycache__") for part in p.relative_to(sibling).parts)}
+                  if p.is_file() and (p.name == "run-resolver.py" or p.relative_to(sibling).parts[0] == "resolver")
+                  and not any(part in ("bin", "obj", "__pycache__") for part in p.relative_to(sibling).parts)}
         require(set(fingerprints) == actual, "Bundled resolver file inventory changed; mapping review is required.")
         for relative, digest in fingerprints.items():
             require(sha(read(beneath(sibling, relative))) == digest, f"Bundled resolver changed: {relative}; mapping review is required.")
@@ -685,19 +685,11 @@ class Tools:
         self.admission_key = os.urandom(32)
         self.env["BLAZOR_PROVENANCE_ADMISSION_KEY"] = self.admission_key.hex()
         self.env.update(DOTNET_GENERATE_ASPNET_CERTIFICATE="false", DOTNET_SKIP_FIRST_TIME_EXPERIENCE="1",
-                        DOTNET_CLI_TELEMETRY_OPTOUT="1", READINESS_TEMP=str(work / "validator-build"),
-                        READINESS_SKILL_ROOT=str(self.skill), TEMP=str(work), TMP=str(work), TMPDIR=str(work))
+                        DOTNET_CLI_TELEMETRY_OPTOUT="1", READINESS_SKILL_ROOT=str(self.skill),
+                        TEMP=str(work), TMP=str(work), TMPDIR=str(work))
         for key in list(self.env):
             if key.upper() in ("DOTNET_STARTUP_HOOKS", "DOTNET_ADDITIONAL_DEPS", "PYTHONPATH", "PYTHONHOME"):
                 self.env.pop(key)
-        shell = shutil.which("pwsh" if os.name == "nt" else "bash")
-        require(shell, "The installed validator requires PowerShell or Bash.")
-        launcher = self.skill / "scripts" / "validator" / ("run-validator.ps1" if os.name == "nt" else "run-validator.sh")
-        prefix = [shell, "-NoProfile", "-File", str(launcher)] if os.name == "nt" else [shell, str(launcher)]
-        self.command([*prefix, "help"])
-        dll = work / "validator-build" / "bin" / "Release" / "net11.0" / "BlazorComponentReadiness.Validator.dll"
-        regular(dll)
-        self.validator = [shutil.which("dotnet"), str(dll)]
 
     def command(self, args, output=None):
         self.sequence += 1
@@ -719,11 +711,11 @@ class Tools:
             write(output, result.stdout)
         return result.stdout
 
-    def v(self, *args):
-        return self.command([*self.validator, *map(str, args)])
-
-    def r(self, command, request, output):
-        return self.command([sys.executable, "-I", str(self.resolver), command, str(request)], output)
+    def r(self, command, request=None, output=None):
+        args = [sys.executable, "-I", str(self.resolver), command]
+        if request is not None:
+            args.append(str(request))
+        return self.command(args, output)
 
 
 def new_work(root):
@@ -737,11 +729,13 @@ def new_work(root):
     raise ValueError("No unused eleven-row revision directory.")
 
 
-def assert_manifest_package(manifest, package, metadata):
-    value = manifest["package"]
-    require(manifest["state"] == "confirmed" and value["package_id"].lower() == metadata["id"] and
-            value["version"] == metadata["version"] and value["nupkg_sha256"]["value"] == sha(read(package)),
-            "Package differs from the confirmed exact identity.")
+def package_row_ids(tools):
+    rubric = load(tools.resolver.parent / "resolver" / "data" / "rubric.json", MIB)
+    core = rubric["core"]["requirements"]
+    selected = [item["id"] for item in core if item["scope"] == "repository-wide"]
+    require(len(core) == 112 and len(selected) == 60 and len(set(selected)) == 60 and set(ROWS).issubset(selected),
+            "Expected 60 unique repository-wide package rows in the pinned rubric.")
+    return selected
 
 
 def provenance_inputs(capture, package_pin, metadata, collector, args, admission_key=None):
@@ -949,56 +943,89 @@ def checked_facts(path, inspection):
     return facts
 
 
-def bind(tools, root, work, manifest, package, outputs, capture_time=None):
-    initialized, identity = work / "assessment.init.json", work / "identity.json"
-    tools.v("inputs", "validate", "--root", root, "--manifest", manifest)
-    tools.v("assessment", "init", "--kind", "package", "--root", root, "--input", manifest, "--output", initialized)
-    tools.v("assessment", "export-identity", "--assessment", initialized, "--output", identity)
-    results = results_from(load(outputs["resolve_request"], MIB), outputs["results"])
-    facts = checked_facts(outputs["observations"], load(outputs["inspection_request"], MIB)["inputs"])
+def bind(tools, root, work, package, outputs, capture_time=None, source_availability="unresolved", expected_digests=None):
+    require(source_availability in ("unresolved", "public-source", "closed-source"),
+            "Unsupported source availability.")
+    if expected_digests is not None:
+        for key, digest in expected_digests.items():
+            require(sha(read(outputs[key])) == digest, f"Trusted {key} output changed before binding.")
+    request_doc = load(outputs["resolve_request"], MIB)
+    inspection_doc = load(outputs["inspection_request"], MIB)
+    for item in inspection_doc["inputs"] + [p for case in request_doc["cases"] for p in case["inputs"]]:
+        base = outputs["inspection_request"].parent if item in inspection_doc["inputs"] else outputs["resolve_request"].parent
+        path = beneath(base, item["path"])
+        require(sha(read(path)) == item["sha256"], f"Checked input missing or changed before handoff: {item['path']}")
+    results = results_from(request_doc, outputs["results"])
+    for row, result in results.items():
+        attestation_pins = [p for p in result["inputs"] if p["role"] == "provenance-attestation"]
+        if result["branch_id"].startswith("provenance-") or attestation_pins:
+            require(len(attestation_pins) == 1, f"Row {row} provenance branch requires a pinned provenance-attestation.")
+            att_doc = load(beneath(outputs["resolve_request"].parent, attestation_pins[0]["path"]))
+            require(isinstance(att_doc, dict) and isinstance(att_doc.get("payload"), str) and
+                    isinstance(att_doc.get("hmac_sha256"), str), "Malformed provenance attestation.")
+            raw_payload = base64.b64decode(att_doc["payload"])
+            expected_mac = hmac.new(tools.admission_key, raw_payload, hashlib.sha256).hexdigest()
+            require(hmac.compare_digest(att_doc["hmac_sha256"], expected_mac),
+                    "Unauthenticated provenance attestation in eleven-row handoff.")
+    facts = checked_facts(outputs["observations"], inspection_doc["inputs"])
     acquisition = load(outputs["acquisition"])
     captured = capture_time or utc()
-    claims, previous = {}, None
+    raw_package = read(package, PACKAGE_LIMIT)
+    metadata = package_metadata(raw_package)
+    package_digest = sha(raw_package)
+    ids = {row: [] for row in ROWS}
     for row in ROWS:
         records = [("results", f"The retained resolver result for {row} has branch {results[row]['branch_id']} and decision {results[row]['decision']}.")]
         if row in ("LP-01", "LP-02", "LP-03", "LP-04", "LP-10", "PI-01"):
             records += [("observations", f"The retained checked byte observations supplement {row} without establishing its stronger unadmitted evidence requirements."),
                         ("acquisition", f"The retained acquisition attempts and declaration sample bound the inputs inspected for {row}.")]
         for kind, claim in records:
-            target = work / f"evidence-draft-{len(claims) + 1:02}.json"
-            args = ["evidence", "draft-add", "--output", target, "--claim", claim, "--scope", "repository-wide",
-                    "--kind", "reviewer-generated-analysis", "--root", root, "--manifest", manifest,
-                    "--evidence-input", outputs[kind].name, "--method", VERSION, "--captured-at", captured]
-            if previous:
-                args += ["--input", previous]
-            tools.v(*args)
-            claims[claim] = row
-            previous = target
-    ledger, bundle = work / "eleven-ledger.json", work / "eleven-bundle.json"
-    tools.v("evidence", "ledger-build", "--kind", "repository", "--subject", identity,
-            "--draft", previous, "--nupkg", package, "--output", ledger)
-    tools.v("evidence", "ledger-validate", "--ledger", ledger)
-    records = load(ledger)["records"]
-    require(len(records) == len(claims) and {record["claim"] for record in records} == set(claims), "Unexpected producer ledger records.")
-    ids = {row: [] for row in ROWS}
-    for record in records:
-        ids[claims[record["claim"]]].append(record["stable_id"])
-    for values in ids.values():
-        values.sort()
-    selected = sorted(value for values in ids.values() for value in values)
-    tools.v("evidence", "bundle", "--assessment", identity, "--source-ledger", ledger, "--ids", ",".join(selected),
-            "--root", root, "--manifest", manifest, "--output", bundle)
-    decision_path, draft, canonical = work / "decisions.json", work / "eleven.draft.json", work / "eleven.canonical.json"
-    dump(decision_path, decisions(results, facts, acquisition, ids))
-    tools.v("assessment", "apply-decisions", "--assessment", initialized, "--decisions", decision_path, "--output", draft)
-    tools.v("assessment", "canonicalize", "--assessment", draft, "--output", canonical)
-    return {"manifest": manifest, "package": package, "identity": identity, "decisions": decision_path,
-            "assessment": canonical, "evidence_draft": previous, "ledger": ledger, "bundle": bundle}, captured
+            doc_digest = sha(read(outputs[kind]))
+            token = json.dumps([VERSION, package_digest, captured, row, kind, doc_digest, claim],
+                               separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            ids[row].append("EV1-" + sha(token))
+        ids[row].sort()
+    decision_doc = decisions(results, facts, acquisition, ids)
+    decision_path = work / "decisions.json"
+    dump(decision_path, decision_doc)
+    selected_ids = package_row_ids(tools)
+    assigned_by_id = {row["id"]: row for row in decision_doc["rows"]}
+    assessment_rows = []
+    for row_id in selected_ids:
+        if row_id in assigned_by_id:
+            assessment_rows.append(assigned_by_id[row_id])
+        else:
+            assessment_rows.append({
+                "id": row_id,
+                "status": None,
+                "observation": None,
+                "evidence_ids": [],
+                "owner_action": None,
+                "assessment_follow_up": None,
+                "not_applicable_rationale": None,
+            })
+    identity = {
+        "package_id": metadata["declared_id"],
+        "version": metadata["version"],
+        "nupkg_sha256": package_digest,
+        "source_availability": source_availability,
+    }
+    canonical = work / "eleven.canonical.json"
+    dump(canonical, {
+        "schema_version": 1,
+        "producer": VERSION,
+        "identity": identity,
+        "selected_ids": selected_ids,
+        "rows": assessment_rows,
+        "findings": [],
+        "summary_groups": [],
+        "completion_state": "incomplete",
+    })
+    return {"package": package, "decisions": decision_path, "assessment": canonical}, captured
 
 
 def save_state(root, work, outputs, bound, captured):
     paths = {**outputs, **bound}
-    # Raw packet and archive pins survive rebinds; byte changes never inherit an old decision.
     request = load(paths["resolve_request"], MIB)
     inspection = load(paths["inspection_request"], MIB)
     raw = set()
@@ -1035,22 +1062,12 @@ def open_state(root, path):
 def run_command(args, root):
     work = new_work(root)
     tools = Tools(root, work)
-    manifest, candidates, package = regular(args.confirmed), regular(args.candidates), regular(args.nupkg)
-    tools.v("inputs", "validate", "--root", root, "--manifest", manifest)
+    package = regular(args.nupkg)
     metadata = package_metadata(read(package, PACKAGE_LIMIT))
-    confirmed = load(manifest)
-    assert_manifest_package(confirmed, package, metadata)
-    require(package == beneath(root, confirmed["package"]["nupkg_path"]), "Root package path differs from the confirmed manifest.")
-    supplemental = confirmed["evidence_inputs"] + confirmed["owner_inputs"]
-    require(len(supplemental) <= 29, "Three supplemental registrations exceed the combined 32-input cap.")
-    require(sum(item["size"] for item in supplemental) <= 54 * MIB,
-            "Insufficient supplemental-byte budget for the three bounded result documents.")
-    preflight = work / "candidates-check.json"
-    tools.v("inputs", "discover", "--root", root, "--nupkg", package, "--candidates", candidates, "--output", preflight)
-    discovered = load(preflight)
-    discovered["state"] = "confirmed"
-    require(discovered == confirmed, "Supplied latest candidates do not reproduce the confirmed input revision.")
-    require(confirmed["source"]["availability"] != "closed-source" or not args.source_archive,
+    source_availability = getattr(args, "source_availability", "unresolved") or "unresolved"
+    require(source_availability in ("unresolved", "public-source", "closed-source"),
+            "Unsupported source availability.")
+    require(source_availability != "closed-source" or not args.source_archive,
             "A retained source archive conflicts with the confirmed closed-source boundary.")
     capture = work / "inputs"
     capture.mkdir()
@@ -1061,11 +1078,11 @@ def run_command(args, root):
         directory = regular(args.dependency_directory, directory=True)
         supplied += sorted(path for path in directory.iterdir() if path.suffix.lower() == ".nupkg")
     require(len(set(supplied)) == len(supplied), "Duplicate supplied dependency paths.")
-    collector = Collector(root, capture, 64 - len(confirmed["retrieval_attempts"]), args.allow_network,
+    collector = Collector(root, capture, 64, args.allow_network,
                           nuget_feed=args.nuget_feed,
                           admit=lambda request, result: tools.r("admit-sbom", request, result))
     acquisition = collector.collect(package_copy, metadata, args.source_archive, supplied,
-                                    source_allowed=confirmed["source"]["availability"] != "closed-source",
+                                    source_allowed=source_availability != "closed-source",
                                     release_sbom=args.release_sbom, npm_archives=getattr(args, "npm_archives", None))
     names = {key: root / f"{work.name}-{name}.json" for key, name in
              (("results", "resolver-results"), ("observations", "observations"), ("acquisition", "acquisition"))}
@@ -1075,59 +1092,26 @@ def run_command(args, root):
     requests(root, capture, package_copy, metadata, collector, args.row_packets, provenance_pins)
     names.update(resolve_request=capture / "resolve-request.json", inspection_request=capture / "inspection-request.json")
     names.update(collector.admission_paths)
-    tools.r("inspect", names["inspection_request"], names["observations"])
-    tools.r("resolve", names["resolve_request"], names["results"])
+    inspect_stdout = tools.r("inspect", names["inspection_request"], names["observations"])
+    resolve_stdout = tools.r("resolve", names["resolve_request"], names["results"])
     results_from(load(names["resolve_request"], MIB), names["results"])
     checked_facts(names["observations"], load(names["inspection_request"], MIB)["inputs"])
-    current = candidates
-    number = 0
-    for kind in ("results", "observations", "acquisition"):
-        number += 1
-        following = work / f"candidates-{number:03}.json"
-        tools.v("inputs", "candidates", "add-evidence", "--input", current, "--path", names[kind].name,
-                "--kind", "document", "--output", following)
-        current = following
-    for attempt in acquisition["attempts"]:
-        number += 1
-        following = work / f"candidates-{number:03}.json"
-        tools.v("inputs", "candidates", "add-retrieval", "--input", current,
-                "--subject", attempt["subject"], "--locator", attempt["locator"], "--method", attempt["method"],
-                "--result", attempt["result"], "--detail", f"{VERSION} attempt {attempt['sequence']}: {attempt['detail_code']}.",
-                "--output", following)
-        current = following
-    draft_manifest, final_manifest = work / "input.draft.json", work / "input.confirmed.json"
-    tools.v("inputs", "discover", "--root", root, "--nupkg", package, "--candidates", current, "--output", draft_manifest)
-    tools.v("inputs", "confirm", "--root", root, "--draft", draft_manifest, "--output", final_manifest)
-    bound, captured = bind(tools, root, work, final_manifest, package, names)
-    bound["candidates"] = current
+    bound, captured = bind(tools, root, work, package_copy, names,
+                           source_availability=source_availability,
+                           expected_digests={"results": sha(resolve_stdout), "observations": sha(inspect_stdout)})
     state = save_state(root, work, names, bound, captured)
-    return {"state": str(state), "assessment": str(bound["assessment"]), "manifest": str(final_manifest),
-            "candidates": str(current), "completion_state": "incomplete", "assigned_rows": 11, "unassigned_rows": 49}
+    return {"state": str(state), "assessment": str(bound["assessment"]), "decisions": str(bound["decisions"]),
+            "completion_state": "incomplete", "assigned_rows": 11, "unassigned_rows": 49}
 
 
 def continue_command(args, root):
-    state, paths = open_state(root, regular(args.state))
-    manifest = regular(args.confirmed)
-    old, new = load(paths["manifest"]), load(manifest)
-    if args.command == "rebind":
-        for key in old:
-            if key not in ("evidence_inputs", "retrieval_attempts"):
-                require(old[key] == new[key], f"{key} changed; collect and inspect the eleven rows again.")
-        before = {item["basename"]: item for item in old["evidence_inputs"]}
-        after = {item["basename"]: item for item in new["evidence_inputs"]}
-        require(all(after.get(key) == value for key, value in before.items()), "Previously registered evidence changed; run again.")
-        require(set(after) - set(before) == set(args.unrelated_evidence),
-                "Declare each added unrelated evidence basename explicitly; relevant evidence requires a fresh run.")
-        work = new_work(root)
-        tools = Tools(root, work)
-        outputs = {key: paths[key] for key in ("results", "observations", "acquisition", "resolve_request",
-                   "inspection_request", "sbom_admission_request", "sbom_admission") if key in paths}
-        bound, captured = bind(tools, root, work, manifest, paths["package"], outputs, state["captured_at"])
-        result = save_state(root, work, outputs, bound, captured)
-        return {"state": str(result), "assessment": str(bound["assessment"]), "completion_state": "incomplete"}
-    require(read(manifest) == read(paths["manifest"]), "Manifest changed; rebind before continuing the eleven rows.")
+    _, paths = open_state(root, regular(args.state))
     assessment = load(regular(args.assessment))
     expected = load(paths["assessment"])
+    with tempfile.TemporaryDirectory(prefix="eleven-check-", dir=root) as scratch:
+        tools = Tools(root, Path(scratch))
+        selected_ids = package_row_ids(tools)
+    require(expected.get("selected_ids") == selected_ids, "Saved assessment row selection differs from pinned rubric.")
     results = results_from(load(paths["resolve_request"], MIB), paths["results"])
     facts = checked_facts(paths["observations"], load(paths["inspection_request"], MIB)["inputs"])
     expected_ids = {row["id"]: row["evidence_ids"] for row in expected["rows"] if row["id"] in ROWS}
@@ -1136,16 +1120,25 @@ def continue_command(args, root):
         original = next(item for item in expected["rows"] if item["id"] == row["id"])
         require(all(original[key] == value for key, value in row.items()),
                 "The saved draft no longer matches the current reviewed mapping; run again.")
+    require(isinstance(assessment, dict) and set(assessment) == set(expected),
+            "Continued assessment has missing or unexpected top-level fields.")
+    require(type(assessment.get("schema_version")) is int and
+            assessment.get("schema_version") == expected["schema_version"] and
+            type(assessment.get("producer")) is str and
+            assessment.get("producer") == expected["producer"],
+            "Continued assessment has a changed schema_version or producer.")
+    require(isinstance(assessment.get("findings"), list) and isinstance(assessment.get("summary_groups"), list),
+            "Continued assessment findings and summary_groups must be lists.")
     require(assessment["identity"] == expected["identity"], "Continued assessment has a stale or changed identity.")
+    require(assessment.get("selected_ids") == expected["selected_ids"], "Continued assessment changed selected package rows.")
     rows = {row["id"]: row for row in assessment["rows"]}
-    require(len(rows) == len(assessment["rows"]), "Duplicate assessment rows.")
+    require(len(rows) == len(assessment["rows"]) and list(rows) == expected["selected_ids"],
+            "Duplicate, missing or reordered assessment rows.")
     for row in expected["rows"]:
         if row["id"] in ROWS:
             require(rows.get(row["id"]) == row, f"Continued assessment changed deterministic row {row['id']}.")
-    with tempfile.TemporaryDirectory(prefix="eleven-check-", dir=root) as scratch:
-        tools = Tools(root, Path(scratch))
-        tools.v("inputs", "validate", "--root", root, "--manifest", manifest)
-        tools.v("evidence", "ledger-validate", "--ledger", paths["ledger"])
+    require(assessment.get("completion_state") == "incomplete" or all(r.get("status") is not None for r in assessment["rows"]),
+            "Continued assessment cannot claim completion with unassigned rows.")
     return {"checked_rows": 11, "unchanged": True, "completion_claim": False}
 
 
@@ -1155,8 +1148,7 @@ def main():
     run = commands.add_parser("run")
     run.add_argument("--root", required=True)
     run.add_argument("--nupkg", required=True)
-    run.add_argument("--candidates", required=True)
-    run.add_argument("--confirmed", required=True)
+    run.add_argument("--source-availability", choices=("unresolved", "public-source", "closed-source"), default="unresolved")
     mode = run.add_mutually_exclusive_group()
     mode.add_argument("--allow-network", action="store_true")
     mode.add_argument("--offline", action="store_true")
@@ -1169,19 +1161,16 @@ def main():
     run.add_argument("--release-nupkg", help="Optional SLSA-attested GitHub Release .nupkg for LP-10 build provenance verification.")
     run.add_argument("--provenance-bundle", help="Optional Sigstore SLSA v1 provenance bundle JSON for LP-10 build provenance verification.")
     run.add_argument("--nuget-feed", choices=tuple(NUGET_FEEDS), default="nuget.org")
-    for command in ("check", "rebind"):
-        child = commands.add_parser(command)
-        child.add_argument("--root", required=True)
-        child.add_argument("--confirmed", required=True)
-        child.add_argument("--state", required=True)
-        if command == "check":
-            child.add_argument("--assessment", required=True)
-        else:
-            child.add_argument("--unrelated-evidence", action="append", default=[])
+    check = commands.add_parser("check")
+    check.add_argument("--root", required=True)
+    check.add_argument("--state", required=True)
+    check.add_argument("--assessment", required=True)
     args = parser.parse_args()
     root = regular(args.root, directory=True)
-    plugin = Path(__file__).absolute().parents[3]
-    require(not root.is_relative_to(plugin), "Assessment output must be outside the installed plugin.")
+    skill_root = Path(__file__).resolve().parents[1]
+    protected = skill_root.parents[1] if (skill_root.parent.name == "skills" and
+                                          (skill_root.parents[1] / "plugin.json").is_file()) else skill_root
+    require(not root.is_relative_to(protected), "Assessment output must be outside the installed skill or plugin.")
     result = run_command(args, root) if args.command == "run" else continue_command(args, root)
     print(json.dumps(result, ensure_ascii=True))
     return 0

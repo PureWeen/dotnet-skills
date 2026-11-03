@@ -16,7 +16,7 @@ import zipfile
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
-SCRIPTS = REPO / "plugins/dotnet-blazor/skills/blazor-component-readiness/scripts"
+SCRIPTS = REPO / "plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/scripts"
 sys.dont_write_bytecode = True
 spec = importlib.util.spec_from_file_location("autofill", SCRIPTS / "autofill-eleven.py")
 tool = importlib.util.module_from_spec(spec)
@@ -595,10 +595,11 @@ class MappingTests(unittest.TestCase):
                 rows.checked_result(changed, [])
 
     def test_fingerprints_and_policy_bytes(self):
-        sibling = SCRIPTS.parent.parent / "blazor-package-readiness-resolver/scripts"
+        sibling = SCRIPTS
         pins = tool.load(tool.DATA / "resolver-files.json")
         actual = {p.relative_to(sibling).as_posix() for p in sibling.rglob("*")
-                  if p.is_file() and not any(part in ("bin", "obj", "__pycache__") for part in p.relative_to(sibling).parts)}
+                  if p.is_file() and (p.name == "run-resolver.py" or p.relative_to(sibling).parts[0] == "resolver")
+                  and not any(part in ("bin", "obj", "__pycache__") for part in p.relative_to(sibling).parts)}
         self.assertEqual(set(pins), actual)
         for path, digest in pins.items():
             self.assertEqual(tool.sha(tool.read(tool.beneath(sibling, path))), digest, path)
@@ -1035,6 +1036,94 @@ class AcquisitionTests(unittest.TestCase):
         original.write_text('{"finding":"invented"}')
         with self.assertRaisesRegex(ValueError, "Changed retained"):
             tool.open_state(self.root, state)
+
+    def test_bind_and_continue_command_verify_expected_digests_and_sixty_rows(self):
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        tools = tool.Tools(self.root, scratch)
+        row_ids = tool.package_row_ids(tools)
+        self.assertEqual(len(row_ids), 60)
+        self.assertTrue(all(row_id in row_ids for row_id in rows.ROWS))
+        copied = self.capture / "package.nupkg"
+        copied.write_bytes(self.package.read_bytes())
+        metadata = tool.package_metadata(copied.read_bytes())
+        collector = self.collector(online=False)
+        collector.total = copied.stat().st_size
+        inspection_req, resolve_req = tool.requests(self.root, self.capture, copied, metadata, collector, None)
+        outputs = {
+            "acquisition": self.capture / "acquisition.json",
+            "inspection_request": self.capture / "inspection-request.json",
+            "resolve_request": self.capture / "resolve-request.json",
+            "results": self.capture / "results.json",
+            "observations": self.capture / "observations.json",
+        }
+        tool.dump(outputs["acquisition"], {"schema_version": 1, "producer": rows.VERSION,
+                                           "package": {"path": "capture/package.nupkg",
+                                                       "sha256": tool.sha(copied.read_bytes())},
+                                           "nuget_feed": "nuget.org", "attempts": [], "diagnostics": []})
+        cases = []
+        valid_branches = {
+            "LP-01": "approved-non-copyleft", "LP-02": "observation-missing", "LP-03": "scope-missing",
+            "LP-04": "no-supported-layout-assets", "LP-05": "expression", "LP-06": "populated",
+            "LP-07": "full-sha1", "LP-08": "populated", "LP-09": "populated",
+            "LP-10": "missing-package", "PI-01": "verified-signed",
+        }
+        for item in resolve_req["cases"]:
+            rid = item["row_id"]
+            pins = item["inputs"]
+            refs = [f"input:{p['role']}:{p['sha256']}" for p in pins]
+            branch = valid_branches[rid]
+            escalated = rid in ("LP-02", "LP-03", "LP-04", "LP-10")
+            res = {"row_id": rid, "resolver_id": rows.RESOLVERS[rid], "resolver_version": rows.RESOLVER_VERSIONS[rid],
+                   "decision": "escalated" if escalated else "deterministic", "applicability": "applicable",
+                   "branch_id": branch, "evidence_contract": "unit-contract/1",
+                   "finding": None if escalated else f"Unit stub finding for {rid}.",
+                   "missing_fact": f"Missing fact for {rid}." if escalated else None,
+                   "required_input": "evidence" if escalated else None,
+                   "next_category": "evidence" if escalated else None,
+                   "inputs": pins, "evidence_references": refs}
+            if rid == "LP-04":
+                res["bundled_web_assets"] = {
+                    "profile": "bundled-web-assets/1", "assets": [], "unsupported_candidates": [],
+                    "inventory_sha256": tool.sha(b"bundled-web-assets/1\n")}
+            cases.append({"case_id": item["case_id"], "result": res})
+        results_bytes = (json.dumps({"schema_version": 1, "cases": cases}, indent=2) + "\n").encode()
+        obs_doc = {"schema_version": 1, "producer": "package-evidence-observations/1.1.0",
+                   "inputs": inspection_req, **empty_observations()}
+        obs_bytes = (json.dumps(obs_doc, indent=2) + "\n").encode()
+        outputs["results"].write_bytes(results_bytes)
+        outputs["observations"].write_bytes(obs_bytes)
+        expected = {"results": tool.sha(results_bytes), "observations": tool.sha(obs_bytes)}
+        bound, captured_at = tool.bind(tools, self.root, scratch, self.package, outputs,
+                                       expected_digests=expected)
+        bad_dir = self.root / "bad-digest"
+        bad_dir.mkdir()
+        with self.assertRaisesRegex(ValueError, "Trusted results output changed before binding"):
+            tool.bind(tools, self.root, bad_dir, self.package, outputs,
+                      expected_digests={"results": "0" * 64, "observations": expected["observations"]})
+        assessment = tool.load(bound["assessment"])
+        self.assertEqual(len(assessment["rows"]), 60)
+        self.assertEqual(assessment["selected_ids"], row_ids)
+        state_path = tool.save_state(self.root, scratch, outputs, bound, captured_at)
+        checked = tool.continue_command(tool.argparse.Namespace(
+            root=str(self.root), state=str(state_path), assessment=str(bound["assessment"])), self.root)
+        self.assertEqual(checked, {"checked_rows": 11, "unchanged": True, "completion_claim": False})
+        for label, mutate, expected_err in (
+            ("missing_producer", lambda d: d.pop("producer"), "missing or unexpected top-level fields"),
+            ("extra_field", lambda d: d.update(extra=True), "missing or unexpected top-level fields"),
+            ("changed_producer", lambda d: d.update(producer="forged/1.0"), "changed schema_version or producer"),
+            ("changed_schema", lambda d: d.update(schema_version=2), "changed schema_version or producer"),
+            ("bool_schema", lambda d: d.update(schema_version=True), "changed schema_version or producer"),
+            ("float_schema", lambda d: d.update(schema_version=1.0), "changed schema_version or producer"),
+            ("bad_findings", lambda d: d.update(findings="not-a-list"), "findings and summary_groups must be lists"),
+        ):
+            bad_doc = json.loads(json.dumps(assessment))
+            mutate(bad_doc)
+            bad_path = self.root / f"bad-{label}.json"
+            bad_path.write_text(json.dumps(bad_doc), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, expected_err):
+                tool.continue_command(tool.argparse.Namespace(
+                    root=str(self.root), state=str(state_path), assessment=str(bad_path)), self.root)
 
 
 if __name__ == "__main__":

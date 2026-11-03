@@ -11,15 +11,15 @@ It pins the newest installed stable .NET 10 SDK in that temporary directory, usi
 SDK's matching installed packs rather than an ambient newer SDK's net10 pack defaults.
 It runs the managed DLL without a native apphost, with fresh isolated package storage and
 empty feeds. A missing SDK/pack is an environment failure, never an online restore or an
-assessment result. Caller SDK selection and the report validator's active-.NET-11
-prerequisite are unchanged.
+assessment result. Caller SDK selection is unchanged.
 
-The [compact corpus contract](tests/CORPUS.md) explains byte-locked generation, automatic
+The [compact corpus generator](tests/corpus.py) explains byte-locked generation, automatic
 temporary-root replay, exact parent comparison and the **narrowed PI-01 independence claim**.
 Every `tests/fixtures/...` path below is a preserved **logical materialized path**, not a
-required checked-in tree. Historical contracts remain raw seeds under `tests/corpus/seeds/`,
+required checked-in tree. Historical contracts remain in the compact recipe store under `tests/corpus/`
+(`lock.json`, `recipes.json`, `expectations.json` and `chunks.bin`),
 with the reviewed LP-01 declaration and LP-02 public-availability corrections documented
-in `tests/CORPUS.md`. The 868 row scenarios and two foundation scenarios and all
+in `tests/corpus.py`. The 868 row scenarios and two foundation scenarios and all
 input bytes are preserved; only the named row-specific expected-result deltas are allowed.
 
 The full 112-row
@@ -27,8 +27,8 @@ normative rubric and JSON crosswalk/basis are copied byte-for-byte from
 `fefdaccbfdc0f34cec3d3ca5b8f7ea3fce4a68e3`, the tip of
 `https://github.com/dotnet/skills` at copy time.
 Branch tips can move; the copied bytes remain independently
-pinned by the original paths, Git blob IDs and SHA-256 digests in
-the canonical runtime's `data/provenance.json`. The loader checks both digests, crosswalk clauses,
+pinned by the original historical paths (`plugins/dotnet-blazor/skills/blazor-component-readiness/references/...`), Git blob IDs and SHA-256 digests in
+the canonical runtime's `data/provenance.json` (verified by hash only, not opened from disk). The loader checks both digests, crosswalk clauses,
 source version and all core scopes. Only the 60 `repository-wide` core rows
 enter the registry; the 52 component rows and the separate TA-08 extension
 are excluded. LP-01 through LP-10 have deterministic checked-byte
@@ -54,7 +54,7 @@ under this requirement. The production resolver replays those exact expectations
 the finding classifies the exact package declaration, not other repository files
 or other releases, and does not establish owner authority.
 Coverage is eleven implemented and 49 TBD.
-Run `python eng\blazor-package-resolver\tests\lp01_expectations.py`
+Run `python eng\blazor-package-resolver\tests\corpus.py oracle lp01`
 to check the frozen oracle and policy bytes independently of production.
 
 LP-03's offline handler now uses approved option B-prime: a checked raw SPDX-2.2
@@ -76,8 +76,7 @@ evidence precedes an incompatible declaration gap. Unsupported or incomplete
 evidence is `not tested`, never promoted from a sampled/partial graph.
 
 The complete schema, strict field profile, branch table, exact-member role ordering
-and limits ship in the resolver's
-[SBOM reference](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/sbom-inventory.md).
+and limits are enforced by the resolver (`admit-sbom` and `lp03-dependency-licenses/1.4.0`).
 Bounds include 1 MiB raw SBOM, 64 KiB scope, depth 16/8, 32,768 JSON values/properties,
 130 packages, 128 dependency versions, 512 relationships, 64 files, 8 MiB/archive and
 64 MiB checked row bytes. Duplicate identities/properties, wrong root/version,
@@ -105,7 +104,7 @@ anonymously from nuget.org's flat container within the existing record/deadline/
 budgets. It neither samples minima in this mode nor silently switches a selected
 mirror. Local/offline imports never invent acquisition observations.
 
-The historical [Phase A contract](tests/corpus/seeds/lp03__README.md), original
+The historical Phase A contract (materialized at `lp03/README.md` by `tests/corpus.py`), original
 oracle, recipes, input/grant/review bytes and 66/77 guard/witness ledger remain
 unchanged as history, **not current positive coverage**. Named
 `lp03-sbom-declarations-1.1.0` changes only the 45 expected LP-03 results:
@@ -113,23 +112,23 @@ unchanged as history, **not current positive coverage**. Named
 scope refusals; input pins, rationales and pointers are preserved. `--parent`
 admits exactly this named delta, not arbitrary LP-03 changes.
 
-`python -B eng\blazor-package-resolver\tests\lp03_expectations.py` (also `-O`)
+`python -B eng\blazor-package-resolver\tests\corpus.py oracle lp03` (also `-O`)
 selects the new independent stdlib/LP-01-oracle specification. Native
 `ResolverChecks -- lp03` runs prescribed current-profile specimens and additional
 hostile native mutations, the real reusable admission API, all 43 legacy refusals,
 original pre-dispatch loaders and retained binding negatives. The unchanged historical
 oracle is retained but no longer claimed as current-profile conformance.
 `test_shipping.py --lp03` exercises a copied installed helper end-to-end with the
-real native resolver/report validator, offline/mock transport, exact selection,
-state/rebind pins and untouched PI rows. Its test-only launcher adapter uses prebuilt
+real native resolver, offline/mock transport, exact selection,
+state pins and untouched PI rows. Its test-only launcher adapter uses prebuilt
 trusted DLLs (build with `--no-restore` first); it does not re-test unchanged bootstrap restores.
 Both roots still return `scope-missing` / `not tested`, with no positive or gap.
 Absent/partial/misspelled/missing-file/wrong-size/wrong-digest bindings are
 separately rejected. Supply the corresponding `LP01_*` and `LP02_*` pairs to
 include their retained regressions in the full suite.
 
-LP-04's package-only offline mode remains **D-lite**, now `lp04-notice-coverage/2.1.0`.
-See the shipping [bundled-web-assets/1 contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/lp04-notices.md).
+LP-04's package-only offline mode remains **D-lite**, now `lp04-notice-coverage/2.1.0`
+under the `bundled-web-assets/1` contract.
 It takes package bytes only and retains every selected path/length/SHA-256 in
 `bundled_web_assets`, sorted ordinally, with a canonical inventory digest. Select
 `.js/.mjs/.cjs/.css/.map` under `staticwebassets`, `wwwroot`, or
@@ -152,12 +151,11 @@ Empty observations state:
 This classifies package bytes, not law, origin, SBOM coverage, applicability or notices.
 An empty profile is not proof of no web code or universal N/A. V1 graphs, all-root
 classifications, whole-subject reviews and notice packets are retired/refused, never a V/G
-fallback. LP-04 npm origin/notice admission, new review protocols, verified/gap and validator-v2 work is deferred.
-The historical validator notice-v1 gate only constrains verified/gap, so it is unchanged.
+fallback.
 
 `ResolverChecks -- lp04` exercises bounded layout/unsupported/safety/digest cases and
 the 43 result-only migrated legacy fixtures. The independent Python D-lite oracle runs via
-`python eng\blazor-package-resolver\tests\lp04_expectations.py` (also `-O`).
+`python eng\blazor-package-resolver\tests\corpus.py oracle lp04` (also `-O`).
 Old v1 seeds/oracle and optional retained `acceptance.json` are archival, not active tests.
 The offline eleven-row Syncfusion replay separately checks its 21 JS and one large CSS asset.
 
@@ -172,7 +170,7 @@ python -B eng\blazor-package-resolver\tests\test_autofill.py
 python -B eng\blazor-package-resolver\tests\test_shipping.py --lp04
 python -B eng\blazor-package-resolver\tests\test_shipping.py --lp03
 python -B eng\blazor-package-resolver\tests\test_shipping.py --autofill
-python -B eng\blazor-package-resolver\tests\test_shipping.py --reader-help
+python -B eng\blazor-package-resolver\tests\test_shipping.py --isolated
 python -B eng\blazor-package-resolver\tests\test_corpus.py
 python -B eng\blazor-package-resolver\tests\corpus.py verify --parent
 dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj --no-restore -p:NuGetAudit=false
@@ -227,24 +225,22 @@ LP-03 is now `1.4.0` for mixed NuGet/npm exact declarations and root NuGet range
 The collector also recognizes 2011/10. Independent oracle and native boundary
 controls cover every supported namespace and unsupported/mixed namespace refusals.
 The frozen corpus gains result-version-only deltas, not rewritten inputs or branches;
-see [corpus preservation](tests/CORPUS.md). Handoff `2.1.0` rejects older saved state.
+see [corpus preservation](tests/corpus.py). Handoff `2.2.0` rejects older saved state.
 The minor bump is an additive intake/profile extension with an unchanged handoff
 envelope; existing producer/version pinning already requires a fresh capture.
 
-The consumer's optional `autofill-eleven.py` orchestrates acquisition and the existing typed
-report producers. The resolver remains offline; apart from the reviewed LP-01 approved
+The bundled [`autofill-eleven.py`](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/scripts/autofill-eleven.py)
+orchestrates acquisition and the 11-row package assessment draft producer. The resolver remains offline; apart from the reviewed LP-01 approved
 declaration correction and the LP-04 standard-packaging fix described below, its row
-classifiers are unchanged except for LP-04 D-lite, the explicit LP-03 B-prime and nuspec namespace changes above. Its fixed 171-branch report
+classifiers are unchanged except for LP-04 D-lite, the explicit LP-03 B-prime and nuspec namespace changes above. Its fixed 175-branch report
 mapping is tested against every frozen result, including deterministic/escalated boundaries.
 Run `python eng\blazor-package-resolver\tests\test_autofill.py` for offline collector/mapping
 tests and `python eng\blazor-package-resolver\tests\test_shipping.py --autofill` for the
-installed producer chain, unchanged-row checks, rebinding and single-skill rejection.
-The full shipping suite also includes that integration. `test_shipping.py --reader-help`
-checks top-level and trailing `reader render/verify --help`/`-h` through the real installed
-validator launcher, rejects malformed help combinations and preserves plugin/input bytes.
+installed producer chain, unchanged-row checks, and single-skill rejection.
+The full shipping suite also includes that integration.
 No test makes network or model calls.
 The two frozen policy/catalog copies are shipping reference assets with the same digests as
-the corpus seeds, not new policy or owner attestations. Resolver source/data fingerprints
+the locked corpus (`tests/corpus/lock.json`), not new policy or owner attestations. Resolver source/data fingerprints
 deliberately require report-mapping review when the bundled tool changes.
 For explicitly authorized network collection behind a blocked nuget.org endpoint,
 `--nuget-feed dotnet-public` selects the repository's public Azure DevOps mirror, with
@@ -295,9 +291,8 @@ and dependency/repository declarations, bounded literal license/notice text and 
 candidates, root entry hashes, Razor/project/inherited-build observations, exact source-byte
 matches and per-PE assembly identity/signing fields through the existing strict PE inspector.
 It does not manufacture anonymous retrieval, full resolved closure,
-grant applicability, notice obligations or binary build mapping. See the shipping
-[inspection contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/evidence-inspection.md).
-The consumer registers the packet as supplemental evidence and preserves useful facts even
+grant applicability, notice obligations or binary build mapping.
+The helper registers the packet as supplemental evidence and preserves useful facts even
 when the deciding row remains unresolved. LP-02 1.2.0 verifies public availability
 at the package-declared exact revision using an anonymous capture and checked nonempty
 root-bound archive, without a project/MSBuild relevance gate. The declaration supplies
@@ -311,9 +306,7 @@ correspondence. Generic web-tree presence and absent DLL contradictions are insu
 LP-04 2.1.0 preserves package-only D-lite, with a stricter provenance-assisted Mode A requiring
 digest-bound per-asset component/source maps and complete SPDX-specific notice clauses.
 SSR package names do not prove exclusion. Mode B is unverified because repository equality
-does not establish first-party authorship. The validator's native-result shortcut is removed.
-See the shipping [trusted provenance contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/provenance-admission.md)
-for trust assumptions, the supported manifest and remaining nonclaims.
+does not establish first-party authorship.
 LP-03 1.4.0 also requires inventoried versions to satisfy each root NuGet dependency range.
 
 `dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj -- breadth`
@@ -352,7 +345,7 @@ command disables application credentials, cookies, proxies, redirects and
 decompression; replay never retrieves anything. The full contract,
 acquisition procedure, schema, numerical limits, 33 oracle cases,
 18 focused runtime cases (51 total named synthetic cases) and two opt-in retained escalations are in
-[the retained LP-02 contract](tests/corpus/seeds/lp02__README.md).
+the retained LP-02 contract (materialized at `lp02/README.md` by `tests/corpus.py`).
 The accepted base has no readiness skill acquisition infrastructure; this
 implementation reuses the existing checked-input/digest/replay and bounded
 archive/nuspec surfaces instead of importing a second evidence framework.
@@ -426,8 +419,7 @@ The package-only mode accepts no source/provenance maps and performs no builds o
 Its candidates require a separate paragraph-29 attribution assessment. The optional
 trusted-helper provenance mode requires authenticated exact-commit source acquisition and
 positive per-entry correspondence; generic web-tree presence is not a map, and matching
-assembly output identity is not reproducible-build proof. See the shipping
-[admission contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/provenance-admission.md).
+assembly output identity is not reproducible-build proof.
 Safely passive-only packages yield a
 package-specific vacuous no-code finding.
 MSBuild inspection joins direct text and CDATA across comments and processing

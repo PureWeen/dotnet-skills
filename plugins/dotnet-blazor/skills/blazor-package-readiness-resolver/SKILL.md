@@ -1,12 +1,13 @@
 ---
 name: blazor-package-readiness-resolver
 description: >-
-  Run deterministic offline Blazor package checks on exact .nupkg bytes and checked evidence
-  packets. USE FOR: package resolver invocation, replaying digest-bound evidence, JSON row
-  results, license/notice/provenance checks without network or executing package code.
-  DO NOT USE FOR: full component or library readiness reports (use blazor-component-readiness),
-  ordinary NuGet restore troubleshooting, running samples, or legal/certification decisions.
-compatibility: Requires Python 3.10+ and an installed stable .NET 10 SDK with its reference/runtime packs. No downloads.
+  Run deterministic Blazor package readiness checks (`LP-01` through `LP-10` and `PI-01`) on
+  exact .nupkg bytes and checked evidence packets. USE FOR: package resolver invocation,
+  replaying digest-bound evidence, JSON row results, 11-row package readiness autofill, and
+  license/notice/provenance checks without executing package code.
+  DO NOT USE FOR: component behavior or runtime browser evaluation, ordinary NuGet restore
+  troubleshooting, running samples, or legal/certification decisions.
+compatibility: Requires Python 3.10+ and an installed stable .NET 10 SDK with its reference/runtime packs.
 ---
 
 # Blazor Package Readiness Resolver
@@ -14,18 +15,16 @@ compatibility: Requires Python 3.10+ and an installed stable .NET 10 SDK with it
 ## Purpose and routing
 
 Produce evidence-bound machine-readable row results from the bundled deterministic resolver.
-The installed tool is [scripts/run-resolver.py](scripts/run-resolver.py); no repository checkout,
-Git, `eng/` directory, network, package dependency restore or package-code execution is needed.
-It builds **only its own trusted bundled source** against installed framework packs with empty
-package feeds. This is not a sandbox and never authorizes executing assessed code.
+The primary offline launcher is [scripts/run-resolver.py](scripts/run-resolver.py); no repository
+checkout, Git, `eng/` directory, network, package dependency restore or package-code execution is
+needed. It builds **only its own trusted bundled source** against installed framework packs with
+empty package feeds. This is not a sandbox and never authorizes executing assessed code.
 The launcher pins the newest installed stable .NET 10 SDK in its temporary build directory;
 it never changes the caller's `global.json` or SDK selection. No native apphost is built.
-The separate full-report validator still requires the caller's active .NET 11 SDK.
 
-This skill owns deterministic package/evidence checks, not a complete readiness report.
-For a full package/component/library report load the sibling skill
-`blazor-component-readiness`, which consumes these static
-outputs without turning them into component evidence or certification.
+For bounded 11-row evidence collection, provenance admission, and 60-row package assessment draft
+generation (populating the 11 deterministic rows and leaving the 49 remaining package rows
+unassigned), use [scripts/autofill-eleven.py](scripts/autofill-eleven.py) (`run` and `check`).
 
 ## Inputs
 
@@ -45,8 +44,9 @@ Acquisition and evidence admission are separate from offline classification.
 ## Workflow
 
 1. Resolve `SKILL_DIR` as the directory containing this loaded `SKILL.md`. Inspect the supplied
-   local artifacts and requested scope. Do not search host caches or download missing inputs.
-   Missing package bytes or malformed bindings are failures, not positive results.
+   local artifacts and requested scope. Do not search host caches or download missing inputs
+   during offline resolution. Missing package bytes or malformed bindings are failures, not
+   positive results.
 2. Select one operation per invocation. These commands work in PowerShell, Bash or another shell with
    Python available; replace the script prefix with its resolved installed path:
 
@@ -59,8 +59,15 @@ Acquisition and evidence admission are separate from offline classification.
    python "<SKILL_DIR>/scripts/run-resolver.py" replay "<cases.json>"
    ```
 
+   For the 11-row autofill and handoff verification helper:
+
+   ```text
+   python -I "<SKILL_DIR>/scripts/autofill-eleven.py" run --root "<assessment_dir>" --nupkg "<supplied.nupkg>" [--offline | --allow-network]
+   python -I "<SKILL_DIR>/scripts/autofill-eleven.py" check --root "<assessment_dir>" --state "<state.json>" --assessment "<eleven.canonical.json>"
+   ```
+
    Redirect stdout to a user-approved output file if requested. Stderr is diagnostic, not JSON.
-   There is deliberately no acquisition command exposed by this launcher.
+   `run-resolver.py` deliberately exposes no network acquisition command.
 3. For supplied checked evidence, use `resolve`, not invented expected answers. Its contract is:
 
    ```json
@@ -95,56 +102,53 @@ Acquisition and evidence admission are separate from offline classification.
 
 ## Validation and interpretation
 
-When raw source/dependencies are retained but no admitted row packet exists, follow
-[evidence inspection](references/evidence-inspection.md). Missing stronger evidence is not a
-reason to discard supported dependency declarations, source/project observations or exact text
-matches. `inspect` does not relax the `resolve` contracts or assign statuses.
+When raw source/dependencies are retained but no admitted row packet exists, use `inspect` to
+preserve supported dependency declarations, source/project observations and exact text matches.
+Missing stronger evidence is not a reason to discard literal observations. `inspect` does not
+relax the `resolve` contracts or assign statuses.
 
 Implemented handlers are LP-01 through LP-10 and PI-01, at their frozen versions. Other rows
 remain TBD. Coverage never establishes package compliance. The resolver preserves per-row
 precedence and qualified claims; do not broaden them into a full report.
 
 LP-03 `lp03-dependency-licenses/1.4.0` uses the caller-designated release-wide SBOM
-and exact inventoried nupkgs' or npm tarballs' own declarations through the actual LP-01 classifier.
-See [SBOM admission](references/sbom-inventory.md) for schema 2, the narrow retained
-SPDX 2.2 JSON profile and bounds. An admitted structure alone is not authoritative:
-the exact raw digest/root-bound caller designation is a separate trust boundary.
+and exact inventoried nupkgs' or npm tarballs' own declarations through the actual LP-01 classifier
+(schema 2, narrow retained SPDX 2.2 JSON profile and bounds). An admitted structure alone is not
+authoritative: the exact raw digest/root-bound caller designation is a separate trust boundary.
 Ordinary grants, reviews and owner approval are not prerequisites; missing or unsupported
 evidence stays `not tested`. PI-06/PI-07 remain unimplemented and unassigned.
 Every LP-03 outcome states that npm hashes bind caller-designated bytes, not publisher
 authenticity. LP-02 1.2.0 admits literal `$` only in bounded source archive members.
 Require each NuGet root dependency's exact version or range to be satisfied by an inventoried
 version, not merely its ID. Bare versions are minimum bounds; `[v]` is exact.
-LP-10 1.1.0 accepts the five-input provenance packet only through the trusted autofill
-helper's process-local admission. Caller-authored Sigstore/gh JSON or locally imported source
-archives cannot authorize a positive. Read [provenance admission](references/provenance-admission.md)
-before using this path: exact-commit helper acquisition, bound receipts and positive
+LP-10 1.1.0 accepts the five-input provenance packet only through [scripts/autofill-eleven.py](scripts/autofill-eleven.py)'s
+process-local admission. Caller-authored Sigstore/gh JSON or locally imported source
+archives cannot authorize a positive: exact-commit helper acquisition, bound receipts and positive
 per-entry source/project correspondence are prerequisites. Do not construct receipts or
 set the helper admission key yourself.
 
-For LP-04 `lp04-notice-coverage/2.1.0`, default single-input requests pass the assessed package only. Follow
-[D-lite bundled web assets](references/lp04-notices.md) for the bounded layout/suffix profile,
-complete retained inventory, digest and six unresolved reasons (`not tested`, including an empty supported-profile scan; it does not prove the absence of other web code).
+For LP-04 `lp04-notice-coverage/2.1.0`, default single-input requests pass the assessed package only
+under the `bundled-web-assets/1` profile (bounded layout/suffix profile, complete retained inventory,
+digest and six unresolved reasons mapped to `not tested`, including an empty supported-profile scan;
+it does not prove the absence of other web code).
 The helper-admitted provenance path requires a digest-bound per-asset source/component map
 and complete SPDX-specific notices whose labels exactly match each covered lock entry's
 single SPDX `license` ID. Missing, non-string, expression or mismatched declarations stay
 unverified; agreement is still producer-declared metadata, not legal sufficiency.
 Reject duplicate decoded JSON property names in every object, including ignored fields.
-Mode B remains unverified: exact repository bytes do
-not prove authorship. Native `provenance-notices-verified` is not a report-validator bypass;
-separately admitted structured notice evidence is still required. Missing evidence resolves
+Mode B remains unverified: exact repository bytes do not prove authorship. Missing evidence resolves
 `provenance-notices-unverified` (`not tested`).
 V1 roles/packets are refused, never converted or used as a verified/gap fallback.
 Preserve `bundled_web_assets` alongside the compact observation.
 
-Full-report status vocabulary remains `verified`, `gap`, `owner evidence required`, `not tested`,
+Status vocabulary remains `verified`, `gap`, `owner evidence required`, `not tested`,
 `not applicable`. Consume the row's complete qualified result; a caller must not invent a status
 solely from `decision` or exit code.
 
 ## Pitfalls and nonclaims
 
-- Never install SDKs, fetch packages, restore assessed dependency graphs, run package build
-  targets/analyzers, extract and execute assets, or call the separate acquisition utility.
+- Never install SDKs, fetch packages during offline `run-resolver.py` dispatch, restore assessed
+  dependency graphs, run package build targets/analyzers, or extract and execute assets.
 - Do not manufacture policy, inventory, owner, review or mapping assertions to obtain positives.
 - Do not erase conflicts by dropping evidence roles or editing packaged bytes.
 - This is no legal advice, license acceptability beyond a row's explicit profile, source/build
