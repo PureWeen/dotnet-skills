@@ -604,7 +604,7 @@ def main():
     if sys.argv[1:] not in ([], ["--isolated"], ["--launcher"], ["--cert"], ["--autofill"], ["--lp03"], ["--lp04"]):
         raise ValueError("Supported options: --isolated, --launcher, --cert, --autofill, --lp03, --lp04")
     with tempfile.TemporaryDirectory(prefix="resolver-installed-") as work:
-        work = Path(work)
+        work = Path(work).resolve()
         plugin = work / "plugin"
         shutil.copytree(REPO / "plugins/dotnet-blazor", plugin,
                         ignore=shutil.ignore_patterns("bin", "obj", "__pycache__"))

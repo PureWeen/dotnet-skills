@@ -97,7 +97,7 @@ class SbomCollectionTests(unittest.TestCase):
     def test_exact_native_inventory_roles_holes_and_no_minimum_sampling(self):
         from oracles.lp03_sbom_expectations import sbom, encoded
         with tempfile.TemporaryDirectory(prefix="sbom-helper-") as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             capture = root / "capture"
             capture.mkdir()
             main = capture / "package.nupkg"
@@ -134,7 +134,7 @@ class SbomCollectionTests(unittest.TestCase):
         from oracles.lp03_sbom_expectations import encoded, sbom
         for budget, feed, expected in ((1, "nuget.org", 0), (2, "nuget.org", 1), (64, "dotnet-public", 2)):
             with self.subTest(budget=budget, feed=feed), tempfile.TemporaryDirectory(prefix="sbom-budget-") as directory:
-                root = Path(directory)
+                root = Path(directory).resolve()
                 capture = root / "capture"
                 capture.mkdir()
                 main = capture / "package.nupkg"
@@ -166,7 +166,7 @@ class SbomCollectionTests(unittest.TestCase):
 
     def test_unsupported_inventory_never_triggers_transport(self):
         with tempfile.TemporaryDirectory(prefix="sbom-unsupported-") as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             capture = root / "capture"
             capture.mkdir()
             main, raw = capture / "package.nupkg", root / "unsupported.json"
@@ -200,7 +200,7 @@ class SbomCollectionTests(unittest.TestCase):
     def test_npm_imports_bind_local_bytes_without_retrieval_claims(self):
         for mode in ("retained", "hash-conflict", "missing", "oversized"):
             with self.subTest(mode=mode), tempfile.TemporaryDirectory(prefix="npm-intake-") as directory:
-                root = Path(directory)
+                root = Path(directory).resolve()
                 capture = root / "capture"
                 capture.mkdir()
                 supplied = root / "supplied"
@@ -228,7 +228,7 @@ class SbomCollectionTests(unittest.TestCase):
 
     def test_provenance_inputs_require_all_three_artifacts_and_source_archive(self):
         with tempfile.TemporaryDirectory(prefix="provenance-helper-") as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             capture = root / "capture"
             capture.mkdir()
             main = capture / "package.nupkg"
@@ -548,7 +548,7 @@ class MappingTests(unittest.TestCase):
 
     def test_previous_projection_state_is_rejected_without_rewriting_it(self):
         with tempfile.TemporaryDirectory(prefix="eleven-old-projection-") as directory:
-            root = Path(directory)
+            root = Path(directory).resolve()
             path = root / "state.json"
             for version in ("1.0.0", "1.0.1", "1.3.0"):
                 original = json.dumps({"schema_version": 1, "producer": "eleven-row-handoff/" + version,
@@ -611,7 +611,7 @@ class AcquisitionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="eleven-unit-")
         self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+        self.root = Path(self.temp.name).resolve()
         self.capture = self.root / "capture"
         self.capture.mkdir()
         self.package = self.root / "package.nupkg"
