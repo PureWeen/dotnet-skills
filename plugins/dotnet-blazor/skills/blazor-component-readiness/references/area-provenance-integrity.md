@@ -85,11 +85,16 @@ publication/enumeration outputs remain separate and unassigned. Passing LP-03 is
 
 ### Verified-boundary protocols
 
-- `LP-04`: the current D-lite resolver (`2.0.0`) inventories only bounded JS/CSS/maps in
+- `LP-04`: package-only D-lite (`2.1.0`) inventories only bounded JS/CSS/maps in
   supported assessed-package layouts. Every outcome is `not tested`, including an empty
   profile, with substantive follow-up; no origin, SBOM, applicability, legal or notice
   conclusion follows. Preserve the full sorted path/length/hash inventory and digest.
-  V1 packets are retired/refused, never a deciding fallback. See [eleven-row intake](eleven-row-autofill.md).
+  V1 resolver deciding packets are retired/refused. Optional provenance-assisted Mode A
+  additionally requires helper-authenticated exact-commit source acquisition, attestation
+  admission, a digest-bound per-asset source/component map, and SPDX-specific complete
+  notices for the entire runtime lock closure (no SSR-name exemptions). Mode B is unverified:
+  source equality and absent banners do not prove first-party authorship.
+  See [eleven-row intake](eleven-row-autofill.md).
 - `PI-02`: a PE certificate table or signer subject proves only embedded signature material.
   `verified` requires an `authenticode-verification-v1` protocol covering every shipped DLL entry,
   the exact package-entry digest, expected and observed identity, file-digest verification, chain
@@ -101,9 +106,11 @@ replace the platform signature verifier or legal notice review; the protocol bin
 results so weaker metadata hints cannot be promoted to `verified`.
 
 The validator retains its historical `protocol:notice-coverage-v1` gate for externally
-supplied LP-04 verified/gap decisions only; D-lite cannot produce either and needs no
-validator change. Do not generate that protocol for D-lite. New review protocols, npm
-admission, verified/gap machinery and validator v2 are deferred. Register Authenticode protocols as
+supplied LP-04 verified/gap decisions; D-lite cannot produce either. A native
+provenance-notices positive cannot substitute for that protocol: the native-result
+JSON shortcut is removed because it did not authenticate all retained inputs.
+Do not generate that protocol for D-lite or treat caller JSON as helper admission.
+No new notice-review or validator-v2 protocol is introduced. Register Authenticode protocols as
 `reproduced-runtime-observation` with method `protocol:authenticode-verification-v1`. In both cases,
 the locator is the confirmed protocol basename and its digest must match `evidence_inputs`.
 The historical notice protocol accepts `complete` or `incomplete`; that is not a D-lite

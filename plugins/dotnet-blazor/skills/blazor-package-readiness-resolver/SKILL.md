@@ -104,7 +104,7 @@ Implemented handlers are LP-01 through LP-10 and PI-01, at their frozen versions
 remain TBD. Coverage never establishes package compliance. The resolver preserves per-row
 precedence and qualified claims; do not broaden them into a full report.
 
-LP-03 `lp03-dependency-licenses/1.3.0` uses the caller-designated release-wide SBOM
+LP-03 `lp03-dependency-licenses/1.4.0` uses the caller-designated release-wide SBOM
 and exact inventoried nupkgs' or npm tarballs' own declarations through the actual LP-01 classifier.
 See [SBOM admission](references/sbom-inventory.md) for schema 2, the narrow retained
 SPDX 2.2 JSON profile and bounds. An admitted structure alone is not authoritative:
@@ -113,12 +113,23 @@ Ordinary grants, reviews and owner approval are not prerequisites; missing or un
 evidence stays `not tested`. PI-06/PI-07 remain unimplemented and unassigned.
 Every LP-03 outcome states that npm hashes bind caller-designated bytes, not publisher
 authenticity. LP-02 1.2.0 admits literal `$` only in bounded source archive members.
-LP-10 1.0.1 single-input checks accept no custom provenance maps; when supplied with the 5-input SLSA v1 packet (`package`, `release-package`, `provenance-bundle`, `provenance-attestation`, `source-archive`), it resolves `provenance-attributed` or `provenance-unverified`.
+Require each NuGet root dependency's exact version or range to be satisfied by an inventoried
+version, not merely its ID. Bare versions are minimum bounds; `[v]` is exact.
+LP-10 1.1.0 accepts the five-input provenance packet only through the trusted autofill
+helper's process-local admission. Caller-authored Sigstore/gh JSON or locally imported source
+archives cannot authorize a positive. Read [provenance admission](references/provenance-admission.md)
+before using this path: exact-commit helper acquisition, bound receipts and positive
+per-entry source/project correspondence are prerequisites. Do not construct receipts or
+set the helper admission key yourself.
 
-For LP-04 `lp04-notice-coverage/2.0.0`, default single-input requests pass the assessed package only. Follow
+For LP-04 `lp04-notice-coverage/2.1.0`, default single-input requests pass the assessed package only. Follow
 [D-lite bundled web assets](references/lp04-notices.md) for the bounded layout/suffix profile,
 complete retained inventory, digest and six unresolved reasons (`not tested`, including an empty supported-profile scan; it does not prove the absence of other web code).
-When supplied with the 5-input SLSA v1 packet (`package`, `release-package`, `provenance-bundle`, `provenance-attestation`, `source-archive`) and non-empty supported-layout assets, LP-04 resolves `provenance-notices-verified` (`verified`) or `provenance-notices-unverified` (`not tested`).
+The helper-admitted provenance path requires a digest-bound per-asset source/component map
+and complete SPDX-specific notices. Mode B remains unverified: exact repository bytes do
+not prove authorship. Native `provenance-notices-verified` is not a report-validator bypass;
+separately admitted structured notice evidence is still required. Missing evidence resolves
+`provenance-notices-unverified` (`not tested`).
 V1 roles/packets are refused, never converted or used as a verified/gap fallback.
 Preserve `bundled_web_assets` alongside the compact observation.
 

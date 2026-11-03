@@ -5,7 +5,7 @@ and raw source/dependency archives are available but the stronger row-specific a
 are not. This preserves useful observations for LP-01/02/03/04/10 and PI-01; it is not another row resolver,
 acquisition operation, license review or route to a more generous pass label.
 
-LP-01 `1.1.0`, LP-03 `1.3.0` (through LP-01), PI-01 `1.1.0` and the collector
+LP-01 `1.1.0`, LP-03 `1.4.0` (through LP-01), PI-01 `1.1.0` and the collector
 recognize the empty nuspec namespace plus all six official NuGet schemas:
 2010/07, 2011/08, 2011/10, 2012/06, 2013/01 and 2013/05. Unknown root
 namespaces remain unsupported. Existing root/metadata namespace agreement and
@@ -79,14 +79,16 @@ product findings.
 | LP-02 | Retained source archive, project/SDK/declaration facts and exact text matches. | Anonymous public retrieval, remote repository truth or compiled build correspondence. A matching archive prefix is only a local path comparison. |
 | LP-03 | Supplied exact dependency versions and literal licenses/ranges; the resolver separately admits a caller-designated authoritative release-wide raw SBOM and classifies every exact member through LP-01 policy. | Inspection alone does not designate a complete inventory. Minimum-version samples, NOASSERTION, file-only/URL-only licenses do not establish all dependency expressions. See [SBOM admission](sbom-inventory.md); no ordinary grant/review/owner gate or independent publication/completeness proof. |
 | LP-04 | D-lite's complete bounded `bundled-web-assets/1` path/length/hash inventory and digest from the assessed package. | Origin, SBOM coverage, applicability, legal notice obligations or notice preservation. Empty supported layouts do not establish universal N/A or absence of other web representations. |
-| LP-10 | Exact source-byte matches and per-PE declared assembly identity/version/repository metadata. | Authenticated authorship, referenced upstream identity or compiled binary-to-commit build mapping. The package-only resolver accepts no provenance maps and performs no builds/transforms; such candidates require a separate assessment, not an unsupported packet submission. |
+| LP-10 | Exact source-byte matches and per-PE declared assembly identity/version/repository metadata. | Inspection alone does not authenticate authorship or establish compiled build mapping. Optional helper-admitted provenance uses the stricter [per-entry correspondence standard](provenance-admission.md), not generic web-tree presence or absence of contradictory DLL metadata. |
 | PI-01 | Each root PE/CLI candidate's checked signing state and fields. | Complete nested-assembly inventory or a package-wide verdict; those remain the deciding resolver's responsibility. An outer NuGet signature does not sign contained DLLs. |
 
 Use the package-only [LP-04 D-lite contract](lp04-notices.md), not `inspect`'s source
 matches or dependency notice candidates, for the current surface. All six D-lite reasons
 remain `not tested` with follow-up. Unsupported candidates and invalid/incomplete scans
-cannot become empty surfaces. Retire v1 packets; LP-04 npm origin/notice admission, origin/notice review,
-verified/gap and validator-v2 protocols remain deferred.
+cannot become empty surfaces. Retire v1 deciding packets. Optional provenance-assisted
+LP-04 requires helper-authenticated source acquisition and per-asset origin/component maps;
+Mode B is unverified. A native positive is not a replacement for the report validator's
+registered historical notice protocol. No validator-v2 protocol is introduced.
 
 This inspector remains NuGet-only for dependency archives. LP-03's separate
 [npm licensing intake](sbom-inventory.md) does not extend LP-04 notice/origin review.

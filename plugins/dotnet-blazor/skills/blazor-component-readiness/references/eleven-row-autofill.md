@@ -104,7 +104,7 @@ Native admission failures do not trigger dependency acquisition. Local SBOM/sour
 never fabricate anonymous observations. Missing bytes stay `not tested`; synthetic mocked successes
 are not real package acquisition claims.
 
-LP-03 `lp03-dependency-licenses/1.3.0` classifies exact members' own nuspec expressions or
+LP-03 `lp03-dependency-licenses/1.4.0` classifies exact members' own nuspec expressions or
 npm tarball `package.json` string licenses through
 the actual pinned LP-01 classifier. All allowed AND/OR alternatives pass without ordinary grants,
 reviews or owner approval. Missing/ambiguous/file-only/URL-only/NOASSERTION declarations stay
@@ -160,27 +160,38 @@ release-scoped grant is required for this branch. Its observation retains declar
 named candidates and exact source-byte matches without an owner-authority missing-fact
 sentence. File-only and missing-license branches still require owner evidence; the separate
 `owner-evidence-accepted` branch and all other branch statuses are unchanged.
-LP-04 accepts only `lp04-notice-coverage/2.0.0`: its default request passes package
+LP-04 accepts only `lp04-notice-coverage/2.1.0`: its default request passes package
 bytes only, without TFM/all-root-entry scope. All six D-lite reasons (`missing-package`,
 `input-invalid`, `legacy-protocol`, `surface-unsupported`, `no-supported-layout-assets`,
 `origin-review-missing`) map to `not tested`, with substantive missing-fact/action follow-up;
-when `--release-nupkg`, `--provenance-bundle`, and `--source-archive` are supplied, autofill passes
+when `--release-nupkg` and `--provenance-bundle` are supplied, autofill passes
 the 5-input SLSA v1 packet to LP-04 as well as LP-10, mapping `provenance-notices-verified` to
-`verified` and `provenance-notices-unverified` to `not tested`.
+`verified` and `provenance-notices-unverified` to `not tested`. A positive requires the helper's
+fresh exact-commit codeload acquisition (`--allow-network`, no local source import),
+process-local authenticated verification receipt, digest-bound per-asset component/source
+maps and complete canonical SPDX-specific notices. SSR names/absence are not exclusion
+evidence. Mode B remains unverified because exact source matches do not establish authorship.
+Native positives cannot bypass the report validator's separately registered notice protocol.
+Row-packet LP-04/LP-10 overrides are forbidden whenever provenance pins are supplied.
 The complete bounded `bundled_web_assets` inventory is checked and retained in `results.json`;
 the observation gives suffix counts, bytes and inventory digest, never truncated asset lists.
 An empty scan states: "No JS/CSS assets detected in the supported package layouts; other
 representations were not assessed." It is not proof of no web code or universal N/A.
 V1 packets are refused, not converted. See the sibling resolver's `references/lp04-notices.md`.
 
-LP-01 and PI-01 accept only `1.1.0`; LP-02 accepts `1.2.0`, LP-03 `1.3.0`,
-LP-04 `2.0.0` and LP-10 `1.0.1`; other rows retain `1.0.0`.
-LP-10's single-input package-only path requires a separate attribution assessment; when `--release-nupkg` and `--provenance-bundle` are supplied with `--source-archive`, autofill verifies the SLSA v1 bundle with `gh attestation verify` and resolves `provenance-attributed` or `provenance-unverified`. LP-01 and PI-01 recognize the empty nuspec namespace and
+LP-01 and PI-01 accept only `1.1.0`; LP-02 accepts `1.2.0`, LP-03 `1.4.0`,
+LP-04 `2.1.0` and LP-10 `1.1.0`; other rows retain `1.0.0`.
+LP-10's single-input package-only path requires a separate attribution assessment.
+The helper's provenance path additionally authenticates source acquisition and each
+asset's source/input mapping; DLLs require matching source project/output identity and
+consistent CLR metadata. This is not a reproducible build or exhaustive workflow proof.
+Nonzero `gh attestation verify` exits yield unverified receipts; timeout is a tool failure.
+LP-01 and PI-01 recognize the empty nuspec namespace and
 all six official NuGet schema namespaces (2010/07, 2011/08, 2011/10, 2012/06,
 2013/01 and 2013/05). Metadata must still match its root namespace; LP-01 also
 requires the license element to match. The collector recognizes the same namespace
 set, including 2011/10; unknown namespaces remain unsupported.
-Handoff producer `eleven-row-handoff/2.1.0` rejects older saved states rather than
+Handoff producer `eleven-row-handoff/2.2.0` rejects older saved states rather than
 silently reinterpreting their row decisions. Preserve old captures; make a fresh run
 or explicitly supply already checked acquisition packets to evaluate the new contract.
 This is a minor additive intake/profile extension: the handoff envelope is unchanged;

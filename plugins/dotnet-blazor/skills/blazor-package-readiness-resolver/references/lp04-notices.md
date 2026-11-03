@@ -1,9 +1,12 @@
-# LP-04 D-lite: bundled web-asset inventory
+# LP-04: D-lite inventory and provenance-assisted notice checks
 
-`lp04-notice-coverage/2.0.0` classifies bytes in the exact assessed nupkg under
+`lp04-notice-coverage/2.1.0` package-only D-lite classifies bytes in the exact assessed nupkg under
 `bundled-web-assets/1`. It does **not** make a legal determination, establish
 origin, infer SBOM coverage, determine applicability or decide notice preservation.
 Every D-lite result maps to **not tested**, with a missing fact and smallest next action.
+The optional provenance-assisted path has a separate trusted-helper boundary:
+see [provenance admission](provenance-admission.md). Do not apply D-lite's nonclaims
+to that additional path or treat its observations as provenance admission.
 
 ## Surface and bounds
 
@@ -47,7 +50,7 @@ The empty observation includes exactly:
 An empty supported profile is **not proof of no bundled web code**, and never universal
 not applicable. D-lite produces no verified, gap, owner-evidence or not-applicable outcome.
 After missing/invalid package checks, recognized v1 roles are refused, not converted.
-There is no active v1 fallback, per-TFM graph, all-root classification, dependency
+There is no active v1 deciding fallback, per-TFM graph, all-root classification, dependency
 archive, whole-subject obligation review or notice-packet deciding path.
 
 ## Retained inventory
@@ -65,6 +68,16 @@ then each selected asset in .NET ordinal path order as
 Safe paths cannot contain TAB/LF. ZIP record order and timestamps do not affect this digest.
 Unsupported paths are retained separately; the selected-asset digest is not a digest of them.
 
-Defer LP-04 npm origin/notice admission, new origin/notice review protocols, verified/gap machinery and a
-validator v2 protocol. The existing validator's `protocol:notice-coverage-v1` gate
-only constrains verified/gap, so D-lite needs no validator change.
+## Provenance-assisted path
+
+The five input roles are `package`, `release-package`, `provenance-bundle`,
+`provenance-attestation` and `source-archive`. Source acquisition and verification
+receipts must be helper-admitted, not caller assertions. Mode A requires a digest-bound
+per-asset source/component map, lockfile runtime closure and SPDX-specific complete
+canonical notice clauses. All runtime dependencies require notices, including SSR shims.
+Mode B stays unverified because source equality and absent banners do not prove authorship.
+Missing facts yield `provenance-notices-unverified`, preserving the full asset inventory.
+
+Native `provenance-notices-verified` is not a report-validation bypass. The validator
+still requires its separately registered `protocol:notice-coverage-v1` for verified/gap;
+the weak native-result fallback has been removed. No v2 notice protocol is introduced.

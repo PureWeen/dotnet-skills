@@ -191,6 +191,13 @@ hash-bound exact tarballs; hashes bind caller bytes, not publisher authenticity.
 Source-only archive members may contain `$`; package/input paths remain strict. It produces
 LP-01 through LP-10 and PI-01 rows without model translation. Continue the other 49 rows on
 its incomplete draft, preserve its eleven decisions, and run its `check` before final validation.
+For optional provenance inputs, require the helper's fresh exact-commit anonymous source
+download (`--allow-network`, no local `--source-archive`) and its `gh attestation verify`
+admission. Caller-authored verification receipts and row-packet overrides cannot replace
+this boundary. LP-10 requires per-asset correspondence and matching source project/output
+identities; generic workflow/tree presence is insufficient. LP-04 requires per-asset
+component maps and complete SPDX-specific notices; first-party Mode B remains unverified.
+Native positive JSON does not bypass the validator's structured notice protocol.
 These are static package facts, not component evidence or a complete report. Missing owner,
 closure, review and build-mapping facts stay unresolved. The handoff documents manual fallback
 and rebinding after input changes; never invent admission or approval.

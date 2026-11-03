@@ -33,11 +33,11 @@ source version and all core scopes. Only the 60 `repository-wide` core rows
 enter the registry; the 52 component rows and the separate TA-08 extension
 are excluded. LP-01 through LP-10 have deterministic checked-byte
 handlers: `lp01-license-policy/1.1.0`, `lp02-public-source/1.2.0`,
-`lp03-dependency-licenses/1.3.0`,
-`lp04-notice-coverage/2.0.0`,
+`lp03-dependency-licenses/1.4.0`,
+`lp04-notice-coverage/2.1.0`,
 `lp05-license-expression/1.0.0`, `lp06-repository-url/1.0.0`,
 `lp07-repository-commit/1.0.0`, `lp08-authors/1.0.0`,
-`lp09-project-url/1.0.0`, `lp10-binary-attribution/1.0.1`, and
+`lp09-project-url/1.0.0`, `lp10-binary-attribution/1.1.0`, and
 `pi01-strong-name/1.1.0`. The other 49 package rows remain `tbd`.
 `tbd` and `implemented` are
 **work states**, not evaluation results.
@@ -128,7 +128,7 @@ Absent/partial/misspelled/missing-file/wrong-size/wrong-digest bindings are
 separately rejected. Supply the corresponding `LP01_*` and `LP02_*` pairs to
 include their retained regressions in the full suite.
 
-LP-04's offline production handler is now **D-lite**, `lp04-notice-coverage/2.0.0`.
+LP-04's package-only offline mode remains **D-lite**, now `lp04-notice-coverage/2.1.0`.
 See the shipping [bundled-web-assets/1 contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/lp04-notices.md).
 It takes package bytes only and retains every selected path/length/SHA-256 in
 `bundled_web_assets`, sorted ordinally, with a canonical inventory digest. Select
@@ -223,7 +223,7 @@ namespace set; PI-01 reuses the shared namespace predicate. Unknown roots remain
 unsafe, metadata must still match its root namespace, and LP-01 rejects mixed
 license namespaces. PI-01's existing package/metadata shape checks and assembly
 verification are unchanged; it does not classify license declarations.
-LP-03 is now `1.3.0` for mixed NuGet/npm exact declarations.
+LP-03 is now `1.4.0` for mixed NuGet/npm exact declarations and root NuGet range satisfaction.
 The collector also recognizes 2011/10. Independent oracle and native boundary
 controls cover every supported namespace and unsupported/mixed namespace refusals.
 The frozen corpus gains result-version-only deltas, not rewritten inputs or branches;
@@ -304,7 +304,17 @@ root-bound archive, without a project/MSBuild relevance gate. The declaration su
 the association; independent source relevance, binary correspondence and branch/tag
 membership are not established. The eleven-row helper creates the observation from its
 existing single successful anonymous download, never from a local import alone.
-LP-10 attribution boundaries are unchanged; LP-04 uses D-lite above and LP-03 uses the separate B-prime inventory/declaration protocol above.
+LP-10 1.1.0 additionally supports trusted-helper provenance admission: exact-commit
+anonymous source acquisition, process-local authenticated verification receipts, exact
+release payload equivalence, and positive per-entry text/source or project/output identity
+correspondence. Generic web-tree presence and absent DLL contradictions are insufficient.
+LP-04 2.1.0 preserves package-only D-lite, with a stricter provenance-assisted Mode A requiring
+digest-bound per-asset component/source maps and complete SPDX-specific notice clauses.
+SSR package names do not prove exclusion. Mode B is unverified because repository equality
+does not establish first-party authorship. The validator's native-result shortcut is removed.
+See the shipping [trusted provenance contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/provenance-admission.md)
+for trust assumptions, the supported manifest and remaining nonclaims.
+LP-03 1.4.0 also requires inventoried versions to satisfy each root NuGet dependency range.
 
 `dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj -- breadth`
 runs the LP-04 D-lite matrix plus ordinary NuGet OPC/directory regressions and checked
@@ -412,9 +422,13 @@ and escalates unsafe, opaque, or incomplete inventory before attribution.
 Repository metadata, declared dependencies, signatures, PDBs, SourceLink
 and SBOMs do not establish ownership or source correspondence. Code
 branches remain unverified under the documented package-only/no-build limitation.
-The resolver accepts no source/provenance maps and performs no builds or transforms:
-retain the candidates for a separate paragraph-29 attribution assessment; no
-currently supported packet verifies them. Safely passive-only packages yield a
+The package-only mode accepts no source/provenance maps and performs no builds or transforms.
+Its candidates require a separate paragraph-29 attribution assessment. The optional
+trusted-helper provenance mode requires authenticated exact-commit source acquisition and
+positive per-entry correspondence; generic web-tree presence is not a map, and matching
+assembly output identity is not reproducible-build proof. See the shipping
+[admission contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/provenance-admission.md).
+Safely passive-only packages yield a
 package-specific vacuous no-code finding.
 MSBuild inspection joins direct text and CDATA across comments and processing
 instructions before testing active functions and hashing locators; prolog
