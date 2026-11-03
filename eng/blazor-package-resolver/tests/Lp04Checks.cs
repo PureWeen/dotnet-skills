@@ -384,6 +384,68 @@ internal static class Lp04Checks
             modeARes.BundledWebAssets!.Assets.Count == 1,
             "LP-04 Mode A bundled npm notice coverage verified");
 
+        using var jsonSourceZip = new ZipArchive(new MemoryStream(modeASrc), ZipArchiveMode.Read);
+        var sourceEntries = jsonSourceZip.Entries.Select(entry =>
+        {
+            using var stream = entry.Open();
+            using var memory = new MemoryStream();
+            stream.CopyTo(memory);
+            return (Name: entry.FullName, Bytes: memory.ToArray());
+        }).ToArray();
+        var jsonOutcomes = new List<(bool Success, string Label)>();
+        void JsonCase(string label, string member, string text, bool positive = false)
+        {
+            var source = BuildZip(sourceEntries.Select(entry => (entry.Name,
+                entry.Name.EndsWith("/" + member, StringComparison.Ordinal) ? Encoding.UTF8.GetBytes(text) : entry.Bytes)).ToArray());
+            try
+            {
+                var (bundle, attestation) = MakeProvenance(modeAPkg, modeAPkg, source);
+                var result = Dispatch5(modeAPkg, modeAPkg, bundle, attestation, source);
+                var expected = positive ? "provenance-notices-verified" : "provenance-notices-unverified";
+                jsonOutcomes.Add((result.BranchId == expected, label + ": " + result.BranchId));
+                Console.WriteLine("Delta LP-04 JSON " + label + ": " + result.BranchId);
+            }
+            catch (Exception ex)
+            {
+                jsonOutcomes.Add((false, label + ": threw " + ex.GetType().Name));
+            }
+        }
+        const string dependencyJson = "\"dependencies\":{\"lit-html\":\"^3.3.3\"}";
+        JsonCase("package surrogate dependency name", "package.json", "{\"dependencies\":{\"\\uD800\":\"1.0.0\"}}");
+        JsonCase("package surrogate dependency value", "package.json", "{\"dependencies\":{\"lit-html\":\"\\uD800\"}}");
+        JsonCase("lock surrogate version", "package-lock.json",
+            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"\\uD800\"}}}");
+        JsonCase("lock surrogate dependency name", "package-lock.json",
+            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"dependencies\":{\"\\uD800\":\"1.0.0\"}}}}");
+        foreach (var field in new[] { "bundleDependencies", "bundledDependencies", "optionalDependencies" })
+        {
+            foreach (var value in new[] { "true", "null", "0", "\"\"", "{}", "[]", "false" })
+            {
+                var supported = field == "optionalDependencies" ? value == "{}" : value is "[]" or "false";
+                JsonCase("package " + field + "=" + value, "package.json",
+                    "{" + dependencyJson + ",\"" + field + "\":" + value + "}", supported);
+            }
+            JsonCase("package nonempty " + field, "package.json", "{" + dependencyJson + ",\"" + field +
+                "\":" + (field == "optionalDependencies" ? "{\"other\":\"1.0.0\"}" : "[\"lit-html\"]") + "}");
+        }
+        foreach (var field in new[] { "dependencies", "optionalDependencies" })
+        {
+            foreach (var value in new[] { "true", "false", "null", "0", "\"\"", "[]", "{}" })
+                JsonCase("lock " + field + "=" + value, "package-lock.json",
+                    "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"" + field + "\":" + value + "}}}",
+                    positive: value == "{}");
+            JsonCase("lock root malformed " + field, "package-lock.json",
+                "{\"packages\":{\"\":{\"" + field + "\":false},\"node_modules/lit-html\":{\"version\":\"3.3.3\"}}}");
+            JsonCase("lock unvisited malformed " + field, "package-lock.json",
+                "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\"},\"node_modules/dev-only\":{\"version\":\"1.0.0\",\"" +
+                field + "\":[]}}}");
+        }
+        JsonCase("lock surrogate dependency value", "package-lock.json",
+            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"dependencies\":{\"other\":\"\\uD800\"}}}}");
+        var jsonFailures = string.Join("; ", jsonOutcomes.Where(value => !value.Success).Select(value => value.Label));
+        foreach (var outcome in jsonOutcomes)
+            check(outcome.Success, "Delta JSON regressions: " + jsonFailures);
+
         var unmappedPkg = BuildZip(
             ("Example.Controls.nuspec", nuspec), ("LICENSE", licenseBytes),
             ("THIRD-PARTY-LICENSES.md", tplBytes), ("staticwebassets/bundle.js", bundledScript));

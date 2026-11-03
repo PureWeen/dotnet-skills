@@ -12,7 +12,7 @@ var catalog = Catalog.Load(data);
 var registry = Registry.Bootstrap(catalog);
 if (args is ["lp10-provenance"] or ["lp10-provenance", _])
 {
-    Lp10BoundaryChecks.CheckProvenance(registry, args.Length == 2 ? args[1] : null);
+    RunSelected(() => Lp10BoundaryChecks.CheckProvenance(registry, args.Length == 2 ? args[1] : null));
     return;
 }
 if (args is ["lp02"])
@@ -27,7 +27,7 @@ if (args is ["lp03"])
 }
 if (args is ["lp04"])
 {
-    Lp04Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp04"));
+    RunSelected(() => Lp04Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp04")));
     return;
 }
 if (args is ["breadth"])
@@ -35,6 +35,15 @@ if (args is ["breadth"])
     Lp04Checks.Run(registry, catalog, Path.Combine(fixtureRoot, "lp04"));
     EvidenceInspectionChecks.Run(fixtureRoot);
     return;
+}
+static void RunSelected(Action run)
+{
+    try { run(); }
+    catch (Exception error)
+    {
+        Console.Error.WriteLine(error);
+        Environment.ExitCode = 1;
+    }
 }
 var expectedIds = ("LP-01 LP-02 LP-03 LP-04 LP-05 LP-06 LP-07 LP-08 LP-09 LP-10 " +
     "PI-01 PI-02 PI-03 PI-04 PI-05 PI-06 PI-07 PI-08 PI-09 PI-10 PI-11 PI-12 " +

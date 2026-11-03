@@ -580,6 +580,9 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             files.Keys.All(path => path.StartsWith(prefix, StringComparison.Ordinal));
     }
 
+    private static bool HasAnyConditionAttribute(XElement element) =>
+        element.Attributes().Any(attribute => attribute.Name.LocalName.Equals("Condition", StringComparison.OrdinalIgnoreCase));
+
     internal static bool HasMatchingProject(string assetPath, byte[] dll, Dictionary<string, byte[]> files, string prefix)
     {
         using var pe = new PEReader(new MemoryStream(dll, writable: false));
@@ -595,13 +598,16 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null, MaxCharactersInDocument = XmlLimit });
                 var project = XDocument.Load(reader);
                 var root = project.Root;
-                var names = project.Descendants().Where(item => item.Name.LocalName == "AssemblyName").ToArray();
-                if (root is null || root.Name.LocalName != "Project" || names.Length > 1 ||
+                var names = project.Descendants().Where(item =>
+                    item.Name.LocalName.Equals("AssemblyName", StringComparison.OrdinalIgnoreCase)).ToArray();
+                if (root is null || root.Name.LocalName != "Project" ||
+                    root.Name.NamespaceName is not ("" or MsbuildNamespace) ||
+                    HasAnyConditionAttribute(root) || names.Length > 1 ||
                     names.Any(item => item.HasAttributes || item.HasElements ||
                         item.Name != root.Name.Namespace + "AssemblyName" ||
                         item.Parent?.Name != root.Name.Namespace + "PropertyGroup" ||
                         item.Parent?.Parent != root ||
-                        item.Ancestors().Any(parent => parent.Attribute("Condition") is not null))) continue;
+                        item.Ancestors().Any(HasAnyConditionAttribute))) continue;
                 var output = names.Length == 1 ? names[0].Value.Trim() : Path.GetFileNameWithoutExtension(path);
                 if (output.Contains("$(", StringComparison.Ordinal) || output.Contains("@(", StringComparison.Ordinal) ||
                     output.Contains("%(", StringComparison.Ordinal)) continue;

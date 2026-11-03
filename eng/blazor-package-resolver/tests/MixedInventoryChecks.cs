@@ -24,6 +24,26 @@ internal static class MixedInventoryChecks
         Check(ordered.Select(c => c.Ecosystem + ":" + c.Key).SequenceEqual(
             ["nuget:foo/1.0.0", "nuget:foo1/1.0.0", "npm:@scope/foo/1.0.0", "npm:foo/1.0.0"]),
             "Historical id/version comparator, NuGet first; prefix IDs and mixed ecosystems");
+        foreach (var role in new[] { "assessment", "sbom" })
+        foreach (var member in new[] { "\"\\uD800\":null", "\"delta\":\"\\uD800\"" })
+        {
+            var inputs = new Dictionary<string, CheckedInput>(baseline, StringComparer.Ordinal);
+            var text = Encoding.UTF8.GetString(inputs[role].Content.Span);
+            var end = text.LastIndexOf('}');
+            Replace(inputs, role, Encoding.UTF8.GetBytes(text.Insert(end, "," + member)));
+            if (role == "sbom")
+            {
+                var assessment = JsonNode.Parse(inputs["assessment"].Content.Span)!;
+                assessment["sbom_sha256"] = inputs["sbom"].Identity.Sha256;
+                assessment["designation"]!["sbom_sha256"] = inputs["sbom"].Identity.Sha256;
+                Replace(inputs, "assessment", JsonSerializer.SerializeToUtf8Bytes(assessment));
+            }
+            Check(Spdx22InventoryAdmission.Admit(inputs).Code == "input-invalid",
+                "Delta SPDX admission rejects escaped unpaired surrogate in " + role);
+            Check(registry.Dispatch(new("delta-surrogate", "LP-03",
+                inputs.Values.Select(input => input.Identity).ToArray(), inputs)).BranchId == "input-invalid",
+                "Delta SPDX dispatch rejects escaped unpaired surrogate in " + role);
+        }
         foreach (var purl in new[] { "pkg:npm/@scope/foo@1.0.0", "pkg:npm/%40scope/foo@1.0.0",
             "pkg:npm/foo@1.0.0-beta.1+build.2" })
             Check(NpmPackageIdentity.TryParsePurl(purl, out _, out _), purl);

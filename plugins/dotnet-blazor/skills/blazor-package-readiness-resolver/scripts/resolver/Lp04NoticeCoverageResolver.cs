@@ -280,14 +280,21 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     dependencies[prop.Name] = prop.Value.GetString()!;
                 }
             }
-            foreach (var extra in new[] { "optionalDependencies", "bundleDependencies", "bundledDependencies" })
-                if (doc.RootElement.TryGetProperty(extra, out var val) &&
-                    ((val.ValueKind == JsonValueKind.Object && val.EnumerateObject().Any()) ||
-                     (val.ValueKind == JsonValueKind.Array && val.GetArrayLength() > 0)))
-                    hasUnsupportedDeps = true;
+            if (doc.RootElement.TryGetProperty("optionalDependencies", out var optional))
+            {
+                if (optional.ValueKind != JsonValueKind.Object) return false;
+                hasUnsupportedDeps |= optional.EnumerateObject().Any();
+            }
+            foreach (var extra in new[] { "bundleDependencies", "bundledDependencies" })
+            {
+                if (!doc.RootElement.TryGetProperty(extra, out var value)) continue;
+                if (value.ValueKind == JsonValueKind.False) continue;
+                if (value.ValueKind != JsonValueKind.Array) return false;
+                hasUnsupportedDeps |= value.GetArrayLength() > 0;
+            }
             return true;
         }
-        catch (JsonException)
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
         {
             return false;
         }
@@ -306,6 +313,20 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 !doc.RootElement.TryGetProperty("packages", out var packages) ||
                 packages.ValueKind != JsonValueKind.Object)
                 return false;
+            foreach (var package in packages.EnumerateObject())
+            {
+                if (string.IsNullOrWhiteSpace(package.Name) && package.Name.Length != 0 ||
+                    package.Value.ValueKind != JsonValueKind.Object) return false;
+                foreach (var field in new[] { "dependencies", "optionalDependencies" })
+                {
+                    if (!package.Value.TryGetProperty(field, out var dependencies)) continue;
+                    if (dependencies.ValueKind != JsonValueKind.Object) return false;
+                    foreach (var dependency in dependencies.EnumerateObject())
+                        if (string.IsNullOrWhiteSpace(dependency.Name) ||
+                            dependency.Value.ValueKind != JsonValueKind.String ||
+                            string.IsNullOrWhiteSpace(dependency.Value.GetString())) return false;
+                }
+            }
             var visitedPaths = new HashSet<string>(StringComparer.Ordinal);
             var seenPairs = new HashSet<(string Name, string Version)>();
             var queue = new Queue<(string ParentPath, string Name)>(roots.Select(r => ("", r)));
@@ -335,7 +356,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             }
             return true;
         }
-        catch (JsonException)
+        catch (Exception error) when (error is JsonException or InvalidOperationException)
         {
             return false;
         }

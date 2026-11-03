@@ -672,7 +672,31 @@ internal static class Lp10BoundaryChecks
                 ("unsupported-name-forbids-filename-fallback", "Example.Controls.csproj",
                     "<Project><Target Name=\"NeverInvoked\"><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Target></Project>"),
                 ("mixed-supported-unsupported-names", "Example.Controls.csproj",
-                    "<Project><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup><Target Name=\"NeverInvoked\"><PropertyGroup><AssemblyName>Other</AssemblyName></PropertyGroup></Target></Project>")
+                    "<Project><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup><Target Name=\"NeverInvoked\"><PropertyGroup><AssemblyName>Other</AssemblyName></PropertyGroup></Target></Project>"),
+                ("lowercase-condition-group", "Unrelated.csproj",
+                    "<Project><PropertyGroup condition=\"'$(Never)' == 'true'\"><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Project>"),
+                ("lowercase-assemblyname-fallback-bypass", "Example.Controls.csproj",
+                    "<Project><PropertyGroup><assemblyname>Other</assemblyname></PropertyGroup></Project>"),
+                ("lowercase-assemblyname-conflict", "Unrelated.csproj",
+                    "<Project><PropertyGroup><AssemblyName>Example.Controls</AssemblyName><assemblyname>Other</assemblyname></PropertyGroup></Project>"),
+                ("conditional-root-filename-fallback", "Example.Controls.csproj",
+                    "<Project Condition=\"'$(Never)' == 'true'\"/>"),
+                ("foreign-namespace-project", "Example.Controls.csproj",
+                    "<Project xmlns=\"urn:not-msbuild\"/>"),
+                ("foreign-namespace-literal-project", "Unrelated.csproj",
+                    "<Project xmlns=\"urn:not-msbuild\"><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Project>"),
+                ("target-lowercase-assemblyname-fallback", "Example.Controls.csproj",
+                    "<Project><Target Name=\"NeverInvoked\"><PropertyGroup><assemblyname>Other</assemblyname></PropertyGroup></Target></Project>"),
+                ("uppercase-assemblyname", "Example.Controls.csproj",
+                    "<Project><PropertyGroup><ASSEMBLYNAME>Other</ASSEMBLYNAME></PropertyGroup></Project>"),
+                ("lowercase-root-condition", "Example.Controls.csproj",
+                    "<Project condition=\"'$(Never)' == 'true'\"/>"),
+                ("mixed-case-group-condition", "Unrelated.csproj",
+                    "<Project><PropertyGroup cOnDiTiOn=\"false\"><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Project>"),
+                ("foreign-namespace-lowercase-name", "Example.Controls.csproj",
+                    "<Project xmlns:x=\"urn:other\"><PropertyGroup><x:assemblyname>Other</x:assemblyname></PropertyGroup></Project>"),
+                ("namespaced-condition-group", "Unrelated.csproj",
+                    "<Project xmlns:x=\"urn:other\"><PropertyGroup x:condition=\"false\"><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Project>")
             })
             {
                 var projectBytes = Encoding.UTF8.GetBytes(xml);
@@ -691,10 +715,43 @@ internal static class Lp10BoundaryChecks
                 {
                     [prefix + "Example.Controls.csproj"] = "<Project/>"u8.ToArray()
                 }, prefix), "Re-review filename fallback remains valid only without any AssemblyName");
+            foreach (var xml in new[]
+            {
+                "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"/>",
+                "<Project xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\"><PropertyGroup><AssemblyName>Example.Controls</AssemblyName></PropertyGroup></Project>"
+            })
+            {
+                var source = BuildZip((prefix + ".github/workflows/release.yml", "name: release\n"u8.ToArray()),
+                    (prefix + "Example.Controls.csproj", Encoding.UTF8.GetBytes(xml)));
+                Check(Dispatch(assemblyPackage, assemblyPackage, assemblyBundle,
+                    BuildAttestation(assemblyPackage, assemblyPackage, assemblyBundle, source), source)
+                    .BranchId == "provenance-attributed", "Delta canonical MSBuild-2003 literal/default-name control");
+            }
         }
 
         if (reReviewGroup is null or "json")
         {
+            foreach (var field in new[] { "payload", "hmac_sha256" })
+            {
+                var envelope = Encoding.UTF8.GetBytes("{\"payload\":\"e30=\",\"hmac_sha256\":\"00\"}".Replace(
+                    field == "payload" ? "\"e30=\"" : "\"00\"", "\"\\uD800\"", StringComparison.Ordinal));
+                Check(HelperAdmission.Open(envelope) is null, "Delta helper envelope surrogate " + field);
+                Reject("helper envelope surrogate " + field,
+                    () => Dispatch(pkgBytes, releaseBytes, bundleBytes, envelope, sourceBytes));
+            }
+            foreach (var field in new[] { "path", "name", "version" })
+            {
+                var manifest = "{\"schema_version\":1,\"assets\":[{\"path\":\"staticwebassets/built.js\"," +
+                    "\"sha256\":\"" + Catalog.Digest(builtJs) + "\",\"inputs\":[{\"path\":\"src/input.ts\",\"sha256\":\"" +
+                    Catalog.Digest(matchedJs) + "\"}],\"components\":[{\"name\":\"example\",\"version\":\"1.0.0\"}]}]}";
+                var original = field == "path" ? "staticwebassets/built.js" : field == "name" ? "example" : "1.0.0";
+                manifest = manifest.Replace("\"" + original + "\"", "\"\\uD800\"", StringComparison.Ordinal);
+                Check(!Lp10BinaryAttributionResolver.TryBundlerAsset(
+                    new Dictionary<string, byte[]> { ["readiness-bundler-manifest.json"] = Encoding.UTF8.GetBytes(manifest) },
+                    new Dictionary<string, byte[]> { [$"controls-{commit}/src/input.ts"] = matchedJs },
+                    $"controls-{commit}/", "staticwebassets/built.js", Catalog.Digest(builtJs), out _),
+                    "Delta bundler manifest surrogate " + field);
+            }
             foreach (var scalar in new[] { "1", "2147483648", "1.5", "\"1\"", "null", "true", "{}", "[]" })
             {
                 var manifest = JsonSerializer.SerializeToUtf8Bytes(new
