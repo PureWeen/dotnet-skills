@@ -6,7 +6,7 @@ using BlazorPackageResolver;
 
 internal static class ProvenanceTestAdmission
 {
-    // Test double for the trusted acquisition/gh boundary; never a production verification key.
+    // Offline test double for the trusted acquisition/gh boundary; never a production verification key.
     private static readonly byte[] Key = SHA256.HashData("offline-test-helper-only"u8);
 
     internal static byte[] Sign(byte[] raw, byte[] source, string repository, string commit, bool acquired = true)

@@ -259,7 +259,7 @@ internal static class CanonicalLicenseBody
         if (start < 0 || start + canonical.Length != text.Length) return false;
         var prefix = text[..start];
         if (spdx == "Apache-2.0") return prefix.Length == 0;
-        // Only a title, SPDX label, copyright attribution and reservation may precede the grant.
+        // Only the matching title/SPDX label, copyright attribution and reservation may precede the grant.
         var firstWords = string.Join(@"\s+", clauses.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
             .Take(5).Select(Regex.Escape));
         var grantStart = Regex.Match(body, firstWords, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);

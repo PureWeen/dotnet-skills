@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace BlazorPackageResolver;
 
-// The key is supplied only by the trusted helper to its resolver child, never by an input packet.
+// Admission trusts the helper's child-process environment, never a key carried in an input packet.
 internal static class HelperAdmission
 {
     internal const string KeyVariable = "BLAZOR_PROVENANCE_ADMISSION_KEY";
