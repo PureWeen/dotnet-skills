@@ -885,12 +885,14 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             holder = Regex.Replace(holder, @"\s*\bAll\s+rights\s+reserved\.?\s*\z", "",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
             holder = holder.Trim().TrimEnd('.', ',', ';');
+            var hasSymbolOrYear = prefix.Contains("(c)", StringComparison.OrdinalIgnoreCase) ||
+                                  prefix.Contains('©') ||
+                                  Regex.IsMatch(prefix, @"[0-9]{4}", RegexOptions.CultureInvariant);
             if (holder.Length >= 3 &&
                 !InvalidHolderStopWords.Contains(holder) &&
-                !holder.StartsWith("notice", StringComparison.OrdinalIgnoreCase) &&
-                !holder.StartsWith("holder", StringComparison.OrdinalIgnoreCase) &&
-                !holder.StartsWith("license", StringComparison.OrdinalIgnoreCase) &&
-                !holder.StartsWith("owner", StringComparison.OrdinalIgnoreCase))
+                !holder.Contains("[name of copyright owner]", StringComparison.OrdinalIgnoreCase) &&
+                !Regex.IsMatch(holder, @"\A(?:notice|holders?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
+                (hasSymbolOrYear || !Regex.IsMatch(holder, @"\A(?:licenses?|owners?|statements?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)))
                 holders.Add(holder);
         }
         foreach (Match match in Regex.Matches(text,
@@ -920,8 +922,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 continue;
             if (Regex.IsMatch(line, @"\A(?:Copyright\s+(?:\(c\)|©|[0-9]{4})|\(c\)\s*(?:[0-9]{4}|[A-Z@])|©|Licensed\s+to\s+)",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
-                ((line.StartsWith("Copyright ", StringComparison.Ordinal) ||
-                  line.StartsWith("COPYRIGHT ", StringComparison.Ordinal)) &&
+                (line.StartsWith("Copyright ", StringComparison.OrdinalIgnoreCase) &&
                  ExtractCopyrightHolders(line, allowYearlessSymbol: true).Count > 0))
                 lines.Add(line);
         }

@@ -1065,6 +1065,8 @@ internal static class Lp10BoundaryChecks
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n        \"\\u0073hell\": python\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
                 ("backslash-escaped second job header attempting to merge steps across jobs",
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n  \"pack\\u005fjob\":\n    runs-on: ubuntu-latest\n    steps:\n      - run: dotnet pack\n"),
+                ("job-level flow-style defaults: { run: { shell: 'echo {0}' } }",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults: { run: { working-directory: ./src, shell: 'echo {0}' } }\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
                 ("indentless steps sequence followed by job-level if: false at same indent",
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n    - run: npm ci\n    - run: npm run build\n    - run: dotnet pack\n    if: false\n")
             })
@@ -1147,7 +1149,19 @@ internal static class Lp10BoundaryChecks
                 ("shadowed const entries inside defineConfig callback body",
                     viteConfigText.Replace("export default defineConfig({",
                         "export default defineConfig(() => { const entries = { app: 'assets/lib.ts' }; return {")
-                        .Replace("});", "}; });", StringComparison.Ordinal)),
+                        .Replace("});\n", "}; });\n", StringComparison.Ordinal)),
+                ("shadowed destructured const { entries } inside defineConfig callback body",
+                    viteConfigText.Replace("export default defineConfig({",
+                        "export default defineConfig(() => { const { entries } = { entries: { app: 'assets/lib.ts' } }; return {")
+                        .Replace("});\n", "}; });\n", StringComparison.Ordinal)),
+                ("shadowed defineConfig callback parameter ({ entries = ... })",
+                    viteConfigText.Replace("export default defineConfig({",
+                        "export default defineConfig(({ entries = { app: 'assets/lib.ts' } }) => { return {")
+                        .Replace("});\n", "}; });\n", StringComparison.Ordinal)),
+                ("shadowed defineConfig callback parameter ({ entries })",
+                    viteConfigText.Replace("export default defineConfig({",
+                        "export default defineConfig(({ entries }) => { return {")
+                        .Replace("});\n", "}; });\n", StringComparison.Ordinal)),
                 ("entryFileNames callback parameter shadowing fixedNames",
                     viteConfigText.Replace("entryFileNames: (chunk) => fixedNames[chunk.name] ?? '[name].[hash].bundle.js'",
                         "entryFileNames: (fixedNames) => fixedNames[fixedNames.name] ?? '[name].[hash].bundle.js'",

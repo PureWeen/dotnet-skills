@@ -1110,16 +1110,30 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                         jobHasIf = true;
                         continue;
                     }
-                    if (jKey == "steps" && jVal.Length == 0)
+                    if (jKey == "steps")
                     {
-                        inSteps = true;
-                        stepsPropIndent = indent;
-                        stepItemIndent = -1;
+                        if (jVal.Length == 0)
+                        {
+                            inSteps = true;
+                            stepsPropIndent = indent;
+                            stepItemIndent = -1;
+                        }
+                        else
+                        {
+                            jobHasIf = true;
+                        }
                     }
-                    else if (jKey == "defaults" && jVal.Length == 0)
+                    else if (jKey == "defaults")
                     {
-                        inJobDefaults = true;
-                        jobDefaultsIndent = indent;
+                        if (jVal.Length == 0)
+                        {
+                            inJobDefaults = true;
+                            jobDefaultsIndent = indent;
+                        }
+                        else
+                        {
+                            jobHasIf = true;
+                        }
                     }
                     else if (jKey == "if")
                     {
@@ -1447,8 +1461,17 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         if (stripped[(closeParenIdx + 1)..].Trim() is not ("" or ";"))
             return false;
         var trimmedMask = configBodyMask.Trim();
-        if (!((trimmedMask.StartsWith('{') && trimmedMask.EndsWith('}')) ||
-              Regex.IsMatch(trimmedMask, @"\breturn\s*\{", RegexOptions.CultureInvariant)))
+        Match? callbackFormMatch = null;
+        if (!(trimmedMask.StartsWith('{') && trimmedMask.EndsWith('}')))
+        {
+            callbackFormMatch = Regex.Match(trimmedMask,
+                @"\A\(\s*(?:\{\s*(?<props>[A-Za-z_$][A-Za-z0-9_$]*(?:\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\s*\}|(?<param>[A-Za-z_$][A-Za-z0-9_$]*))?\s*\)\s*=>\s*\{[\s\S]*\breturn\s*\{[\s\S]*\}\z",
+                RegexOptions.CultureInvariant);
+            if (!callbackFormMatch.Success)
+                return false;
+        }
+
+        if (Regex.IsMatch(masked, @"\b(?:const|let|var)\s*[\{\[]", RegexOptions.CultureInvariant))
             return false;
 
         var preambleMask = masked[..exportMatch.Index];
@@ -1478,6 +1501,22 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         {
             var id = declMatch.Groups["id"].Value;
             declCounts[id] = declCounts.GetValueOrDefault(id) + 1;
+        }
+        if (callbackFormMatch is { Success: true })
+        {
+            if (callbackFormMatch.Groups["param"].Success)
+            {
+                var p = callbackFormMatch.Groups["param"].Value;
+                declCounts[p] = declCounts.GetValueOrDefault(p) + 1;
+            }
+            else if (callbackFormMatch.Groups["props"].Success)
+            {
+                foreach (var rawProp in callbackFormMatch.Groups["props"].Value.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                {
+                    var p = rawProp.Trim();
+                    declCounts[p] = declCounts.GetValueOrDefault(p) + 1;
+                }
+            }
         }
 
         var consts = new Dictionary<string, string>(StringComparer.Ordinal);
