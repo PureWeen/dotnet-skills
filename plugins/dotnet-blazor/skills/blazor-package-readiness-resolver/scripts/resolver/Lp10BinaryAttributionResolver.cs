@@ -787,19 +787,12 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             if (!HasValidViteBuildScript(buildScript) ||
                 HasDisallowedPackageJsonLifecycleScripts(scripts))
                 return false;
-            if (pkgDoc.RootElement.TryGetProperty("dependencies", out var deps))
-            {
-                if (deps.ValueKind != JsonValueKind.Object)
-                    return false;
-                foreach (var prop in deps.EnumerateObject())
-                {
-                    if (prop.Value.ValueKind != JsonValueKind.String ||
-                        string.IsNullOrWhiteSpace(prop.Name) ||
-                        string.IsNullOrWhiteSpace(prop.Value.GetString()))
-                        return false;
-                    directDeps[prop.Name] = prop.Value.GetString()!;
-                }
-            }
+            if (!Lp04NoticeCoverageResolver.TryParsePackageJsonDependencies(
+                    pkgJsonBytes, out var declaredDeps, out var hasUnsupportedDeps) ||
+                hasUnsupportedDeps)
+                return false;
+            foreach (var kv in declaredDeps)
+                directDeps[kv.Key] = kv.Value;
 
             using var lockDoc = JsonDocument.Parse(lockJsonText, new JsonDocumentOptions { MaxDepth = 64 });
             if (!JsonStringValidation.IsWellFormed(lockDoc.RootElement) ||
@@ -807,35 +800,9 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 !lockDoc.RootElement.TryGetProperty("lockfileVersion", out var lvProp) ||
                 lvProp.ValueKind != JsonValueKind.Number ||
                 !lvProp.TryGetInt32(out var lv) || lv < 2 ||
-                !lockDoc.RootElement.TryGetProperty("packages", out var packages) ||
-                packages.ValueKind != JsonValueKind.Object ||
-                !packages.TryGetProperty("", out var rootPkgEntry) ||
-                rootPkgEntry.ValueKind != JsonValueKind.Object)
+                !Lp04NoticeCoverageResolver.TryResolveLockClosure(
+                    lockJsonBytes, directDeps, out _, requireLicense: false))
                 return false;
-            var rootLockDeps = new Dictionary<string, string>(StringComparer.Ordinal);
-            if (rootPkgEntry.TryGetProperty("dependencies", out var lockDeps))
-            {
-                if (lockDeps.ValueKind != JsonValueKind.Object)
-                    return false;
-                foreach (var prop in lockDeps.EnumerateObject())
-                {
-                    if (prop.Value.ValueKind != JsonValueKind.String)
-                        return false;
-                    rootLockDeps[prop.Name] = prop.Value.GetString() ?? "";
-                }
-            }
-            if (rootLockDeps.Count != directDeps.Count ||
-                directDeps.Any(kv => !rootLockDeps.TryGetValue(kv.Key, out var lockVer) || lockVer != kv.Value))
-                return false;
-            foreach (var (depName, depSpec) in directDeps)
-            {
-                if (!packages.TryGetProperty("node_modules/" + depName, out var depEntry) ||
-                    depEntry.ValueKind != JsonValueKind.Object ||
-                    !depEntry.TryGetProperty("version", out var depVerProp) ||
-                    depVerProp.ValueKind != JsonValueKind.String ||
-                    !Lp04NoticeCoverageResolver.DoesVersionSatisfyNpmRange(depVerProp.GetString() ?? "", depSpec))
-                    return false;
-            }
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
@@ -922,7 +889,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         key = "";
         val = "";
         var m = Regex.Match(text,
-            @"\A(?:'(?<sq>[^'\r\n]+)'|""(?<dq>[^""\r\n]+)""|(?<uq>[A-Za-z0-9_-]+))\s*:(?:\s*(?<val>.*)|\z)",
+            @"\A(?:'(?<sq>[^'\r\n]+)'|""(?<dq>[^""\\\r\n]+)""|(?<uq>[A-Za-z0-9_-]+))\s*:(?:\s*(?<val>.*)|\z)",
             RegexOptions.CultureInvariant);
         if (!m.Success)
             return false;
@@ -1084,6 +1051,10 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                         return false;
                     inJobs = topKey == "jobs" && topVal.Length == 0;
                 }
+                else if (trimmed.StartsWith('"') && trimmed.Contains('\\'))
+                {
+                    return false;
+                }
                 else
                 {
                     inJobs = false;
@@ -1113,7 +1084,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             if (inSteps)
             {
                 var isDashLine = trimmed == "-" || trimmed.StartsWith("- ", StringComparison.Ordinal);
-                if ((stepItemIndent >= 0 && indent < stepItemIndent) ||
+                if ((stepItemIndent >= 0 && (indent < stepItemIndent || (indent == stepsPropIndent && !isDashLine))) ||
                     (stepItemIndent < 0 && indent <= stepsPropIndent && !isDashLine))
                 {
                     FlushStep();
@@ -1133,7 +1104,10 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                     inJobDefaults = false;
                     inJobDefaultsRun = false;
                     if (!TryParseYamlKeyValue(trimmed, out var jKey, out var jVal))
+                    {
+                        jobHasIf = true;
                         continue;
+                    }
                     if (jKey == "steps" && jVal.Length == 0)
                     {
                         inSteps = true;
@@ -1152,7 +1126,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                     else if (jKey == "continue-on-error")
                     {
                         var val = jVal.Trim('\'', '"');
-                        if (!val.Equals("false", StringComparison.OrdinalIgnoreCase))
+                        if (val.Contains('\\') || !val.Equals("false", StringComparison.OrdinalIgnoreCase))
                             jobHasContinueOnError = true;
                     }
                 }
@@ -1211,7 +1185,10 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             }
 
             if (!TryParseYamlKeyValue(stepPropText, out var sKey, out var sVal))
+            {
+                currentStep.HasIf = true;
                 continue;
+            }
 
             if (sKey == "uses")
             {
@@ -1224,7 +1201,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             else if (sKey == "continue-on-error")
             {
                 var val = sVal.Trim('\'', '"');
-                if (!val.Equals("false", StringComparison.OrdinalIgnoreCase))
+                if (val.Contains('\\') || !val.Equals("false", StringComparison.OrdinalIgnoreCase))
                     currentStep.HasContinueOnError = true;
             }
             else if (sKey == "working-directory")
@@ -1454,12 +1431,43 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
               Regex.IsMatch(trimmedMask, @"\breturn\s*\{", RegexOptions.CultureInvariant)))
             return false;
 
+        var preambleMask = masked[..exportMatch.Index];
+        var preambleDepth = new int[preambleMask.Length + 1];
+        var runningDepth = 0;
+        for (var i = 0; i < preambleMask.Length; i++)
+        {
+            preambleDepth[i] = runningDepth;
+            var ch = preambleMask[i];
+            if (ch is '{' or '(' or '[')
+                runningDepth++;
+            else if (ch is '}' or ')' or ']')
+            {
+                runningDepth--;
+                if (runningDepth < 0)
+                    return false;
+            }
+        }
+        preambleDepth[preambleMask.Length] = runningDepth;
+        if (runningDepth != 0)
+            return false;
+
+        var declCounts = new Dictionary<string, int>(StringComparer.Ordinal);
+        foreach (Match declMatch in Regex.Matches(preambleMask,
+            @"\b(?:const|let|var|function)\s+(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\b",
+            RegexOptions.CultureInvariant))
+        {
+            var id = declMatch.Groups["id"].Value;
+            declCounts[id] = declCounts.GetValueOrDefault(id) + 1;
+        }
+
         var consts = new Dictionary<string, string>(StringComparer.Ordinal);
-        foreach (Match m in Regex.Matches(masked[..exportMatch.Index],
+        foreach (Match m in Regex.Matches(preambleMask,
             @"\bconst\s+(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:;|\r?\n(?!\s*[+?.:\[`])|\z)",
             RegexOptions.CultureInvariant))
         {
-            consts[m.Groups["id"].Value] = stripped.Substring(m.Groups["lit"].Index, m.Groups["lit"].Length);
+            var id = m.Groups["id"].Value;
+            if (preambleDepth[m.Index] == 0 && declCounts.GetValueOrDefault(id) == 1)
+                consts[id] = stripped.Substring(m.Groups["lit"].Index, m.Groups["lit"].Length);
         }
 
         if (Regex.Matches(configBodyMask, @"(?<![A-Za-z0-9_$.])\boutDir\b", RegexOptions.CultureInvariant).Count != 1)
@@ -1555,9 +1563,13 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         var declaredEntries = new Dictionary<string, string>(StringComparer.Ordinal);
         if (Regex.IsMatch(configBodyMask, @"\binput\s*:\s*(?:entries\b\s*(?:,|\})|\{\s*\.\.\.entries\b)", RegexOptions.CultureInvariant))
         {
-            foreach (Match entriesBlock in Regex.Matches(masked[..exportMatch.Index],
+            if (declCounts.GetValueOrDefault("entries") != 1)
+                return false;
+            foreach (Match entriesBlock in Regex.Matches(preambleMask,
                 @"\bconst\s+entries\b[^=]*=\s*\{(?<body>[^}]+)\}", RegexOptions.CultureInvariant))
             {
+                if (preambleDepth[entriesBlock.Index] != 0)
+                    return false;
                 var bodyOffset = entriesBlock.Groups["body"].Index;
                 var bodyMask = entriesBlock.Groups["body"].Value;
                 var props = Regex.Matches(bodyMask,
@@ -1605,9 +1617,13 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         var fixedKeys = new HashSet<string>(StringComparer.Ordinal);
         if (Regex.IsMatch(configBodyMask, @"\bentryFileNames\s*:[^\r\n]*\bfixedNames\[", RegexOptions.CultureInvariant))
         {
-            foreach (Match fixedBlock in Regex.Matches(masked[..exportMatch.Index],
+            if (declCounts.GetValueOrDefault("fixedNames") != 1)
+                return false;
+            foreach (Match fixedBlock in Regex.Matches(preambleMask,
                 @"\bconst\s+fixedNames\b[^=]*=\s*\{(?<body>[^}]+)\}", RegexOptions.CultureInvariant))
             {
+                if (preambleDepth[fixedBlock.Index] != 0)
+                    return false;
                 var bodyOffset = fixedBlock.Groups["body"].Index;
                 var bodyMask = fixedBlock.Groups["body"].Value;
                 var props = Regex.Matches(bodyMask,

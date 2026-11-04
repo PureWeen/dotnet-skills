@@ -43,7 +43,12 @@ def main():
     args = parser.parse_args()
     if (args.command == "coverage") != (args.input is None):
         parser.error("coverage takes no input; all other commands require one input path")
-    dotnet = shutil.which("dotnet")
+    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+    safe_path = os.pathsep.join(
+        entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and os.path.isabs(entry) and os.path.isdir(entry)
+    )
+    dotnet = shutil.which("dotnet", path=safe_path)
     if dotnet is None:
         print("Resolver environment failure: an installed .NET 10 SDK and packs are required.",
               file=sys.stderr)
@@ -58,7 +63,9 @@ def main():
                    DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE="true",
                    DOTNET_GENERATE_ASPNET_CERTIFICATE="false",
                    DOTNET_CLI_HOME=str(scratch / "home"), DOTNET_EnableDiagnostics="0",
-                   MSBuildEnableWorkloadResolver="false")
+                   MSBuildEnableWorkloadResolver="false",
+                   NoDefaultCurrentDirectoryInExePath="1",
+                   PATH=safe_path)
         # SDK bootstrap hooks are code, not assessment data.
         for key in list(env):
             if (key.upper().startswith(("MSBUILD", "NUGET_", "DOTNET_MSBUILD_", "RESTORE",

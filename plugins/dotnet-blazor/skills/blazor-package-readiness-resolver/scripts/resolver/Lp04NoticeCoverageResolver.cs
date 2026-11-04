@@ -452,7 +452,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         return false;
     }
 
-    private static bool TryParsePackageJsonDependencies(byte[] bytes,
+    internal static bool TryParsePackageJsonDependencies(byte[] bytes,
         out Dictionary<string, string> dependencies, out bool hasUnsupportedDeps)
     {
         dependencies = new(StringComparer.Ordinal);
@@ -478,10 +478,11 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     dependencies[prop.Name] = prop.Value.GetString()!;
                 }
             }
-            if (doc.RootElement.TryGetProperty("optionalDependencies", out var optional))
+            foreach (var extraObj in new[] { "optionalDependencies", "peerDependencies" })
             {
-                if (optional.ValueKind != JsonValueKind.Object) return false;
-                hasUnsupportedDeps |= optional.EnumerateObject().Any();
+                if (!doc.RootElement.TryGetProperty(extraObj, out var extraDeps)) continue;
+                if (extraDeps.ValueKind != JsonValueKind.Object) return false;
+                hasUnsupportedDeps |= extraDeps.EnumerateObject().Any();
             }
             foreach (var extra in new[] { "bundleDependencies", "bundledDependencies" })
             {
@@ -498,8 +499,8 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         }
     }
 
-    private static bool TryResolveLockClosure(byte[] lockBytes, IReadOnlyDictionary<string, string> declaredDeps,
-        out List<(string Name, string Version, string License)> closure)
+    internal static bool TryResolveLockClosure(byte[] lockBytes, IReadOnlyDictionary<string, string> declaredDeps,
+        out List<(string Name, string Version, string License)> closure, bool requireLicense = true)
     {
         closure = [];
         if (!TryStrictUtf8(lockBytes, out var text))
@@ -518,7 +519,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             {
                 if (string.IsNullOrWhiteSpace(package.Name) && package.Name.Length != 0 ||
                     package.Value.ValueKind != JsonValueKind.Object) return false;
-                foreach (var field in new[] { "dependencies", "optionalDependencies" })
+                foreach (var field in new[] { "dependencies", "optionalDependencies", "peerDependencies" })
                 {
                     if (!package.Value.TryGetProperty(field, out var dependencies)) continue;
                     if (dependencies.ValueKind != JsonValueKind.Object) return false;
@@ -528,9 +529,12 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                             string.IsNullOrWhiteSpace(dependency.Value.GetString())) return false;
                 }
             }
-            if (rootPkgEntry.TryGetProperty("optionalDependencies", out var rootOptDeps) &&
-                rootOptDeps.ValueKind == JsonValueKind.Object && rootOptDeps.EnumerateObject().Any())
-                return false;
+            foreach (var rootExtra in new[] { "optionalDependencies", "peerDependencies" })
+            {
+                if (rootPkgEntry.TryGetProperty(rootExtra, out var rootExtraDeps) &&
+                    rootExtraDeps.ValueKind == JsonValueKind.Object && rootExtraDeps.EnumerateObject().Any())
+                    return false;
+            }
             if (!rootPkgEntry.TryGetProperty("dependencies", out var rootLockDepsProp) ||
                 rootLockDepsProp.ValueKind != JsonValueKind.Object)
                 return false;
@@ -553,18 +557,23 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     entry.ValueKind != JsonValueKind.Object ||
                     !entry.TryGetProperty("version", out var verProp) ||
                     verProp.ValueKind != JsonValueKind.String ||
-                    string.IsNullOrWhiteSpace(verProp.GetString()) ||
-                    entry.EnumerateObject().Count(property => property.Name == "license") != 1 ||
-                    !entry.TryGetProperty("license", out var licenseProp) ||
-                    licenseProp.ValueKind != JsonValueKind.String ||
-                    !IsSimpleSpdxId(licenseProp.GetString()))
+                    string.IsNullOrWhiteSpace(verProp.GetString()))
                     return false;
+                var license = "";
+                if (requireLicense)
+                {
+                    if (entry.EnumerateObject().Count(property => property.Name == "license") != 1 ||
+                        !entry.TryGetProperty("license", out var licenseProp) ||
+                        licenseProp.ValueKind != JsonValueKind.String ||
+                        !IsSimpleSpdxId(licenseProp.GetString()))
+                        return false;
+                    license = licenseProp.GetString()!;
+                }
                 var version = verProp.GetString()!;
                 if (!DoesVersionSatisfyNpmRange(version, spec))
                     return false;
                 if (!visitedPaths.Add(resolvedPath))
                     continue;
-                var license = licenseProp.GetString()!;
                 if (seenPairs.TryGetValue((name, version), out var previousLicense))
                 {
                     if (!string.Equals(previousLicense, license, StringComparison.Ordinal)) return false;
@@ -577,6 +586,35 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 if (entry.TryGetProperty("optionalDependencies", out var optDeps) &&
                     optDeps.ValueKind == JsonValueKind.Object && optDeps.EnumerateObject().Any())
                     return false;
+                if (entry.TryGetProperty("peerDependencies", out var peerDeps) &&
+                    peerDeps.ValueKind == JsonValueKind.Object)
+                {
+                    var peerMeta = entry.TryGetProperty("peerDependenciesMeta", out var pm) &&
+                                   pm.ValueKind == JsonValueKind.Object
+                        ? pm
+                        : default;
+                    foreach (var peer in peerDeps.EnumerateObject())
+                    {
+                        var isOptionalPeer = peerMeta.ValueKind == JsonValueKind.Object &&
+                                             peerMeta.TryGetProperty(peer.Name, out var metaObj) &&
+                                             metaObj.ValueKind == JsonValueKind.Object &&
+                                             metaObj.TryGetProperty("optional", out var optProp) &&
+                                             optProp.ValueKind == JsonValueKind.True;
+                        if (isOptionalPeer)
+                        {
+                            if (TryResolveLockPackageEntry(packages, resolvedPath, peer.Name, out _, out var peerEntry) &&
+                                peerEntry.ValueKind == JsonValueKind.Object &&
+                                (!peerEntry.TryGetProperty("dev", out var devProp) || devProp.ValueKind != JsonValueKind.True))
+                            {
+                                queue.Enqueue((resolvedPath, peer.Name, peer.Value.GetString()!));
+                            }
+                        }
+                        else
+                        {
+                            queue.Enqueue((resolvedPath, peer.Name, peer.Value.GetString()!));
+                        }
+                    }
+                }
                 if (entry.TryGetProperty("dependencies", out var deps) &&
                     deps.ValueKind == JsonValueKind.Object)
                 {
@@ -868,7 +906,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             var line = rawLine.Trim();
             if (line.Length == 0 || line.Contains("[name of copyright owner]", StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (Regex.IsMatch(line, @"\A(?:Copyright\s+(?:\(c\)|©|[0-9]{4})|\(c\)\s*[0-9]{4}|©)",
+            if (Regex.IsMatch(line, @"\A(?:Copyright\s+(?:\(c\)|©|[0-9]{4})|\(c\)\s*(?:[0-9]{4}|[A-Z@])|©|Licensed\s+to\s+)",
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                 lines.Add(line);
         }
@@ -1024,6 +1062,22 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         }
         hasUnrecognizedClause = unrecognized;
 
+        var strippedComment = string.Join("\n", commentBlock.Split('\n')
+            .Select(l => Regex.Replace(l.Trim(), @"\A(?:/\*+!?|//+|\*+/|\*+)\s*|\s*\*+/\z", "", RegexOptions.CultureInvariant)));
+        if (CanonicalLicenseBody.TryMatchAny(strippedComment, out var canonicalSpdx))
+            AddLic(canonicalSpdx);
+        var normComment = Regex.Replace(strippedComment, @"\s+", " ", RegexOptions.CultureInvariant).Trim().ToUpperInvariant();
+        foreach (var spdxId in CanonicalLicenseBody.SupportedSpdxIds)
+        {
+            var clauses = CanonicalLicenseBody.Clauses(spdxId);
+            if (clauses is not null)
+            {
+                var normClauses = Regex.Replace(clauses, @"\s+", " ", RegexOptions.CultureInvariant).Trim().ToUpperInvariant();
+                if (normComment.Contains(normClauses, StringComparison.Ordinal))
+                    AddLic(spdxId);
+            }
+        }
+
         if (Regex.IsMatch(commentBlock, @"\bApache\s+Licen[sc]e,?\s*Version\s*2\.0\b|\bApache[-\s]+2\.0\b",
                 RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
             AddLic("Apache-2.0");
@@ -1080,15 +1134,16 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         error = "";
         var licenseCopyrightLines = ExtractLicenseCopyrightLines(licenseText);
         var admittedSections = admittedNoticeSections?.ToArray();
+        var noticeCopyrightLines = admittedSections is not null
+            ? admittedSections.SelectMany(sec => ExtractLicenseCopyrightLines(sec.Body)).ToList()
+            : noticeText is not null
+                ? ExtractLicenseCopyrightLines(noticeText)
+                : [];
         bool IsHolderCoveredByLicense(string holder) =>
-            requiredFirstPartySpdx is not null
-                ? licenseCopyrightLines.Any(line => line.Contains(holder, StringComparison.OrdinalIgnoreCase))
-                : licenseText.Contains(holder, StringComparison.OrdinalIgnoreCase);
+            licenseCopyrightLines.Any(line => line.Contains(holder, StringComparison.OrdinalIgnoreCase));
         bool IsHolderCoveredByNotices(string holder) =>
             requiredFirstPartySpdx is null &&
-            (admittedSections is not null
-                ? admittedSections.Any(sec => sec.Body.Contains(holder, StringComparison.OrdinalIgnoreCase))
-                : noticeText is not null && noticeText.Contains(holder, StringComparison.OrdinalIgnoreCase));
+            noticeCopyrightLines.Any(line => line.Contains(holder, StringComparison.OrdinalIgnoreCase));
         bool IsSpdxCoveredByNotices(string spdxToken) =>
             requiredFirstPartySpdx is null &&
             (admittedSections is not null
@@ -1250,7 +1305,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             if (doc.RootElement.ValueKind != JsonValueKind.Object ||
                 !JsonStringValidation.IsWellFormed(doc.RootElement))
                 return true;
-            foreach (var depField in new[] { "dependencies", "devDependencies", "optionalDependencies" })
+            foreach (var depField in new[] { "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" })
             {
                 if (!doc.RootElement.TryGetProperty(depField, out var deps))
                     continue;
@@ -1303,12 +1358,12 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     return false;
                 if (entry.Name.Length == 0)
                 {
-                    if (entry.Value.TryGetProperty("dependencies", out var rootDeps) &&
-                        (rootDeps.ValueKind != JsonValueKind.Object || rootDeps.EnumerateObject().Any()))
-                        return false;
-                    if (entry.Value.TryGetProperty("optionalDependencies", out var rootOptDeps) &&
-                        (rootOptDeps.ValueKind != JsonValueKind.Object || rootOptDeps.EnumerateObject().Any()))
-                        return false;
+                    foreach (var rootField in new[] { "dependencies", "optionalDependencies", "peerDependencies" })
+                    {
+                        if (entry.Value.TryGetProperty(rootField, out var rootDeps) &&
+                            (rootDeps.ValueKind != JsonValueKind.Object || rootDeps.EnumerateObject().Any()))
+                            return false;
+                    }
                     continue;
                 }
                 hasNonRootEntry = true;

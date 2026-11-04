@@ -778,12 +778,22 @@ def provenance_inputs(capture, package_pin, metadata, collector, args, admission
     codeload = source_url(metadata)
     require(codeload is not None, "LP-10 provenance verification requires a canonical GitHub repository and 40-hex commit.")
     owner_repo = "/".join(codeload.split("/")[3:5])
+    os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
+    safe_path = os.pathsep.join(
+        entry for entry in os.environ.get("PATH", "").split(os.pathsep)
+        if entry and os.path.isabs(entry) and os.path.isdir(entry)
+    )
+    gh_exe = shutil.which("gh", path=safe_path) or str(capture / "gh-missing")
     env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GH_HOST", "GITHUB_TOKEN")}
-    cmd = ["gh", "attestation", "verify", str(release_copy), "-b", str(bundle_copy),
+    env["PATH"] = safe_path
+    env["NoDefaultCurrentDirectoryInExePath"] = "1"
+    cmd = [gh_exe, "attestation", "verify", str(release_copy), "-b", str(bundle_copy),
            "--repo", owner_repo, "--predicate-type", "https://slsa.dev/provenance/v1", "--format", "json"]
     try:
-        completed = subprocess.run(cmd, env=env, capture_output=True, text=True,
+        completed = subprocess.run(cmd, cwd=capture, env=env, capture_output=True, text=True,
                                    encoding="utf-8", errors="replace", timeout=60, check=False)
+    except FileNotFoundError as error:
+        raise ToolFailure("gh attestation verify requires gh on an absolute PATH directory.") from error
     except subprocess.TimeoutExpired as error:
         raise ToolFailure("gh attestation verify exceeded its 60-second timeout.") from error
     verification = []

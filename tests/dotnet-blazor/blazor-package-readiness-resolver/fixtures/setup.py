@@ -24,6 +24,19 @@ if len(sys.argv) > 1:
         require(len(cases) == 1 and cases[0]["case_id"] == "notice" and
                 cases[0]["result"]["row_id"] == "LP-04")
     digest = hashlib.sha256(Path("sample.nupkg").read_bytes()).hexdigest()
+    expected = {
+        "LP-01": ("lp01-license-policy", "1.1.0", "missing-policy", "escalated", "unknown"),
+        "LP-02": ("lp02-public-source", "1.2.0", "observation-missing", "escalated", "unknown"),
+        "LP-03": ("lp03-dependency-licenses", "1.4.0", "scope-missing", "escalated", "unknown"),
+        "LP-04": ("lp04-notice-coverage", "2.1.0", "no-supported-layout-assets", "escalated", "unknown"),
+        "LP-05": ("lp05-license-expression", "1.0.0", "expression", "deterministic", "applicable"),
+        "LP-06": ("lp06-repository-url", "1.0.0", "populated", "deterministic", "applicable"),
+        "LP-07": ("lp07-repository-commit", "1.0.0", "full-sha1", "deterministic", "applicable"),
+        "LP-08": ("lp08-authors", "1.0.0", "populated", "deterministic", "applicable"),
+        "LP-09": ("lp09-project-url", "1.0.0", "populated", "deterministic", "applicable"),
+        "LP-10": ("lp10-binary-attribution", "1.1.0", "no-code-payload", "deterministic", "applicable"),
+        "PI-01": ("pi01-strong-name", "1.1.0", "opaque-container", "escalated", "unknown"),
+    }
     for item in cases:
         require(set(item) == {"case_id", "result"})
         row = item["result"]
@@ -31,12 +44,9 @@ if len(sys.argv) > 1:
                              "applicability", "finding", "missing_fact", "required_input",
                              "next_category", "evidence_contract", "evidence_references", "inputs"}
         require(set(row) == fields | ({"bundled_web_assets"} if row["row_id"] == "LP-04" else set()))
-        require(row["row_id"] in rows and
-                row["resolver_version"] == ("2.1.0" if row["row_id"] == "LP-04" else
-                                           "1.4.0" if row["row_id"] == "LP-03" else
-                                           "1.2.0" if row["row_id"] == "LP-02" else
-                                           "1.1.0" if row["row_id"] == "LP-10" else
-                                           "1.1.0" if row["row_id"] in ("LP-01", "PI-01") else "1.0.0"))
+        require(row["row_id"] in expected and
+                (row["resolver_id"], row["resolver_version"], row["branch_id"],
+                 row["decision"], row["applicability"]) == expected[row["row_id"]])
         require(re.fullmatch(r"[a-z][a-z0-9-]*", row["resolver_id"]) is not None and
                 re.fullmatch(r"[a-z][a-z0-9-]*", row["branch_id"]) is not None)
         require(row["inputs"] == [{"role": "package", "path": "sample.nupkg", "sha256": digest}])

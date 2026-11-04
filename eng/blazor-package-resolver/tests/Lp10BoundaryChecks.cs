@@ -1056,7 +1056,13 @@ internal static class Lp10BoundaryChecks
                 ("double-quoted job \"if\": false",
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    \"if\": false\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
                 ("double-quoted step \"continue-on-error\": true",
-                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - \"continue-on-error\": true\n        run: npm run build\n      - run: dotnet pack\n")
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - \"continue-on-error\": true\n        run: npm run build\n      - run: dotnet pack\n"),
+                ("backslash-escaped step \"\\u0069f\": false",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - \"\\u0069f\": false\n        run: npm run build\n      - run: dotnet pack\n"),
+                ("backslash-escaped job \"\\u0069f\": false",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    \"\\u0069f\": false\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("indentless steps sequence followed by job-level if: false at same indent",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n    - run: npm ci\n    - run: npm run build\n    - run: dotnet pack\n    if: false\n")
             })
             {
                 var badWfSrc = MakeViteSrc(wfOverride: wf);
@@ -1130,7 +1136,10 @@ internal static class Lp10BoundaryChecks
                         StringComparison.Ordinal)),
                 ("string decoy inside codeSplitting.groups array",
                     viteConfigText.Replace("groups: [{ name: 'vendor', test: /vendor/ }]",
-                        "groups: [\"name: 'vendor', test: /vendor/\"]", StringComparison.Ordinal))
+                        "groups: [\"name: 'vendor', test: /vendor/\"]", StringComparison.Ordinal)),
+                ("shadowed nested const outDir after non-literal top-level const outDir",
+                    viteConfigText.Replace("const outDir = 'wwwroot';",
+                        "const outDir = String('dist');\n{ const outDir = 'wwwroot'; }", StringComparison.Ordinal))
             })
             {
                 var badCfgSrc = MakeViteSrc(configOverride: cfgText);

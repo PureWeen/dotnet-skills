@@ -1212,6 +1212,9 @@ internal static class Lp04Checks
             ("uncovered @license GPL-3.0-only", "/*! @license GPL-3.0-only */\nexport const v = 1;\n"),
             ("uncovered Released under MPL-2.0", "/*! Released under the MPL-2.0 License */\nexport const v = 1;\n"),
             ("uncovered yearless (c) holder", "/*! (c) Uncovered Third Party Corp. */\nexport const v = 1;\n"),
+            ("uncovered holder matching MIT template body word Software", "/*! Copyright (c) 2024 Software */\nexport const v = 1;\n"),
+            ("uncovered untitled canonical ISC license body in comment",
+                "/*\n * Permission to use, copy, modify, and/or distribute this software for any\n * purpose with or without fee is hereby granted, provided that the above\n * copyright notice and this permission notice appear in all copies.\n *\n * THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH\n * REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY\n * AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,\n * INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM\n * LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR\n * OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR\n * PERFORMANCE OF THIS SOFTWARE.\n */\nexport const v = 1;\n"),
             ("unrecognized @license banner", "/*! @license Custom-Proprietary-1.0 */\nexport const v = 1;\n")
         })
         {
@@ -1227,6 +1230,28 @@ internal static class Lp04Checks
             check(badInlineRes.BranchId == "provenance-notices-unverified",
                 $"LP-04 Mode A rejects {inlineLabel} (got {badInlineRes.BranchId})");
         }
+
+        // Negative 6b: Non-optional transitive peerDependencies must be covered; uninstalled optional peerDependencies are allowed
+        var viteLockOptionalPeerUninstalled = viteLockWithExcluded.Replace(
+            "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",",
+            "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"peerDependencies\":{\"dompurify\":\"^3.0.0\"},\"peerDependenciesMeta\":{\"dompurify\":{\"optional\":true}},",
+            StringComparison.Ordinal);
+        var optPeerSrc = BuildViteSource(viteLockOptionalPeerUninstalled);
+        var (optPeerBnd, optPeerAtt) = MakeProvenance(vitePkg, vitePkg, optPeerSrc);
+        check(Dispatch5(vitePkg, vitePkg, optPeerBnd, optPeerAtt, optPeerSrc).BranchId == "provenance-notices-verified",
+            "LP-04 Mode A allows uninstalled optional transitive peerDependencies");
+
+        var viteLockRequiredPeerUncovered = viteLockWithExcluded.Replace(
+            "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\"}",
+            "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\"},\"node_modules/uncovered-peer\":{\"version\":\"1.0.0\",\"license\":\"MIT\"}",
+            StringComparison.Ordinal).Replace(
+            "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",",
+            "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"peerDependencies\":{\"uncovered-peer\":\"^1.0.0\"},",
+            StringComparison.Ordinal);
+        var reqPeerSrc = BuildViteSource(viteLockRequiredPeerUncovered);
+        var (reqPeerBnd, reqPeerAtt) = MakeProvenance(vitePkg, vitePkg, reqPeerSrc);
+        check(Dispatch5(vitePkg, vitePkg, reqPeerBnd, reqPeerAtt, reqPeerSrc).BranchId == "provenance-notices-unverified",
+            "LP-04 Mode A rejects uncovered non-optional transitive peerDependencies");
 
         // Negative 7: Bundler-manifest path with package.json dependency version mismatching package-lock.json
         JsonCase("package.json range mismatching package-lock.json root dependency spec", "package.json",
