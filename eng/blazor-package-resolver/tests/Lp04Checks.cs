@@ -1215,6 +1215,8 @@ internal static class Lp04Checks
             ("uncovered holder matching MIT template body word Software", "/*! Copyright (c) 2024 Software */\nexport const v = 1;\n"),
             ("uncovered holder starting with License", "/*! Copyright (c) 2026 LicenseTools Ltd. */\nexport const v = 1;\n"),
             ("uncovered holder starting with Owner", "/*! Copyright (c) 2026 OwnerSoft Inc. */\nexport const v = 1;\n"),
+            ("uncovered holder starting with Notice", "/*! Copyright (c) 2026 Notice Labs LLC */\nexport const v = 1;\n"),
+            ("uncovered holder starting with Holder", "/*! Copyright (c) 2026 Holder Corp. */\nexport const v = 1;\n"),
             ("uncovered untitled canonical ISC license body in comment",
                 "/*\n * Permission to use, copy, modify, and/or distribute this software for any\n * purpose with or without fee is hereby granted, provided that the above\n * copyright notice and this permission notice appear in all copies.\n *\n * THE SOFTWARE IS PROVIDED \"AS IS\" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH\n * REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY\n * AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,\n * INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM\n * LOSS OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR\n * OTHER TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR\n * PERFORMANCE OF THIS SOFTWARE.\n */\nexport const v = 1;\n"),
             ("unrecognized @license banner", "/*! @license Custom-Proprietary-1.0 */\nexport const v = 1;\n"),

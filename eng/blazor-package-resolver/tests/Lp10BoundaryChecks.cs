@@ -1066,7 +1066,7 @@ internal static class Lp10BoundaryChecks
                 ("backslash-escaped second job header attempting to merge steps across jobs",
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n  \"pack\\u005fjob\":\n    runs-on: ubuntu-latest\n    steps:\n      - run: dotnet pack\n"),
                 ("job-level flow-style defaults: { run: { shell: 'echo {0}' } }",
-                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults: { run: { working-directory: ./src, shell: 'echo {0}' } }\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    defaults: { run: { shell: 'echo {0}' } }\n    steps:\n      - run: npm ci\n        working-directory: ./src\n      - run: npm run build\n        working-directory: ./src\n      - run: dotnet pack\n"),
                 ("indentless steps sequence followed by job-level if: false at same indent",
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n    - run: npm ci\n    - run: npm run build\n    - run: dotnet pack\n    if: false\n")
             })
@@ -1161,6 +1161,13 @@ internal static class Lp10BoundaryChecks
                 ("shadowed defineConfig callback parameter ({ entries })",
                     viteConfigText.Replace("export default defineConfig({",
                         "export default defineConfig(({ entries }) => { return {")
+                        .Replace("});\n", "}; });\n", StringComparison.Ordinal)),
+                ("comma-separated const declarator shadowing entries in preamble",
+                    viteConfigText.Replace("const outDir = 'wwwroot';",
+                        "const outDir = 'wwwroot', entries = { app: 'assets/lib.ts' };", StringComparison.Ordinal)),
+                ("early return {} followed by unreachable decoy config in defineConfig callback",
+                    viteConfigText.Replace("export default defineConfig({",
+                        "export default defineConfig(() => { return {}; {")
                         .Replace("});\n", "}; });\n", StringComparison.Ordinal)),
                 ("entryFileNames callback parameter shadowing fixedNames",
                     viteConfigText.Replace("entryFileNames: (chunk) => fixedNames[chunk.name] ?? '[name].[hash].bundle.js'",

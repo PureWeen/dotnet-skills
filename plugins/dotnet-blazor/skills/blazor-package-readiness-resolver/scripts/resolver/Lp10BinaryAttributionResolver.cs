@@ -1461,17 +1461,26 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         if (stripped[(closeParenIdx + 1)..].Trim() is not ("" or ";"))
             return false;
         var trimmedMask = configBodyMask.Trim();
-        Match? callbackFormMatch = null;
+        Match? callbackHeaderMatch = null;
         if (!(trimmedMask.StartsWith('{') && trimmedMask.EndsWith('}')))
         {
-            callbackFormMatch = Regex.Match(trimmedMask,
-                @"\A\(\s*(?:\{\s*(?<props>[A-Za-z_$][A-Za-z0-9_$]*(?:\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\s*\}|(?<param>[A-Za-z_$][A-Za-z0-9_$]*))?\s*\)\s*=>\s*\{[\s\S]*\breturn\s*\{[\s\S]*\}\z",
+            callbackHeaderMatch = Regex.Match(configBodyMask,
+                @"\A\s*\(\s*(?:\{\s*(?<props>[A-Za-z_$][A-Za-z0-9_$]*(?:\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*)*)\s*\}|(?<param>[A-Za-z_$][A-Za-z0-9_$]*))?\s*\)\s*=>\s*\{\s*(?:const\s+(?<cbConst>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*[A-Za-z_$][A-Za-z0-9_$]*\s*===\s*['""]\s+['""]\s*;\s*)*return\s*\{",
                 RegexOptions.CultureInvariant);
-            if (!callbackFormMatch.Success)
+            if (!callbackHeaderMatch.Success)
                 return false;
+            var returnBraceIdx = callbackHeaderMatch.Index + callbackHeaderMatch.Length - 1;
+            if (!TryExtractBalancedSlice(configBody, configBodyMask, returnBraceIdx, '{', '}',
+                    out var returnedObj, out var returnedObjMask, out var returnCloseIdx))
+                return false;
+            if (!Regex.IsMatch(configBodyMask[(returnCloseIdx + 1)..], @"\A\s*;?\s*\}\s*\z", RegexOptions.CultureInvariant))
+                return false;
+            configBody = "{" + returnedObj + "}";
+            configBodyMask = "{" + returnedObjMask + "}";
         }
 
-        if (Regex.IsMatch(masked, @"\b(?:const|let|var)\s*[\{\[]", RegexOptions.CultureInvariant))
+        if (Regex.IsMatch(masked, @"\b(?:const|let|var)\s*[\{\[]", RegexOptions.CultureInvariant) ||
+            Regex.IsMatch(configBodyMask, @"\b(?:const|let|var|function|return)\b", RegexOptions.CultureInvariant))
             return false;
 
         var preambleMask = masked[..exportMatch.Index];
@@ -1496,22 +1505,33 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
 
         var declCounts = new Dictionary<string, int>(StringComparer.Ordinal);
         foreach (Match declMatch in Regex.Matches(masked,
-            @"\b(?:const|let|var|function)\s+(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\b",
+            @"(?:\b(?:const|let|var|function)\s+(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\b|,\s*(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\b(?=\s*(?::[^=;,\(\)\{\}\[\]]+)?=))",
             RegexOptions.CultureInvariant))
         {
             var id = declMatch.Groups["id"].Value;
             declCounts[id] = declCounts.GetValueOrDefault(id) + 1;
         }
-        if (callbackFormMatch is { Success: true })
+        foreach (Match fnParamMatch in Regex.Matches(masked,
+            @"\bfunction\s*[A-Za-z0-9_$]*\s*\((?<params>[^)]*)\)",
+            RegexOptions.CultureInvariant))
         {
-            if (callbackFormMatch.Groups["param"].Success)
+            var rawParams = Regex.Replace(fnParamMatch.Groups["params"].Value, @":[^,)=]+", "", RegexOptions.CultureInvariant);
+            foreach (Match idMatch in Regex.Matches(rawParams, @"\b(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\b", RegexOptions.CultureInvariant))
             {
-                var p = callbackFormMatch.Groups["param"].Value;
+                var id = idMatch.Groups["id"].Value;
+                declCounts[id] = declCounts.GetValueOrDefault(id) + 1;
+            }
+        }
+        if (callbackHeaderMatch is { Success: true })
+        {
+            if (callbackHeaderMatch.Groups["param"].Success)
+            {
+                var p = callbackHeaderMatch.Groups["param"].Value;
                 declCounts[p] = declCounts.GetValueOrDefault(p) + 1;
             }
-            else if (callbackFormMatch.Groups["props"].Success)
+            else if (callbackHeaderMatch.Groups["props"].Success)
             {
-                foreach (var rawProp in callbackFormMatch.Groups["props"].Value.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                foreach (var rawProp in callbackHeaderMatch.Groups["props"].Value.Split(',', StringSplitOptions.RemoveEmptyEntries))
                 {
                     var p = rawProp.Trim();
                     declCounts[p] = declCounts.GetValueOrDefault(p) + 1;

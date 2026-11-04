@@ -891,8 +891,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             if (holder.Length >= 3 &&
                 !InvalidHolderStopWords.Contains(holder) &&
                 !holder.Contains("[name of copyright owner]", StringComparison.OrdinalIgnoreCase) &&
-                !Regex.IsMatch(holder, @"\A(?:notice|holders?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
-                (hasSymbolOrYear || !Regex.IsMatch(holder, @"\A(?:licenses?|owners?|statements?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)))
+                (hasSymbolOrYear || !Regex.IsMatch(holder, @"\A(?:notice|holders?|licenses?|owners?|statements?)\b", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)))
                 holders.Add(holder);
         }
         foreach (Match match in Regex.Matches(text,
