@@ -790,10 +790,11 @@ internal static class Lp04Checks
             ("same-component conflicting", "\"GPL-3.0-only\"", false)
         })
         {
-            var text = "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\"" +
+            const string rootLockEntry = "\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}},";
+            var text = "{\"packages\":{" + rootLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\"" +
                 (license is null ? "" : ",\"license\":" + license) + "}}}";
             if (label.StartsWith("same-component ", StringComparison.Ordinal))
-                text = "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"MIT\"," +
+                text = "{\"packages\":{" + rootLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"MIT\"," +
                     "\"dependencies\":{\"lit-html\":\"3.3.3\"}},\"node_modules/lit-html/node_modules/lit-html\":" +
                     "{\"version\":\"3.3.3\",\"license\":" + license + "}}}";
             var source = BuildZip(sourceEntries.Select(entry => (entry.Name,
@@ -851,7 +852,8 @@ internal static class Lp04Checks
             "{" + dependencyJson + ",\"description\":1,\"\\u0064escription\":2}");
         JsonCase("duplicate package nested array key", "package.json",
             "{" + dependencyJson + ",\"ignored\":[{\"same\":1,\"same\":2}]}");
-        const string bsdEntry = "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}";
+        const string rootDepsLockEntry = "\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}},";
+        const string bsdEntry = rootDepsLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}";
         JsonCase("duplicate lock ignored key", "package-lock.json",
             "{\"packages\":{" + bsdEntry + "},\"ignored\":1,\"ignored\":2}");
         JsonCase("duplicate lock nested array key", "package-lock.json",
@@ -859,9 +861,9 @@ internal static class Lp04Checks
         JsonCase("duplicate lock unvisited key", "package-lock.json",
             "{\"packages\":{" + bsdEntry + ",\"node_modules/dev-only\":{\"version\":\"1\",\"version\":\"2\"}}}");
         JsonCase("duplicate lock version", "package-lock.json",
-            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}}}");
+            "{\"packages\":{" + rootDepsLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}}}");
         JsonCase("duplicate lock identical license", "package-lock.json",
-            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"license\":\"BSD-3-Clause\"}}}");
+            "{\"packages\":{" + rootDepsLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"license\":\"BSD-3-Clause\"}}}");
         JsonCase("ordinal package distinct keys", "package.json",
             "{" + dependencyJson + ",\"ignored\":{\"same\":1,\"Same\":2}}", positive: true);
         JsonCase("package independent object keys", "package.json",
@@ -871,9 +873,9 @@ internal static class Lp04Checks
         JsonCase("package surrogate dependency name", "package.json", "{\"dependencies\":{\"\\uD800\":\"1.0.0\"}}");
         JsonCase("package surrogate dependency value", "package.json", "{\"dependencies\":{\"lit-html\":\"\\uD800\"}}");
         JsonCase("lock surrogate version", "package-lock.json",
-            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"\\uD800\",\"license\":\"BSD-3-Clause\"}}}");
+            "{\"packages\":{" + rootDepsLockEntry + "\"node_modules/lit-html\":{\"version\":\"\\uD800\",\"license\":\"BSD-3-Clause\"}}}");
         JsonCase("lock surrogate dependency name", "package-lock.json",
-            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"dependencies\":{\"\\uD800\":\"1.0.0\"}}}}");
+            "{\"packages\":{" + rootDepsLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"dependencies\":{\"\\uD800\":\"1.0.0\"}}}}");
         foreach (var field in new[] { "bundleDependencies", "bundledDependencies", "optionalDependencies" })
         {
             foreach (var value in new[] { "true", "null", "0", "\"\"", "{}", "[]", "false" })
@@ -889,16 +891,16 @@ internal static class Lp04Checks
         {
             foreach (var value in new[] { "true", "false", "null", "0", "\"\"", "[]", "{}" })
                 JsonCase("lock " + field + "=" + value, "package-lock.json",
-                    "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"" + field + "\":" + value + "}}}",
+                    "{\"packages\":{" + rootDepsLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"" + field + "\":" + value + "}}}",
                     positive: value == "{}");
             JsonCase("lock root malformed " + field, "package-lock.json",
                 "{\"packages\":{\"\":{\"" + field + "\":false},\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}}}");
             JsonCase("lock unvisited malformed " + field, "package-lock.json",
-                "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"},\"node_modules/dev-only\":{\"version\":\"1.0.0\",\"" +
+                "{\"packages\":{" + rootDepsLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"},\"node_modules/dev-only\":{\"version\":\"1.0.0\",\"" +
                 field + "\":[]}}}");
         }
         JsonCase("lock surrogate dependency value", "package-lock.json",
-            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"dependencies\":{\"other\":\"\\uD800\"}}}}");
+            "{\"packages\":{" + rootDepsLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\",\"dependencies\":{\"other\":\"\\uD800\"}}}}");
         foreach (var (escaped, valid) in new[]
         {
             ("\\uD800", false), ("\\uDC00", false), ("\\uD800x", false),
@@ -913,7 +915,7 @@ internal static class Lp04Checks
                 "{" + dependencyJson + ",\"ignored\":[null,false,42,{\"value\":\"" + escaped + "\"}]}", valid);
             JsonCase("package nested array name " + escaped, "package.json",
                 "{" + dependencyJson + ",\"ignored\":[{\"" + escaped + "\":null}]}", valid);
-            const string runtimePackage = "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}";
+            const string runtimePackage = rootDepsLockEntry + "\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}";
             JsonCase("lock unvisited version " + escaped, "package-lock.json",
                 "{\"packages\":{" + runtimePackage + ",\"node_modules/dev-only\":{\"version\":\"" + escaped + "\"}}}", valid);
             JsonCase("lock ignored string " + escaped, "package-lock.json",
@@ -1203,5 +1205,35 @@ internal static class Lp04Checks
         var (committedBnd, committedAtt) = MakeProvenance(largeVitePkg, largeVitePkg, committedLargeNoticeSrc);
         check(Dispatch5(largeVitePkg, largeVitePkg, committedBnd, committedAtt, committedLargeNoticeSrc).BranchId ==
             "provenance-notices-unverified", "LP-04 rejects >512 KiB static notice file matching normalized text under a different filename");
+
+        // Negative 6: Mode A inline prose @license / Released under / yearless (c) holder not covered by license or notices
+        foreach (var (inlineLabel, inlineBanner) in new[]
+        {
+            ("uncovered @license GPL-3.0-only", "/*! @license GPL-3.0-only */\nexport const v = 1;\n"),
+            ("uncovered Released under MPL-2.0", "/*! Released under the MPL-2.0 License */\nexport const v = 1;\n"),
+            ("uncovered yearless (c) holder", "/*! (c) Uncovered Third Party Corp. */\nexport const v = 1;\n"),
+            ("unrecognized @license banner", "/*! @license Custom-Proprietary-1.0 */\nexport const v = 1;\n")
+        })
+        {
+            var badInlineBytes = Encoding.UTF8.GetBytes(inlineBanner);
+            var badInlinePkg = BuildZip(
+                ("Example.Controls.nuspec", nuspec),
+                ("LICENSE", licenseBytes),
+                ("THIRD-PARTY-LICENSES.md", viteTplBytes),
+                ("staticwebassets/index.a1b2c3d4.bundle.js", badInlineBytes),
+                ("staticwebassets/themes/light/bootstrap.css", viteCss));
+            var (badInlineBnd, badInlineAtt) = MakeProvenance(badInlinePkg, badInlinePkg, viteSrcPos);
+            var badInlineRes = Dispatch5(badInlinePkg, badInlinePkg, badInlineBnd, badInlineAtt, viteSrcPos);
+            check(badInlineRes.BranchId == "provenance-notices-unverified",
+                $"LP-04 Mode A rejects {inlineLabel} (got {badInlineRes.BranchId})");
+        }
+
+        // Negative 7: Bundler-manifest path with package.json dependency version mismatching package-lock.json
+        JsonCase("package.json range mismatching package-lock.json root dependency spec", "package.json",
+            "{\"dependencies\":{\"lit-html\":\"^4.0.0\"}}");
+        JsonCase("package-lock.json missing root packages[''] entry", "package-lock.json",
+            "{\"packages\":{\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}}}");
+        JsonCase("package-lock.json resolved version outside declared semver range", "package-lock.json",
+            "{\"packages\":{\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}},\"node_modules/lit-html\":{\"version\":\"2.0.0\",\"license\":\"BSD-3-Clause\"}}}");
     }
 }

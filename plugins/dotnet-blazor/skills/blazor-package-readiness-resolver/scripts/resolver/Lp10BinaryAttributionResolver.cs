@@ -827,6 +827,15 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             if (rootLockDeps.Count != directDeps.Count ||
                 directDeps.Any(kv => !rootLockDeps.TryGetValue(kv.Key, out var lockVer) || lockVer != kv.Value))
                 return false;
+            foreach (var (depName, depSpec) in directDeps)
+            {
+                if (!packages.TryGetProperty("node_modules/" + depName, out var depEntry) ||
+                    depEntry.ValueKind != JsonValueKind.Object ||
+                    !depEntry.TryGetProperty("version", out var depVerProp) ||
+                    depVerProp.ValueKind != JsonValueKind.String ||
+                    !Lp04NoticeCoverageResolver.DoesVersionSatisfyNpmRange(depVerProp.GetString() ?? "", depSpec))
+                    return false;
+            }
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
@@ -900,10 +909,28 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
 
     private sealed class WorkflowStepRecord
     {
+        public int PropIndent { get; set; } = -1;
         public string WorkingDir { get; set; } = "";
         public bool HasIf { get; set; }
         public bool HasContinueOnError { get; set; }
+        public bool HasUses { get; set; }
         public List<string> RunLines { get; } = [];
+    }
+
+    private static bool TryParseYamlKeyValue(string text, out string key, out string val)
+    {
+        key = "";
+        val = "";
+        var m = Regex.Match(text,
+            @"\A(?:'(?<sq>[^'\r\n]+)'|""(?<dq>[^""\r\n]+)""|(?<uq>[A-Za-z0-9_-]+))\s*:(?:\s*(?<val>.*)|\z)",
+            RegexOptions.CultureInvariant);
+        if (!m.Success)
+            return false;
+        key = m.Groups["sq"].Success ? m.Groups["sq"].Value
+            : m.Groups["dq"].Success ? m.Groups["dq"].Value
+            : m.Groups["uq"].Value;
+        val = m.Groups["val"].Success ? m.Groups["val"].Value.Trim() : "";
+        return true;
     }
 
     private static bool TryNormalizeWorkflowDir(string rawDir, out string normalized)
@@ -932,10 +959,17 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         var inJobs = false;
         var jobsIndent = -1;
         var currentJobIndent = -1;
+        var jobPropIndent = -1;
+        var inJobDefaults = false;
+        var jobDefaultsIndent = -1;
+        var inJobDefaultsRun = false;
+        var jobDefaultsRunIndent = -1;
         var jobWorkDir = "";
         var jobHasIf = false;
         var jobHasContinueOnError = false;
         var inSteps = false;
+        var stepsPropIndent = -1;
+        var stepItemIndent = -1;
         var inRunBlock = false;
         var inFoldedRunBlock = false;
         var runBlockIndent = -1;
@@ -963,7 +997,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             var hasDotnetBuildOrPack = false;
             foreach (var step in jobSteps)
             {
-                if (step.HasIf || step.HasContinueOnError || step.RunLines.Count == 0)
+                if (step.HasUses || step.HasIf || step.HasContinueOnError || step.RunLines.Count == 0)
                     continue;
                 var rawDir = !string.IsNullOrEmpty(step.WorkingDir) ? step.WorkingDir : jobWorkDir;
                 var isExpectedNpmDir = TryNormalizeWorkflowDir(rawDir, out var effectiveDir) &&
@@ -1003,10 +1037,17 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         {
             FlushStep();
             jobSteps.Clear();
+            jobPropIndent = -1;
+            inJobDefaults = false;
+            jobDefaultsIndent = -1;
+            inJobDefaultsRun = false;
+            jobDefaultsRunIndent = -1;
             jobWorkDir = "";
             jobHasIf = false;
             jobHasContinueOnError = false;
             inSteps = false;
+            stepsPropIndent = -1;
+            stepItemIndent = -1;
             inRunBlock = false;
         }
 
@@ -1037,9 +1078,16 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 if (EvaluateJob())
                     hasQualifyingJob = true;
                 ResetJob();
-                if (Regex.IsMatch(trimmed, @"\A['""]?defaults['""]?\s*(?::|\z)", RegexOptions.CultureInvariant))
-                    return false;
-                inJobs = trimmed == "jobs:";
+                if (TryParseYamlKeyValue(trimmed, out var topKey, out var topVal))
+                {
+                    if (topKey == "defaults")
+                        return false;
+                    inJobs = topKey == "jobs" && topVal.Length == 0;
+                }
+                else
+                {
+                    inJobs = false;
+                }
                 jobsIndent = inJobs ? 0 : -1;
                 currentJobIndent = -1;
                 continue;
@@ -1052,7 +1100,9 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             {
                 if (EvaluateJob())
                     hasQualifyingJob = true;
-                if (indent > jobsIndent && trimmed.EndsWith(':'))
+                if (indent > jobsIndent &&
+                    TryParseYamlKeyValue(trimmed, out _, out var jobHeaderVal) &&
+                    jobHeaderVal.Length == 0)
                 {
                     ResetJob();
                     currentJobIndent = indent;
@@ -1060,75 +1110,150 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 continue;
             }
 
-            if (trimmed == "steps:" && indent == currentJobIndent + 2)
+            if (inSteps)
             {
-                inSteps = true;
+                var isDashLine = trimmed == "-" || trimmed.StartsWith("- ", StringComparison.Ordinal);
+                if ((stepItemIndent >= 0 && indent < stepItemIndent) ||
+                    (stepItemIndent < 0 && indent <= stepsPropIndent && !isDashLine))
+                {
+                    FlushStep();
+                    inSteps = false;
+                    stepsPropIndent = -1;
+                    stepItemIndent = -1;
+                }
+            }
+
+            if (!inSteps)
+            {
+                if (jobPropIndent < 0)
+                    jobPropIndent = indent;
+
+                if (indent == jobPropIndent)
+                {
+                    inJobDefaults = false;
+                    inJobDefaultsRun = false;
+                    if (!TryParseYamlKeyValue(trimmed, out var jKey, out var jVal))
+                        continue;
+                    if (jKey == "steps" && jVal.Length == 0)
+                    {
+                        inSteps = true;
+                        stepsPropIndent = indent;
+                        stepItemIndent = -1;
+                    }
+                    else if (jKey == "defaults" && jVal.Length == 0)
+                    {
+                        inJobDefaults = true;
+                        jobDefaultsIndent = indent;
+                    }
+                    else if (jKey == "if")
+                    {
+                        jobHasIf = true;
+                    }
+                    else if (jKey == "continue-on-error")
+                    {
+                        var val = jVal.Trim('\'', '"');
+                        if (!val.Equals("false", StringComparison.OrdinalIgnoreCase))
+                            jobHasContinueOnError = true;
+                    }
+                }
+                else if (inJobDefaults && indent > jobDefaultsIndent &&
+                         TryParseYamlKeyValue(trimmed, out var dKey, out var dVal))
+                {
+                    if (!inJobDefaultsRun || indent <= jobDefaultsRunIndent)
+                    {
+                        inJobDefaultsRun = dKey == "run" && dVal.Length == 0;
+                        jobDefaultsRunIndent = inJobDefaultsRun ? indent : -1;
+                    }
+                    else if (inJobDefaultsRun && indent > jobDefaultsRunIndent)
+                    {
+                        if (dKey == "working-directory")
+                            jobWorkDir = dVal.Trim('\'', '"');
+                        else if (dKey == "shell")
+                        {
+                            var sh = dVal.Trim('\'', '"');
+                            if (sh is not ("bash" or "sh" or "pwsh" or "powershell" or "cmd"))
+                                jobHasIf = true;
+                        }
+                    }
+                }
                 continue;
             }
 
-            if (inSteps && indent <= currentJobIndent + 2 && !trimmed.StartsWith("- ", StringComparison.Ordinal))
+            var isStepStart = (stepItemIndent < 0 && indent >= stepsPropIndent || indent == stepItemIndent) &&
+                              (trimmed == "-" || trimmed.StartsWith("- ", StringComparison.Ordinal));
+            string stepPropText;
+            if (isStepStart)
             {
+                if (stepItemIndent < 0)
+                    stepItemIndent = indent;
                 FlushStep();
-                inSteps = false;
-            }
-
-            if (inSteps && trimmed.StartsWith("- ", StringComparison.Ordinal))
-            {
-                FlushStep();
-                currentStep = new WorkflowStepRecord();
-            }
-
-            var normalized = trimmed.StartsWith("- ", StringComparison.Ordinal) ? trimmed[2..].TrimStart() : trimmed;
-            if (Regex.IsMatch(normalized, @"\A['""]?shell['""]?\s*:", RegexOptions.CultureInvariant))
-            {
-                var colonIdx = normalized.IndexOf(':');
-                var sh = normalized[(colonIdx + 1)..].Trim().Trim('\'', '"');
-                if (sh is not ("bash" or "sh" or "pwsh" or "powershell" or "cmd"))
+                if (trimmed == "-")
                 {
-                    if (!inSteps) jobHasIf = true;
-                    else if (currentStep is not null) currentStep.HasIf = true;
+                    currentStep = new WorkflowStepRecord { PropIndent = -1 };
+                    continue;
                 }
+                var afterDash = trimmed[2..].TrimStart();
+                currentStep = new WorkflowStepRecord
+                {
+                    PropIndent = indent + (trimmed.Length - afterDash.Length)
+                };
+                stepPropText = afterDash;
             }
-            if (normalized.StartsWith("if:", StringComparison.Ordinal))
+            else
             {
-                if (!inSteps) jobHasIf = true;
-                else if (currentStep is not null) currentStep.HasIf = true;
+                if (currentStep is null)
+                    continue;
+                if (currentStep.PropIndent < 0 && indent > stepItemIndent)
+                    currentStep.PropIndent = indent;
+                if (indent != currentStep.PropIndent)
+                    continue;
+                stepPropText = trimmed;
             }
-            else if (normalized.StartsWith("continue-on-error:", StringComparison.Ordinal))
+
+            if (!TryParseYamlKeyValue(stepPropText, out var sKey, out var sVal))
+                continue;
+
+            if (sKey == "uses")
             {
-                var val = normalized["continue-on-error:".Length..].Trim();
+                currentStep.HasUses = true;
+            }
+            else if (sKey == "if")
+            {
+                currentStep.HasIf = true;
+            }
+            else if (sKey == "continue-on-error")
+            {
+                var val = sVal.Trim('\'', '"');
                 if (!val.Equals("false", StringComparison.OrdinalIgnoreCase))
-                {
-                    if (!inSteps) jobHasContinueOnError = true;
-                    else if (currentStep is not null) currentStep.HasContinueOnError = true;
-                }
+                    currentStep.HasContinueOnError = true;
             }
-            else if (normalized.StartsWith("working-directory:", StringComparison.Ordinal))
+            else if (sKey == "working-directory")
             {
-                var wd = normalized["working-directory:".Length..].Trim().Trim('\'', '"');
-                if (!inSteps)
-                    jobWorkDir = wd;
-                else if (currentStep is not null)
-                    currentStep.WorkingDir = wd;
+                currentStep.WorkingDir = sVal.Trim('\'', '"');
             }
-            else if (inSteps && currentStep is not null && normalized.StartsWith("run:", StringComparison.Ordinal))
+            else if (sKey == "shell")
             {
-                var afterRun = normalized["run:".Length..].Trim();
-                if (afterRun is "|" or "|-" or "|+")
+                var sh = sVal.Trim('\'', '"');
+                if (sh is not ("bash" or "sh" or "pwsh" or "powershell" or "cmd"))
+                    currentStep.HasIf = true;
+            }
+            else if (sKey == "run")
+            {
+                if (sVal is "|" or "|-" or "|+")
                 {
                     inRunBlock = true;
                     inFoldedRunBlock = false;
-                    runBlockIndent = indent + (trimmed.Length - normalized.Length);
+                    runBlockIndent = currentStep.PropIndent;
                 }
-                else if (afterRun.StartsWith('>'))
+                else if (sVal.StartsWith('>'))
                 {
                     inRunBlock = true;
                     inFoldedRunBlock = true;
-                    runBlockIndent = indent + (trimmed.Length - normalized.Length);
+                    runBlockIndent = currentStep.PropIndent;
                 }
-                else if (afterRun.Length > 0)
+                else if (sVal.Length > 0)
                 {
-                    currentStep.RunLines.Add(afterRun.Trim('\'', '"'));
+                    currentStep.RunLines.Add(sVal.Trim('\'', '"'));
                 }
             }
         }

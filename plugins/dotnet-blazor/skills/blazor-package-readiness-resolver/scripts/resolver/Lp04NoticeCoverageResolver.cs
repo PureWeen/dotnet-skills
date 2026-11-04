@@ -116,6 +116,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             return Unverified("package lacks a root LICENSE file with copyright attribution");
 
         var runtimeDeps = new Dictionary<string, string>(StringComparer.Ordinal);
+        string? runtimePkgDir = null;
         foreach (var (fullPath, bytes) in prov.SourceFiles)
         {
             var rel = fullPath[prov.RootPrefix.Length..];
@@ -127,13 +128,21 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 continue;
             if (!TryParsePackageJsonDependencies(bytes, out var deps, out var hasUnsupportedDeps) || hasUnsupportedDeps)
                 return Unverified($"malformed or unsupported dependency section in {rel}");
-            foreach (var (depName, depVer) in deps)
-                runtimeDeps[depName] = depVer;
+            if (deps.Count > 0)
+            {
+                var slash = rel.LastIndexOf('/');
+                var pkgDir = slash >= 0 ? rel[..(slash + 1)] : "";
+                if (runtimePkgDir is not null && !string.Equals(runtimePkgDir, pkgDir, StringComparison.OrdinalIgnoreCase))
+                    return Unverified("multiple shipping package.json files declare runtime dependencies");
+                runtimePkgDir = pkgDir;
+                foreach (var (depName, depVer) in deps)
+                    runtimeDeps[depName] = depVer;
+            }
         }
 
         if (runtimeDeps.Count > 0)
             return VerifyBundledNpmNoticeCoverage(input, package, inventory, summary, prov,
-                licenseFile, licenseText, runtimeDeps, Unverified);
+                licenseFile, licenseText, runtimePkgDir ?? "", runtimeDeps, Unverified);
 
         return VerifyFirstPartyWebAssetNoticeCoverage(input, package, inventory, summary, prov,
             licenseFile, licenseText, Unverified);
@@ -250,7 +259,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             }
 
             if (!TryVerifyInlineAssetAttributions(text, licenseText, noticeText: null,
-                    requiredFirstPartySpdx: rootCanonicalSpdx, out var inlineError))
+                    admittedNoticeSections: null, requiredFirstPartySpdx: rootCanonicalSpdx, out var inlineError))
                 return unverified($"{inlineError} in {asset.Path}");
         }
 
@@ -274,17 +283,20 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
     private CaseResult VerifyBundledNpmNoticeCoverage(ResolverCase input, CheckedInput package,
         BundledWebAssetsEvidence inventory, string summary,
         Lp10BinaryAttributionResolver.VerifiedProvenanceContext prov,
-        string licenseFile, string licenseText, Dictionary<string, string> runtimeDeps,
+        string licenseFile, string licenseText, string runtimePkgDir, Dictionary<string, string> runtimeDeps,
         Func<string, CaseResult> unverified)
     {
         if (!TryFindRootTextEntry(prov.PackageEntries, RootNoticeCandidates, out var noticeFile, out var noticeText))
             return unverified("package with runtime npm dependencies lacks a root third-party notice file");
 
+        if (runtimePkgDir is not ("" or "src/"))
+            return unverified($"shipping package.json in unsupported directory '{runtimePkgDir}'");
+
+        var expectedLockPath = prov.RootPrefix + runtimePkgDir + "package-lock.json";
         var lockEntry = prov.SourceFiles.FirstOrDefault(kv =>
-            kv.Key.Equals(prov.RootPrefix + "package-lock.json", StringComparison.OrdinalIgnoreCase) ||
-            kv.Key.Equals(prov.RootPrefix + "src/package-lock.json", StringComparison.OrdinalIgnoreCase));
+            kv.Key.Equals(expectedLockPath, StringComparison.OrdinalIgnoreCase));
         if (lockEntry.Key is null ||
-            !TryResolveLockClosure(lockEntry.Value, runtimeDeps.Keys, out var closure) ||
+            !TryResolveLockClosure(lockEntry.Value, runtimeDeps, out var closure) ||
             closure.Count == 0)
             return unverified("source archive lacks a valid package-lock.json covering declared runtime npm dependencies with single SPDX license IDs");
 
@@ -374,7 +386,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 !TryStrictUtf8(rawBytes, out var text))
                 return unverified($"bundled web asset {asset.Path} could not be decoded as a staticwebassets UTF-8 text asset");
             if (!TryVerifyInlineAssetAttributions(text, licenseText, noticeText,
-                    requiredFirstPartySpdx: null, out var inlineError))
+                    admittedNoticeSections: noticeSections.Values, requiredFirstPartySpdx: null, out var inlineError))
                 return unverified($"{inlineError} in {asset.Path}");
         }
 
@@ -486,7 +498,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         }
     }
 
-    private static bool TryResolveLockClosure(byte[] lockBytes, IEnumerable<string> roots,
+    private static bool TryResolveLockClosure(byte[] lockBytes, IReadOnlyDictionary<string, string> declaredDeps,
         out List<(string Name, string Version, string License)> closure)
     {
         closure = [];
@@ -498,7 +510,9 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             if (!JsonStringValidation.IsWellFormed(doc.RootElement) ||
                 doc.RootElement.ValueKind != JsonValueKind.Object ||
                 !doc.RootElement.TryGetProperty("packages", out var packages) ||
-                packages.ValueKind != JsonValueKind.Object)
+                packages.ValueKind != JsonValueKind.Object ||
+                !packages.TryGetProperty("", out var rootPkgEntry) ||
+                rootPkgEntry.ValueKind != JsonValueKind.Object)
                 return false;
             foreach (var package in packages.EnumerateObject())
             {
@@ -514,12 +528,27 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                             string.IsNullOrWhiteSpace(dependency.Value.GetString())) return false;
                 }
             }
+            if (rootPkgEntry.TryGetProperty("optionalDependencies", out var rootOptDeps) &&
+                rootOptDeps.ValueKind == JsonValueKind.Object && rootOptDeps.EnumerateObject().Any())
+                return false;
+            if (!rootPkgEntry.TryGetProperty("dependencies", out var rootLockDepsProp) ||
+                rootLockDepsProp.ValueKind != JsonValueKind.Object)
+                return false;
+            var rootLockDeps = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var prop in rootLockDepsProp.EnumerateObject())
+                rootLockDeps[prop.Name] = prop.Value.GetString()!;
+            if (rootLockDeps.Count != declaredDeps.Count ||
+                declaredDeps.Any(kv => !rootLockDeps.TryGetValue(kv.Key, out var lockSpec) ||
+                                       !string.Equals(lockSpec, kv.Value, StringComparison.Ordinal)))
+                return false;
+
             var visitedPaths = new HashSet<string>(StringComparer.Ordinal);
             var seenPairs = new Dictionary<(string Name, string Version), string>();
-            var queue = new Queue<(string ParentPath, string Name)>(roots.Select(r => ("", r)));
+            var queue = new Queue<(string ParentPath, string Name, string Spec)>(
+                declaredDeps.Select(kv => ("", kv.Key, kv.Value)));
             while (queue.Count > 0)
             {
-                var (parentPath, name) = queue.Dequeue();
+                var (parentPath, name, spec) = queue.Dequeue();
                 if (!TryResolveLockPackageEntry(packages, parentPath, name, out var resolvedPath, out var entry) ||
                     entry.ValueKind != JsonValueKind.Object ||
                     !entry.TryGetProperty("version", out var verProp) ||
@@ -530,9 +559,11 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     licenseProp.ValueKind != JsonValueKind.String ||
                     !IsSimpleSpdxId(licenseProp.GetString()))
                     return false;
+                var version = verProp.GetString()!;
+                if (!DoesVersionSatisfyNpmRange(version, spec))
+                    return false;
                 if (!visitedPaths.Add(resolvedPath))
                     continue;
-                var version = verProp.GetString()!;
                 var license = licenseProp.GetString()!;
                 if (seenPairs.TryGetValue((name, version), out var previousLicense))
                 {
@@ -550,7 +581,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     deps.ValueKind == JsonValueKind.Object)
                 {
                     foreach (var child in deps.EnumerateObject())
-                        queue.Enqueue((resolvedPath, child.Name));
+                        queue.Enqueue((resolvedPath, child.Name, child.Value.GetString()!));
                 }
             }
             return true;
@@ -559,6 +590,168 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         {
             return false;
         }
+    }
+
+    internal static bool DoesVersionSatisfyNpmRange(string version, string rangeSpec)
+    {
+        if (!TryParseSemVer(version, out var ver) || string.IsNullOrWhiteSpace(rangeSpec))
+            return false;
+        if (rangeSpec.Contains(':') || rangeSpec.Contains('/') || rangeSpec.Contains('\\'))
+            return false;
+        var disjuncts = rangeSpec.Split("||", StringSplitOptions.None);
+        if (disjuncts.Any(string.IsNullOrWhiteSpace))
+            return false;
+        return disjuncts.Any(d => DoesSatisfyNpmDisjunct(ver, d.Trim()));
+    }
+
+    private readonly record struct SemVer(int Major, int Minor, int Patch, string? Prerelease);
+
+    private static bool TryParseSemVer(string raw, out SemVer ver)
+    {
+        ver = default;
+        var m = Regex.Match(raw.Trim(),
+            @"\A(?<maj>0|[1-9][0-9]*)\.(?<min>0|[1-9][0-9]*)\.(?<pat>0|[1-9][0-9]*)(?:-(?<pre>[0-9A-Za-z.\-]+))?(?:\+[0-9A-Za-z.\-]+)?\z",
+            RegexOptions.CultureInvariant);
+        if (!m.Success ||
+            !int.TryParse(m.Groups["maj"].Value, out var maj) ||
+            !int.TryParse(m.Groups["min"].Value, out var min) ||
+            !int.TryParse(m.Groups["pat"].Value, out var pat))
+            return false;
+        var pre = m.Groups["pre"].Success ? m.Groups["pre"].Value : null;
+        ver = new SemVer(maj, min, pat, pre);
+        return true;
+    }
+
+    private static int CompareSemVer(SemVer a, SemVer b)
+    {
+        var c = a.Major.CompareTo(b.Major);
+        if (c != 0) return c;
+        c = a.Minor.CompareTo(b.Minor);
+        if (c != 0) return c;
+        c = a.Patch.CompareTo(b.Patch);
+        if (c != 0) return c;
+        if (a.Prerelease is null && b.Prerelease is null) return 0;
+        if (a.Prerelease is null) return 1;
+        if (b.Prerelease is null) return -1;
+        var aParts = a.Prerelease.Split('.');
+        var bParts = b.Prerelease.Split('.');
+        for (var i = 0; i < Math.Min(aParts.Length, bParts.Length); i++)
+        {
+            var aIsNum = int.TryParse(aParts[i], out var aNum);
+            var bIsNum = int.TryParse(bParts[i], out var bNum);
+            if (aIsNum && bIsNum)
+            {
+                c = aNum.CompareTo(bNum);
+                if (c != 0) return c;
+            }
+            else if (aIsNum != bIsNum)
+            {
+                return aIsNum ? -1 : 1;
+            }
+            else
+            {
+                c = string.CompareOrdinal(aParts[i], bParts[i]);
+                if (c != 0) return c;
+            }
+        }
+        return aParts.Length.CompareTo(bParts.Length);
+    }
+
+    private static bool DoesSatisfyNpmDisjunct(SemVer ver, string disjunct)
+    {
+        if (disjunct is "*" or "x" or "X")
+            return ver.Prerelease is null;
+
+        var normalized = Regex.Replace(disjunct, @"(?<op>>=|<=|>|<|=|~|\^)\s+", "${op}", RegexOptions.CultureInvariant);
+        var tokens = normalized.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+        if (tokens.Length == 0)
+            return false;
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            if (i + 2 < tokens.Length && tokens[i + 1] == "-")
+            {
+                if (!DoesSatisfyNpmComparator(ver, ">=" + tokens[i]) ||
+                    !DoesSatisfyNpmComparator(ver, "<=" + tokens[i + 2]))
+                    return false;
+                i += 2;
+                continue;
+            }
+            if (!DoesSatisfyNpmComparator(ver, tokens[i]))
+                return false;
+        }
+        return true;
+    }
+
+    private static bool DoesSatisfyNpmComparator(SemVer ver, string token)
+    {
+        if (token is "*" or "x" or "X")
+            return ver.Prerelease is null;
+
+        var op = "";
+        var body = token;
+        foreach (var candidate in new[] { ">=", "<=", ">", "<", "=", "~", "^" })
+        {
+            if (token.StartsWith(candidate, StringComparison.Ordinal))
+            {
+                op = candidate;
+                body = token[candidate.Length..];
+                break;
+            }
+        }
+        if (body.StartsWith('v') || body.StartsWith('V'))
+            body = body[1..];
+
+        var partialMatch = Regex.Match(body,
+            @"\A(?<maj>0|[1-9][0-9]*)(?:\.(?<min>x|X|\*|0|[1-9][0-9]*)(?:\.(?<pat>x|X|\*))?)?\z",
+            RegexOptions.CultureInvariant);
+        if (partialMatch.Success && !Regex.IsMatch(body, @"\A(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z", RegexOptions.CultureInvariant))
+        {
+            if (!int.TryParse(partialMatch.Groups["maj"].Value, out var pMaj))
+                return false;
+            var minStr = partialMatch.Groups["min"].Value;
+            var hasConcreteMin = partialMatch.Groups["min"].Success && minStr is not ("x" or "X" or "*");
+            var pMin = 0;
+            if (hasConcreteMin && !int.TryParse(minStr, out pMin))
+                return false;
+            if (ver.Prerelease is not null)
+                return false;
+            var floor = new SemVer(pMaj, hasConcreteMin ? pMin : 0, 0, null);
+            return op switch
+            {
+                "" or "=" or "~" => ver.Major == pMaj && (!hasConcreteMin || ver.Minor == pMin),
+                "^" => CompareSemVer(ver, floor) >= 0 &&
+                       (pMaj > 0 ? ver.Major == pMaj : (!hasConcreteMin || pMin > 0 ? ver.Major == 0 && (!hasConcreteMin || ver.Minor == pMin) : ver.Major == 0 && ver.Minor == 0)),
+                ">=" => CompareSemVer(ver, floor) >= 0,
+                ">" => hasConcreteMin ? (ver.Major > pMaj || (ver.Major == pMaj && ver.Minor > pMin)) : ver.Major > pMaj,
+                "<" => CompareSemVer(ver, floor) < 0,
+                "<=" => hasConcreteMin ? (ver.Major < pMaj || (ver.Major == pMaj && ver.Minor <= pMin)) : ver.Major <= pMaj,
+                _ => false
+            };
+        }
+
+        if (!TryParseSemVer(body, out var target))
+            return false;
+
+        if (ver.Prerelease is not null &&
+            (target.Prerelease is null || ver.Major != target.Major || ver.Minor != target.Minor || ver.Patch != target.Patch))
+            return false;
+
+        return op switch
+        {
+            "" or "=" => CompareSemVer(ver, target) == 0,
+            ">" => CompareSemVer(ver, target) > 0,
+            ">=" => CompareSemVer(ver, target) >= 0,
+            "<" => CompareSemVer(ver, target) < 0,
+            "<=" => CompareSemVer(ver, target) <= 0,
+            "~" => CompareSemVer(ver, target) >= 0 && ver.Major == target.Major && ver.Minor == target.Minor,
+            "^" => CompareSemVer(ver, target) >= 0 &&
+                   (target.Major > 0
+                       ? ver.Major == target.Major
+                       : target.Minor > 0
+                           ? ver.Major == 0 && ver.Minor == target.Minor
+                           : ver.Major == 0 && ver.Minor == 0 && ver.Patch == target.Patch),
+            _ => false
+        };
     }
 
     private static bool IsSimpleSpdxId(string? value) =>
@@ -772,7 +965,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 var segment = rawSegment.Trim();
                 if (segment.Length == 0)
                     continue;
-                if (Regex.IsMatch(segment, @"\A(?:(?:Copyright|\(c\)|©)\b|All\s+rights\s+reserved\.?\z)",
+                if (Regex.IsMatch(segment, @"\A(?:(?:Copyright\b|\(c\)|©)|All\s+rights\s+reserved\.?\z)",
                         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                     continue;
                 segment = Regex.Replace(segment,
@@ -792,7 +985,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             if (atLicMatch.Groups["sameLine"].Success)
             {
                 var sameLine = atLicMatch.Groups["sameLine"].Value.Trim();
-                if (Regex.IsMatch(sameLine, @"\A(?:Copyright|\(c\)|©)\b",
+                if (Regex.IsMatch(sameLine, @"\A(?:Copyright\b|\(c\)|©)",
                         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                     continue;
                 ValidateClauseSegments(sameLine);
@@ -806,7 +999,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     continue;
                 }
                 if (Regex.IsMatch(nextLine,
-                        @"\A(?:(?:Copyright|\(c\)|©)\b|SPDX-License-Identifier\s*:|@license\b|@preserve\b|(?:Licensed|Released)\s+under\b)|(?:\blicenses\s+this\s+file\s+to\s+you\s+under\b)",
+                        @"\A(?:(?:Copyright\b|\(c\)|©)|SPDX-License-Identifier\s*:|@license\b|@preserve\b|(?:Licensed|Released)\s+under\b)|(?:\blicenses\s+this\s+file\s+to\s+you\s+under\b)",
                         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                     continue;
                 ValidateClauseSegments(nextLine);
@@ -882,20 +1075,32 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
     }
 
     private static bool TryVerifyInlineAssetAttributions(string text, string licenseText, string? noticeText,
-        string? requiredFirstPartySpdx, out string error)
+        IEnumerable<NoticeSection>? admittedNoticeSections, string? requiredFirstPartySpdx, out string error)
     {
         error = "";
         var licenseCopyrightLines = ExtractLicenseCopyrightLines(licenseText);
+        var admittedSections = admittedNoticeSections?.ToArray();
         bool IsHolderCoveredByLicense(string holder) =>
             requiredFirstPartySpdx is not null
                 ? licenseCopyrightLines.Any(line => line.Contains(holder, StringComparison.OrdinalIgnoreCase))
                 : licenseText.Contains(holder, StringComparison.OrdinalIgnoreCase);
+        bool IsHolderCoveredByNotices(string holder) =>
+            requiredFirstPartySpdx is null &&
+            (admittedSections is not null
+                ? admittedSections.Any(sec => sec.Body.Contains(holder, StringComparison.OrdinalIgnoreCase))
+                : noticeText is not null && noticeText.Contains(holder, StringComparison.OrdinalIgnoreCase));
+        bool IsSpdxCoveredByNotices(string spdxToken) =>
+            requiredFirstPartySpdx is null &&
+            (admittedSections is not null
+                ? admittedSections.Any(sec => string.Equals(sec.Spdx, spdxToken, StringComparison.OrdinalIgnoreCase) ||
+                                              ContainsSpdxToken(sec.Body, spdxToken))
+                : noticeText is not null && ContainsSpdxToken(noticeText, spdxToken));
 
         var holders = ExtractCopyrightHolders(text, allowYearlessSymbol: false);
         foreach (var holder in holders)
         {
             var coveredByLicense = IsHolderCoveredByLicense(holder);
-            var coveredByNotice = noticeText is not null && noticeText.Contains(holder, StringComparison.OrdinalIgnoreCase);
+            var coveredByNotice = IsHolderCoveredByNotices(holder);
             if (!coveredByLicense && !coveredByNotice)
             {
                 error = $"inline copyright holder '{holder}' is not covered by root license or notice files";
@@ -936,7 +1141,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     return false;
                 }
                 var coveredByLicense = ContainsSpdxToken(licenseText, token);
-                var coveredByNotice = noticeText is not null && ContainsSpdxToken(noticeText, token);
+                var coveredByNotice = IsSpdxCoveredByNotices(token);
                 if (!coveredByLicense && !coveredByNotice)
                 {
                     error = $"inline SPDX identifier '{token}' is not covered by root license or notice files";
@@ -950,27 +1155,27 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             }
         }
 
-        if (requiredFirstPartySpdx is not null)
+        foreach (var commentBlock in EnumerateCommentBlocks(text))
         {
-            foreach (var commentBlock in EnumerateCommentBlocks(text))
+            var blockHolders = ExtractCopyrightHolders(commentBlock, allowYearlessSymbol: true);
+            foreach (var holder in blockHolders)
             {
-                var blockHolders = ExtractCopyrightHolders(commentBlock, allowYearlessSymbol: true);
-                foreach (var holder in blockHolders)
+                if (!IsHolderCoveredByLicense(holder) && !IsHolderCoveredByNotices(holder))
                 {
-                    if (!IsHolderCoveredByLicense(holder))
-                    {
-                        error = $"inline copyright holder '{holder}' is not covered by root license or notice files";
-                        return false;
-                    }
+                    error = $"inline copyright holder '{holder}' is not covered by root license or notice files";
+                    return false;
                 }
+            }
 
-                var proseLicenses = ExtractProseCommentLicenses(commentBlock, out var hasUnrecognizedClause);
-                var hasSpdxTag = Regex.IsMatch(commentBlock, @"\bSPDX-License-Identifier\s*:",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-                var hasExplicitUnderClause = Regex.IsMatch(commentBlock,
-                    @"(?:@license\b|\b(?:Licensed|Released|licenses\s+this\s+file\s+to\s+you)\s+under\b)",
-                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            var proseLicenses = ExtractProseCommentLicenses(commentBlock, out var hasUnrecognizedClause);
+            var hasSpdxTag = Regex.IsMatch(commentBlock, @"\bSPDX-License-Identifier\s*:",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            var hasExplicitUnderClause = Regex.IsMatch(commentBlock,
+                @"(?:@license\b|\b(?:Licensed|Released|licenses\s+this\s+file\s+to\s+you)\s+under\b)",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
+            if (requiredFirstPartySpdx is not null)
+            {
                 foreach (var lic in proseLicenses)
                 {
                     if (!string.Equals(lic, requiredFirstPartySpdx, StringComparison.OrdinalIgnoreCase))
@@ -994,6 +1199,23 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 if (isLicenseBanner && blockHolders.Count == 0)
                 {
                     error = "inline license banner comment lacks an explicit first-party copyright holder in the same comment block";
+                    return false;
+                }
+            }
+            else
+            {
+                foreach (var lic in proseLicenses)
+                {
+                    if (!ContainsSpdxToken(licenseText, lic) && !IsSpdxCoveredByNotices(lic))
+                    {
+                        error = $"inline comment declares license '{lic}' which is not covered by root license or notice files";
+                        return false;
+                    }
+                }
+
+                if (hasUnrecognizedClause)
+                {
+                    error = "inline comment contains an unrecognized license declaration";
                     return false;
                 }
             }

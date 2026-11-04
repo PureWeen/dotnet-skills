@@ -1044,7 +1044,19 @@ internal static class Lp10BoundaryChecks
                 ("trailing backtick on npm ci",
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci `\n      - run: npm run build\n      - run: dotnet pack\n"),
                 ("trailing backtick on npm run build",
-                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build `\n      - run: dotnet pack\n")
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build `\n      - run: dotnet pack\n"),
+                ("uses action step with nested with.run block",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - name: Fake build\n        uses: ./tools/noop-action\n        with:\n          run: |\n            npm ci\n            npm run build\n            dotnet pack\n"),
+                ("uses action step with nested with.run before uses",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - name: Fake build\n        with:\n          run: |\n            npm ci\n            npm run build\n            dotnet pack\n        uses: ./tools/noop-action\n"),
+                ("double-quoted step \"if\": false",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - \"if\": false\n        run: npm run build\n      - run: dotnet pack\n"),
+                ("single-quoted step 'if': false",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - 'if': false\n        run: npm run build\n      - run: dotnet pack\n"),
+                ("double-quoted job \"if\": false",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    \"if\": false\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("double-quoted step \"continue-on-error\": true",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - \"continue-on-error\": true\n        run: npm run build\n      - run: dotnet pack\n")
             })
             {
                 var badWfSrc = MakeViteSrc(wfOverride: wf);
