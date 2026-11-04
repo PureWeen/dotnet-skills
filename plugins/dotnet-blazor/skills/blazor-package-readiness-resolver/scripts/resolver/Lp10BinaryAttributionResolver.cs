@@ -1479,7 +1479,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             configBodyMask = "{" + returnedObjMask + "}";
         }
 
-        if (Regex.IsMatch(masked, @"\b(?:const|let|var)\s*[\{\[]", RegexOptions.CultureInvariant) ||
+        if (masked.Contains('\\') ||
+            Regex.IsMatch(masked, @"\b(?:const|let|var)\s*[\{\[]", RegexOptions.CultureInvariant) ||
             Regex.IsMatch(configBodyMask, @"\b(?:const|let|var|function|return)\b", RegexOptions.CultureInvariant))
             return false;
 
@@ -1546,22 +1547,35 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 consts[id] = stripped.Substring(m.Groups["lit"].Index, m.Groups["lit"].Length);
         }
 
-        if (Regex.Matches(configBodyMask, @"(?<![A-Za-z0-9_$.])\boutDir\b", RegexOptions.CultureInvariant).Count != 1)
+        if (!TryParseJsObject(configBody, configBodyMask, allowOutDirShorthand: false, out var rootProps) ||
+            !rootProps.TryGetValue("build", out var buildEntry) ||
+            !TryParseJsObject(buildEntry.Raw, buildEntry.Mask, allowOutDirShorthand: true, out var buildProps) ||
+            buildProps.ContainsKey("rollupOptions") ||
+            !buildProps.TryGetValue("rolldownOptions", out var rolldownEntry) ||
+            !TryParseJsObject(rolldownEntry.Raw, rolldownEntry.Mask, allowOutDirShorthand: false, out var rolldownProps) ||
+            !rolldownProps.TryGetValue("output", out var outputEntry) ||
+            !TryParseJsObject(outputEntry.Raw, outputEntry.Mask, allowOutDirShorthand: false, out var outputProps) ||
+            outputProps.ContainsKey("dir") ||
+            !buildProps.TryGetValue("outDir", out var outDirEntry))
             return false;
+
         string? outDir = null;
-        var outDirMaskMatch = Regex.Match(configBodyMask,
-            @"\boutDir\s*:\s*(?:(?<q>['""])(?<lit>\s+)\k<q>|(?<id>[A-Za-z_$][A-Za-z0-9_$]*))\s*(?:,|\})",
-            RegexOptions.CultureInvariant);
-        if (outDirMaskMatch.Success)
-        {
-            if (outDirMaskMatch.Groups["id"].Success)
-                outDir = consts.GetValueOrDefault(outDirMaskMatch.Groups["id"].Value);
-            else
-                outDir = configBody.Substring(outDirMaskMatch.Groups["lit"].Index, outDirMaskMatch.Groups["lit"].Length);
-        }
-        else if (Regex.IsMatch(configBodyMask, @"(?<![A-Za-z0-9_$.])\boutDir\s*(?:,|\})", RegexOptions.CultureInvariant))
+        if (outDirEntry.Mask.Equals("outDir", StringComparison.Ordinal))
         {
             consts.TryGetValue("outDir", out outDir);
+        }
+        else
+        {
+            var outDirMaskMatch = Regex.Match(outDirEntry.Mask,
+                @"\A(?:(?<q>['""])(?<lit>\s+)\k<q>|(?<id>[A-Za-z_$][A-Za-z0-9_$]*))\z",
+                RegexOptions.CultureInvariant);
+            if (outDirMaskMatch.Success)
+            {
+                if (outDirMaskMatch.Groups["id"].Success)
+                    outDir = consts.GetValueOrDefault(outDirMaskMatch.Groups["id"].Value);
+                else
+                    outDir = outDirEntry.Raw.Substring(outDirMaskMatch.Groups["lit"].Index, outDirMaskMatch.Groups["lit"].Length);
+            }
         }
 
         if (string.IsNullOrWhiteSpace(outDir) ||
@@ -1588,21 +1602,18 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             return false;
 
         string? licenseFile = null;
-        var licenseKeyMatches = Regex.Matches(configBodyMask, @"\blicense\s*:", RegexOptions.CultureInvariant);
-        if (licenseKeyMatches.Count > 1)
-            return false;
-        if (licenseKeyMatches.Count == 1)
+        if (buildProps.TryGetValue("license", out var licEntry))
         {
-            if (!Regex.IsMatch(configBodyMask, @"\blicense\s*:\s*false\b\s*(?:,|\})", RegexOptions.CultureInvariant))
+            if (!licEntry.Mask.Equals("false", StringComparison.Ordinal))
             {
-                var licMaskMatch = Regex.Match(configBodyMask,
-                    @"\blicense\s*:\s*\{\s*fileName\s*:\s*(?:(?<q>['""])(?<lit>\s+)\k<q>|(?<id>[A-Za-z_$][A-Za-z0-9_$]*))\s*,?\s*\}\s*(?:,|\})",
+                var licMaskMatch = Regex.Match(licEntry.Mask,
+                    @"\A\{\s*fileName\s*:\s*(?:(?<q>['""])(?<lit>\s+)\k<q>|(?<id>[A-Za-z_$][A-Za-z0-9_$]*))\s*,?\s*\}\z",
                     RegexOptions.CultureInvariant);
                 if (!licMaskMatch.Success)
                     return false;
                 string? rawLic = licMaskMatch.Groups["id"].Success
                     ? consts.GetValueOrDefault(licMaskMatch.Groups["id"].Value)
-                    : configBody.Substring(licMaskMatch.Groups["lit"].Index, licMaskMatch.Groups["lit"].Length);
+                    : licEntry.Raw.Substring(licMaskMatch.Groups["lit"].Index, licMaskMatch.Groups["lit"].Length);
                 if (string.IsNullOrWhiteSpace(rawLic) ||
                     rawLic.Contains("..", StringComparison.Ordinal) ||
                     rawLic.Contains('/') ||
@@ -1619,7 +1630,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         var copiedDirs = new HashSet<(string Dependency, string Subdir)>();
 
         if (masked.Contains("emitFile", StringComparison.Ordinal) &&
-            Regex.IsMatch(configBodyMask, @"\bplugins\s*:\s*\[", RegexOptions.CultureInvariant))
+            rootProps.TryGetValue("plugins", out var pluginsEntry) &&
+            pluginsEntry.Mask.StartsWith('['))
         {
             if (consts.TryGetValue("initializer", out var initVal) &&
                 initVal.Equals(packageId + ".lib.module.js", StringComparison.Ordinal) &&
@@ -1636,11 +1648,15 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             }
         }
 
+        if (!rolldownProps.TryGetValue("input", out var inputEntry) ||
+            (rootProps.TryGetValue("input", out var rootInputEntry) && !rootInputEntry.Mask.Equals("entries", StringComparison.Ordinal)))
+            return false;
+
         var declaredEntries = new Dictionary<string, string>(StringComparer.Ordinal);
-        var hasInputSpread = Regex.IsMatch(configBodyMask, @"\binput\s*:\s*\{\s*\.\.\.entries\s*(?:,|\})", RegexOptions.CultureInvariant);
+        var hasInputSpread = Regex.IsMatch(inputEntry.Mask, @"\A\{\s*\.\.\.entries\s*(?:,|\})", RegexOptions.CultureInvariant);
         if (Regex.Matches(configBodyMask, @"\.\.\.", RegexOptions.CultureInvariant).Count != (hasInputSpread ? 1 : 0))
             return false;
-        if (hasInputSpread || Regex.IsMatch(configBodyMask, @"\binput\s*:\s*entries\b\s*(?:,|\})", RegexOptions.CultureInvariant))
+        if (hasInputSpread || inputEntry.Mask.Equals("entries", StringComparison.Ordinal))
         {
             if (declCounts.GetValueOrDefault("entries") != 1)
                 return false;
@@ -1673,8 +1689,11 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             return false;
 
         var declaredInputKeys = new HashSet<string>(declaredEntries.Keys, StringComparer.Ordinal);
-        foreach (Match inputBlock in Regex.Matches(configBodyMask, @"\binput\s*:\s*\{(?<body>[^}]+)\}", RegexOptions.CultureInvariant))
+        if (hasInputSpread)
         {
+            var inputBlock = Regex.Match(inputEntry.Mask, @"\A\{(?<body>[^}]+)\}\z", RegexOptions.CultureInvariant);
+            if (!inputBlock.Success)
+                return false;
             var bodyOffset = inputBlock.Groups["body"].Index;
             var bodyMask = inputBlock.Groups["body"].Value;
             var props = Regex.Matches(bodyMask,
@@ -1685,16 +1704,20 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             foreach (Match prop in props)
             {
                 var key = prop.Groups["k1"].Success
-                    ? configBody.Substring(bodyOffset + prop.Groups["k1"].Index, prop.Groups["k1"].Length)
+                    ? inputEntry.Raw.Substring(bodyOffset + prop.Groups["k1"].Index, prop.Groups["k1"].Length)
                     : prop.Groups["k2"].Value;
-                var val = configBody.Substring(bodyOffset + prop.Groups["val"].Index, prop.Groups["val"].Length);
+                var val = inputEntry.Raw.Substring(bodyOffset + prop.Groups["val"].Index, prop.Groups["val"].Length);
                 if (directDepSet.Contains(val))
                     declaredInputKeys.Add(key);
             }
         }
 
+        if (!outputProps.TryGetValue("entryFileNames", out var entryFnEntry) ||
+            !outputProps.TryGetValue("chunkFileNames", out var chunkFnEntry))
+            return false;
+
         var fixedKeys = new HashSet<string>(StringComparer.Ordinal);
-        if (Regex.IsMatch(configBodyMask, @"\bentryFileNames\s*:[^\r\n]*\bfixedNames\[", RegexOptions.CultureInvariant))
+        if (entryFnEntry.Mask.Contains("fixedNames[", StringComparison.Ordinal))
         {
             if (declCounts.GetValueOrDefault("fixedNames") != 1)
                 return false;
@@ -1725,14 +1748,11 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             }
         }
 
-        if (Regex.Matches(configBodyMask, @"\bentryFileNames\s*:", RegexOptions.CultureInvariant).Count != 1 ||
-            Regex.Matches(configBodyMask, @"\bchunkFileNames\s*:", RegexOptions.CultureInvariant).Count != 1)
-            return false;
-        var entryMaskMatch = Regex.Match(configBodyMask,
-            @"\bentryFileNames\s*:\s*(?:\(\s*(?<param>[A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*=>\s*fixedNames\s*\[\s*(?<arg>[A-Za-z_$][A-Za-z0-9_$]*)\.name\s*\]\s*\?\?\s*)?(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
+        var entryMaskMatch = Regex.Match(entryFnEntry.Mask,
+            @"\A(?:\(\s*(?<param>[A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*=>\s*fixedNames\s*\[\s*(?<arg>[A-Za-z_$][A-Za-z0-9_$]*)\.name\s*\]\s*\?\?\s*)?(?<q>['""])(?<lit>\s+)\k<q>\z",
             RegexOptions.CultureInvariant);
-        var chunkMaskMatch = Regex.Match(configBodyMask,
-            @"\bchunkFileNames\s*:\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
+        var chunkMaskMatch = Regex.Match(chunkFnEntry.Mask,
+            @"\A(?<q>['""])(?<lit>\s+)\k<q>\z",
             RegexOptions.CultureInvariant);
         if (!entryMaskMatch.Success || !chunkMaskMatch.Success)
             return false;
@@ -1746,8 +1766,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 paramName.Equals("fixedNames", StringComparison.Ordinal))
                 return false;
         }
-        var entryBundlePattern = configBody.Substring(entryMaskMatch.Groups["lit"].Index, entryMaskMatch.Groups["lit"].Length);
-        var chunkBundlePattern = configBody.Substring(chunkMaskMatch.Groups["lit"].Index, chunkMaskMatch.Groups["lit"].Length);
+        var entryBundlePattern = entryFnEntry.Raw.Substring(entryMaskMatch.Groups["lit"].Index, entryMaskMatch.Groups["lit"].Length);
+        var chunkBundlePattern = chunkFnEntry.Raw.Substring(chunkMaskMatch.Groups["lit"].Index, chunkMaskMatch.Groups["lit"].Length);
         if (!entryBundlePattern.Equals("[name].[hash].bundle.js", StringComparison.Ordinal) ||
             !chunkBundlePattern.Equals("[name].[hash].bundle.js", StringComparison.Ordinal))
             return false;
@@ -1758,22 +1778,19 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 chunkNames.Add(entryKey);
         }
 
-        var csMatch = Regex.Match(configBodyMask, @"\bcodeSplitting\s*:\s*\{", RegexOptions.CultureInvariant);
-        if (csMatch.Success &&
-            TryExtractBalancedSlice(configBody, configBodyMask, csMatch.Index + csMatch.Length - 1, '{', '}', out var csBody, out var csMask, out _))
+        if (outputProps.TryGetValue("codeSplitting", out var csEntry) &&
+            TryParseJsObject(csEntry.Raw, csEntry.Mask, allowOutDirShorthand: false, out var csProps) &&
+            csProps.TryGetValue("groups", out var groupsEntry) &&
+            groupsEntry.Mask.StartsWith('[') &&
+            TryExtractBalancedSlice(groupsEntry.Raw, groupsEntry.Mask, 0, '[', ']', out var groupsBody, out var groupsMask, out _))
         {
-            var groupsMatch = Regex.Match(csMask, @"\bgroups\s*:\s*\[", RegexOptions.CultureInvariant);
-            if (groupsMatch.Success &&
-                TryExtractBalancedSlice(csBody, csMask, groupsMatch.Index + groupsMatch.Length - 1, '[', ']', out var groupsBody, out var groupsMask, out _))
+            foreach (Match groupMaskMatch in Regex.Matches(groupsMask,
+                @"\{\s*name\s*:\s*['""]\s*['""]\s*,\s*test\s*:\s*/\s*/", RegexOptions.CultureInvariant))
             {
-                foreach (Match groupMaskMatch in Regex.Matches(groupsMask,
-                    @"\{\s*name\s*:\s*['""]\s*['""]\s*,\s*test\s*:\s*/\s*/", RegexOptions.CultureInvariant))
-                {
-                    var groupLitMatch = Regex.Match(groupsBody.Substring(groupMaskMatch.Index, groupMaskMatch.Length),
-                        @"\bname\s*:\s*['""](?<g>[A-Za-z0-9._\-]+)['""]\s*,\s*test\s*:", RegexOptions.CultureInvariant);
-                    if (groupLitMatch.Success)
-                        chunkNames.Add(groupLitMatch.Groups["g"].Value);
-                }
+                var groupLitMatch = Regex.Match(groupsBody.Substring(groupMaskMatch.Index, groupMaskMatch.Length),
+                    @"\bname\s*:\s*['""](?<g>[A-Za-z0-9._\-]+)['""]\s*,\s*test\s*:", RegexOptions.CultureInvariant);
+                if (groupLitMatch.Success)
+                    chunkNames.Add(groupLitMatch.Groups["g"].Value);
             }
         }
 
@@ -1837,6 +1854,62 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         plan = new AttestedViteBuildPlan(npmDir, normalizedOutDir, licenseFile,
             exactScripts, initializerBases, chunkNames, copiedDirs);
         return true;
+    }
+
+    private static bool TryParseJsObject(
+        string objRaw,
+        string objMask,
+        bool allowOutDirShorthand,
+        out Dictionary<string, (string Raw, string Mask)> props)
+    {
+        props = new Dictionary<string, (string Raw, string Mask)>(StringComparer.Ordinal);
+        var trimmedMask = objMask.Trim();
+        if (!trimmedMask.StartsWith('{') || !trimmedMask.EndsWith('}'))
+            return false;
+        var openIdx = objMask.IndexOf('{');
+        if (!TryExtractBalancedSlice(objRaw, objMask, openIdx, '{', '}', out var innerRaw, out var innerMask, out var closeIdx) ||
+            !string.IsNullOrWhiteSpace(objMask[(closeIdx + 1)..]))
+            return false;
+
+        var start = 0;
+        var depth = 0;
+        for (var i = 0; i <= innerMask.Length; i++)
+        {
+            var ch = i < innerMask.Length ? innerMask[i] : ',';
+            if (ch is '{' or '(' or '[')
+                depth++;
+            else if (ch is '}' or ')' or ']')
+            {
+                depth--;
+                if (depth < 0)
+                    return false;
+            }
+            else if (ch == ',' && depth == 0)
+            {
+                var entryMask = innerMask[start..i].Trim();
+                var entryRaw = innerRaw[start..i].Trim();
+                start = i + 1;
+                if (entryMask.Length == 0)
+                    continue;
+                if (allowOutDirShorthand && entryMask.Equals("outDir", StringComparison.Ordinal))
+                {
+                    if (!props.TryAdd("outDir", ("outDir", "outDir")))
+                        return false;
+                    continue;
+                }
+                var kvMatch = Regex.Match(entryMask,
+                    @"\A(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\s*:\s*(?<val>[\s\S]+)\z",
+                    RegexOptions.CultureInvariant);
+                if (!kvMatch.Success)
+                    return false;
+                var key = kvMatch.Groups["id"].Value;
+                var valIdx = kvMatch.Groups["val"].Index;
+                var valLen = kvMatch.Groups["val"].Length;
+                if (!props.TryAdd(key, (entryRaw.Substring(valIdx, valLen).Trim(), entryMask.Substring(valIdx, valLen).Trim())))
+                    return false;
+            }
+        }
+        return depth == 0;
     }
 
     internal static bool TryAttestedViteScriptAsset(
