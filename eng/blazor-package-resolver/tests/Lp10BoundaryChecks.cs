@@ -988,12 +988,12 @@ internal static class Lp10BoundaryChecks
             Reject("Vite precommitted wwwroot JS in source archive", () => Dispatch(vitePkg, vitePkg, viteBundle,
                 BuildAttestation(vitePkg, vitePkg, viteBundle, vitePrebuiltSrc), vitePrebuiltSrc));
 
-            byte[] MakeViteSrc(string? wfOverride = null, byte[]? pkgJsonOverride = null, string? configOverride = null, string? indexTsOverride = null) =>
+            byte[] MakeViteSrc(string? wfOverride = null, byte[]? pkgJsonOverride = null, string? configOverride = null, string? indexTsOverride = null, byte[]? lockJsonOverride = null) =>
                 BuildZip(
                     ($"controls-{commit}/.github/workflows/release.yml", Encoding.UTF8.GetBytes(wfOverride ?? viteWorkflowText)),
                     ($"controls-{commit}/src/Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
                     ($"controls-{commit}/src/package.json", pkgJsonOverride ?? vitePkgJson),
-                    ($"controls-{commit}/src/package-lock.json", viteLockJson),
+                    ($"controls-{commit}/src/package-lock.json", lockJsonOverride ?? viteLockJson),
                     ($"controls-{commit}/src/vite.config.ts", Encoding.UTF8.GetBytes(configOverride ?? viteConfigText)),
                     ($"controls-{commit}/src/tsconfig.json", "{\"compilerOptions\":{\"outDir\":\"wwwroot\"}}"u8.ToArray()),
                     ($"controls-{commit}/src/assets/index.ts", Encoding.UTF8.GetBytes(indexTsOverride ?? "export const load = () => import('lit-html');")),
@@ -1061,6 +1061,10 @@ internal static class Lp10BoundaryChecks
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - \"\\u0069f\": false\n        run: npm run build\n      - run: dotnet pack\n"),
                 ("backslash-escaped job \"\\u0069f\": false",
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    \"\\u0069f\": false\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("backslash-escaped defaults.run \"\\u0073hell\": python",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n        \"\\u0073hell\": python\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: dotnet pack\n"),
+                ("backslash-escaped second job header attempting to merge steps across jobs",
+                    "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n  \"pack\\u005fjob\":\n    runs-on: ubuntu-latest\n    steps:\n      - run: dotnet pack\n"),
                 ("indentless steps sequence followed by job-level if: false at same indent",
                     "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n    - run: npm ci\n    - run: npm run build\n    - run: dotnet pack\n    if: false\n")
             })
@@ -1139,13 +1143,35 @@ internal static class Lp10BoundaryChecks
                         "groups: [\"name: 'vendor', test: /vendor/\"]", StringComparison.Ordinal)),
                 ("shadowed nested const outDir after non-literal top-level const outDir",
                     viteConfigText.Replace("const outDir = 'wwwroot';",
-                        "const outDir = String('dist');\n{ const outDir = 'wwwroot'; }", StringComparison.Ordinal))
+                        "const outDir = String('dist');\n{ const outDir = 'wwwroot'; }", StringComparison.Ordinal)),
+                ("shadowed const entries inside defineConfig callback body",
+                    viteConfigText.Replace("export default defineConfig({",
+                        "export default defineConfig(() => { const entries = { app: 'assets/lib.ts' }; return {")
+                        .Replace("});", "}; });", StringComparison.Ordinal)),
+                ("entryFileNames callback parameter shadowing fixedNames",
+                    viteConfigText.Replace("entryFileNames: (chunk) => fixedNames[chunk.name] ?? '[name].[hash].bundle.js'",
+                        "entryFileNames: (fixedNames) => fixedNames[fixedNames.name] ?? '[name].[hash].bundle.js'",
+                        StringComparison.Ordinal))
             })
             {
                 var badCfgSrc = MakeViteSrc(configOverride: cfgText);
                 Reject("Vite " + cfgLabel, () => Dispatch(vitePkg, vitePkg, viteBundle,
                     BuildAttestation(vitePkg, vitePkg, viteBundle, badCfgSrc), badCfgSrc));
             }
+
+            var devOnlyVitePkg = BuildZip(
+                ("Example.Controls.nuspec", nuspec),
+                ("staticwebassets/Example.Controls.lib.module.js", builtJs),
+                ("staticwebassets/index.js", builtJs),
+                ("staticwebassets/app.a1b2c3d4.bundle.js", builtJs));
+            var devOnlyViteBundle = BundleFor(devOnlyVitePkg);
+            var devOnlyViteSrc = MakeViteSrc(
+                pkgJsonOverride: "{\"name\":\"controls\",\"scripts\":{\"build\":\"vite build && tsc\"},\"devDependencies\":{\"vite\":\"^6.0.0\"}}"u8.ToArray(),
+                lockJsonOverride: "{\"lockfileVersion\":3,\"packages\":{\"\":{\"name\":\"controls\",\"devDependencies\":{\"vite\":\"^6.0.0\"}},\"node_modules/vite\":{\"version\":\"6.0.0\",\"dev\":true}}}"u8.ToArray(),
+                indexTsOverride: "export const ok = 1;");
+            Check(Dispatch(devOnlyVitePkg, devOnlyVitePkg, devOnlyViteBundle,
+                BuildAttestation(devOnlyVitePkg, devOnlyVitePkg, devOnlyViteBundle, devOnlyViteSrc), devOnlyViteSrc).BranchId == "provenance-attributed",
+                "Expected dev-only Vite project omitting dependencies in package-lock.json packages[''] to be accepted");
 
             var commentedImportSrc = MakeViteSrc(indexTsOverride: "// import('lit-html');\nexport const x = 'import(\"lit-html\")';");
             Reject("Vite commented-out or string-literal dynamic import", () => Dispatch(vitePkg, vitePkg, viteBundle,

@@ -738,6 +738,25 @@ def package_row_ids(tools):
     return selected
 
 
+def resolve_executable(name, safe_dirs):
+    if os.name == "nt":
+        pathext = [
+            ext for ext in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep)
+            if ext and ext.startswith(".") and os.sep not in ext and (os.altsep is None or os.altsep not in ext)
+        ] or [".COM", ".EXE", ".BAT", ".CMD"]
+        exts = [""] + pathext if any(name.lower().endswith(ext.lower()) for ext in pathext) else pathext
+    else:
+        exts = [""]
+    for directory in safe_dirs:
+        if not directory or not os.path.isabs(directory) or not os.path.isdir(directory):
+            continue
+        for ext in exts:
+            candidate = os.path.abspath(os.path.join(directory, name + ext))
+            if os.path.isabs(candidate) and os.path.isfile(candidate) and os.access(candidate, os.F_OK | os.X_OK):
+                return candidate
+    return None
+
+
 def provenance_inputs(capture, package_pin, metadata, collector, args, admission_key=None):
     release_nupkg = getattr(args, "release_nupkg", None)
     provenance_bundle = getattr(args, "provenance_bundle", None)
@@ -779,11 +798,13 @@ def provenance_inputs(capture, package_pin, metadata, collector, args, admission
     require(codeload is not None, "LP-10 provenance verification requires a canonical GitHub repository and 40-hex commit.")
     owner_repo = "/".join(codeload.split("/")[3:5])
     os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
-    safe_path = os.pathsep.join(
+    safe_dirs = [
         entry for entry in os.environ.get("PATH", "").split(os.pathsep)
         if entry and os.path.isabs(entry) and os.path.isdir(entry)
-    )
-    gh_exe = shutil.which("gh", path=safe_path) or str(capture / "gh-missing")
+    ]
+    safe_path = os.pathsep.join(safe_dirs)
+    gh_exe = resolve_executable("gh", safe_dirs) or str((capture / "gh-missing").resolve())
+    require(Path(gh_exe).is_absolute(), "gh executable path must be absolute.")
     env = {k: v for k, v in os.environ.items() if k not in ("GH_TOKEN", "GH_HOST", "GITHUB_TOKEN")}
     env["PATH"] = safe_path
     env["NoDefaultCurrentDirectoryInExePath"] = "1"

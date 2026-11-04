@@ -36,6 +36,25 @@ def pin_sdk(dotnet, scratch, env):
     return True
 
 
+def resolve_executable(name: str, safe_dirs: list[str]) -> str | None:
+    if os.name == "nt":
+        pathext = [
+            ext for ext in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(os.pathsep)
+            if ext and ext.startswith(".") and os.sep not in ext and (os.altsep is None or os.altsep not in ext)
+        ] or [".COM", ".EXE", ".BAT", ".CMD"]
+        exts = [""] + pathext if any(name.lower().endswith(ext.lower()) for ext in pathext) else pathext
+    else:
+        exts = [""]
+    for directory in safe_dirs:
+        if not directory or not os.path.isabs(directory) or not os.path.isdir(directory):
+            continue
+        for ext in exts:
+            candidate = os.path.abspath(os.path.join(directory, name + ext))
+            if os.path.isabs(candidate) and os.path.isfile(candidate) and os.access(candidate, os.F_OK | os.X_OK):
+                return candidate
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("coverage", "package", "resolve", "inspect", "replay", "admit-sbom"))
@@ -44,12 +63,13 @@ def main():
     if (args.command == "coverage") != (args.input is None):
         parser.error("coverage takes no input; all other commands require one input path")
     os.environ["NoDefaultCurrentDirectoryInExePath"] = "1"
-    safe_path = os.pathsep.join(
+    safe_dirs = [
         entry for entry in os.environ.get("PATH", "").split(os.pathsep)
         if entry and os.path.isabs(entry) and os.path.isdir(entry)
-    )
-    dotnet = shutil.which("dotnet", path=safe_path)
-    if dotnet is None:
+    ]
+    safe_path = os.pathsep.join(safe_dirs)
+    dotnet = resolve_executable("dotnet", safe_dirs)
+    if dotnet is None or not Path(dotnet).is_absolute():
         print("Resolver environment failure: an installed .NET 10 SDK and packs are required.",
               file=sys.stderr)
         return 3

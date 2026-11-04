@@ -253,8 +253,19 @@ class SbomCollectionTests(unittest.TestCase):
                     capture, package_pin, metadata, collector,
                     unittest.mock.Mock(release_nupkg=release, provenance_bundle=bundle), b"k" * 32)
                 mocked_run.assert_called_once()
+                self.assertTrue(Path(mocked_run.call_args.args[0][0]).is_absolute())
                 self.assertEqual(mocked_run.call_args.kwargs["encoding"], "utf-8")
                 self.assertEqual(mocked_run.call_args.kwargs["errors"], "replace")
+            cwd_before = os.getcwd()
+            try:
+                os.chdir(root)
+                for fake_name in ("gh", "gh.exe", "gh.cmd", "gh.bat"):
+                    fake_bin = root / fake_name
+                    fake_bin.write_text("#!/bin/sh\necho '[]'\n", encoding="utf-8")
+                    os.chmod(fake_bin, 0o755)
+                self.assertIsNone(tool.resolve_executable("gh", ["", ".", str(root / "nonexistent")]))
+            finally:
+                os.chdir(cwd_before)
             receipt = json.loads(tool.base64.b64decode(tool.load(capture / "provenance-attestation.json")["payload"]))
             self.assertIsNone(receipt["source_acquisition"], "B1 local imports must never invent trusted source acquisition")
             def clear_admission():

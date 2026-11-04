@@ -535,12 +535,18 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     rootExtraDeps.ValueKind == JsonValueKind.Object && rootExtraDeps.EnumerateObject().Any())
                     return false;
             }
-            if (!rootPkgEntry.TryGetProperty("dependencies", out var rootLockDepsProp) ||
-                rootLockDepsProp.ValueKind != JsonValueKind.Object)
-                return false;
             var rootLockDeps = new Dictionary<string, string>(StringComparer.Ordinal);
-            foreach (var prop in rootLockDepsProp.EnumerateObject())
-                rootLockDeps[prop.Name] = prop.Value.GetString()!;
+            if (rootPkgEntry.TryGetProperty("dependencies", out var rootLockDepsProp))
+            {
+                if (rootLockDepsProp.ValueKind != JsonValueKind.Object)
+                    return false;
+                foreach (var prop in rootLockDepsProp.EnumerateObject())
+                    rootLockDeps[prop.Name] = prop.Value.GetString()!;
+            }
+            else if (declaredDeps.Count > 0)
+            {
+                return false;
+            }
             if (rootLockDeps.Count != declaredDeps.Count ||
                 declaredDeps.Any(kv => !rootLockDeps.TryGetValue(kv.Key, out var lockSpec) ||
                                        !string.Equals(lockSpec, kv.Value, StringComparison.Ordinal)))
@@ -882,7 +888,9 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             if (holder.Length >= 3 &&
                 !InvalidHolderStopWords.Contains(holder) &&
                 !holder.StartsWith("notice", StringComparison.OrdinalIgnoreCase) &&
-                !holder.StartsWith("holder", StringComparison.OrdinalIgnoreCase))
+                !holder.StartsWith("holder", StringComparison.OrdinalIgnoreCase) &&
+                !holder.StartsWith("license", StringComparison.OrdinalIgnoreCase) &&
+                !holder.StartsWith("owner", StringComparison.OrdinalIgnoreCase))
                 holders.Add(holder);
         }
         foreach (Match match in Regex.Matches(text,
@@ -906,8 +914,15 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             var line = rawLine.Trim();
             if (line.Length == 0 || line.Contains("[name of copyright owner]", StringComparison.OrdinalIgnoreCase))
                 continue;
-            if (Regex.IsMatch(line, @"\A(?:Copyright\s+(?:\(c\)|©|[0-9]{4})|\(c\)\s*(?:[0-9]{4}|[A-Z@])|©|Licensed\s+to\s+)",
+            if (Regex.IsMatch(line, @"\A\(c\)\s*[A-Z@]", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) &&
+                Regex.IsMatch(licenseText, @"\(a\)[\s\S]*?\(b\)[\s\S]*?" + Regex.Escape(line),
                     RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                continue;
+            if (Regex.IsMatch(line, @"\A(?:Copyright\s+(?:\(c\)|©|[0-9]{4})|\(c\)\s*(?:[0-9]{4}|[A-Z@])|©|Licensed\s+to\s+)",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant) ||
+                ((line.StartsWith("Copyright ", StringComparison.Ordinal) ||
+                  line.StartsWith("COPYRIGHT ", StringComparison.Ordinal)) &&
+                 ExtractCopyrightHolders(line, allowYearlessSymbol: true).Count > 0))
                 lines.Add(line);
         }
         return lines;
@@ -1240,7 +1255,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     }
                 }
 
-                if (hasUnrecognizedClause || (hasExplicitUnderClause && proseLicenses.Count == 0))
+                if (hasUnrecognizedClause || (hasExplicitUnderClause && !hasSpdxTag && proseLicenses.Count == 0))
                 {
                     error = "inline comment contains an unrecognized license declaration";
                     return false;
@@ -1268,7 +1283,10 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     }
                 }
 
-                if (hasUnrecognizedClause)
+                var hasMultilineAtLicense = Regex.IsMatch(commentBlock,
+                    @"@license[ \t]*\r?\n",
+                    RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+                if (hasUnrecognizedClause || (hasMultilineAtLicense && !hasSpdxTag && proseLicenses.Count == 0))
                 {
                     error = "inline comment contains an unrecognized license declaration";
                     return false;

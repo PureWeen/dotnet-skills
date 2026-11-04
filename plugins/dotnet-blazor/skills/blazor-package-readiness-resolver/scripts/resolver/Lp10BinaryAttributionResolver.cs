@@ -1071,11 +1071,13 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             {
                 if (EvaluateJob())
                     hasQualifyingJob = true;
-                if (indent > jobsIndent &&
-                    TryParseYamlKeyValue(trimmed, out _, out var jobHeaderVal) &&
-                    jobHeaderVal.Length == 0)
+                ResetJob();
+                currentJobIndent = -1;
+                if (indent > jobsIndent)
                 {
-                    ResetJob();
+                    if (!TryParseYamlKeyValue(trimmed, out _, out var jobHeaderVal) ||
+                        jobHeaderVal.Length != 0)
+                        return false;
                     currentJobIndent = indent;
                 }
                 continue;
@@ -1130,23 +1132,38 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                             jobHasContinueOnError = true;
                     }
                 }
-                else if (inJobDefaults && indent > jobDefaultsIndent &&
-                         TryParseYamlKeyValue(trimmed, out var dKey, out var dVal))
+                else if (inJobDefaults && indent > jobDefaultsIndent)
                 {
+                    if (!TryParseYamlKeyValue(trimmed, out var dKey, out var dVal))
+                    {
+                        jobHasIf = true;
+                        continue;
+                    }
                     if (!inJobDefaultsRun || indent <= jobDefaultsRunIndent)
                     {
-                        inJobDefaultsRun = dKey == "run" && dVal.Length == 0;
-                        jobDefaultsRunIndent = inJobDefaultsRun ? indent : -1;
+                        if (dKey == "run" && dVal.Length == 0)
+                        {
+                            inJobDefaultsRun = true;
+                            jobDefaultsRunIndent = indent;
+                        }
+                        else
+                        {
+                            jobHasIf = true;
+                        }
                     }
                     else if (inJobDefaultsRun && indent > jobDefaultsRunIndent)
                     {
-                        if (dKey == "working-directory")
+                        if (dKey == "working-directory" && !dVal.Contains('\\'))
                             jobWorkDir = dVal.Trim('\'', '"');
-                        else if (dKey == "shell")
+                        else if (dKey == "shell" && !dVal.Contains('\\'))
                         {
                             var sh = dVal.Trim('\'', '"');
                             if (sh is not ("bash" or "sh" or "pwsh" or "powershell" or "cmd"))
                                 jobHasIf = true;
+                        }
+                        else
+                        {
+                            jobHasIf = true;
                         }
                     }
                 }
@@ -1206,12 +1223,15 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             }
             else if (sKey == "working-directory")
             {
-                currentStep.WorkingDir = sVal.Trim('\'', '"');
+                if (sVal.Contains('\\'))
+                    currentStep.HasIf = true;
+                else
+                    currentStep.WorkingDir = sVal.Trim('\'', '"');
             }
             else if (sKey == "shell")
             {
                 var sh = sVal.Trim('\'', '"');
-                if (sh is not ("bash" or "sh" or "pwsh" or "powershell" or "cmd"))
+                if (sVal.Contains('\\') || sh is not ("bash" or "sh" or "pwsh" or "powershell" or "cmd"))
                     currentStep.HasIf = true;
             }
             else if (sKey == "run")
@@ -1452,7 +1472,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             return false;
 
         var declCounts = new Dictionary<string, int>(StringComparer.Ordinal);
-        foreach (Match declMatch in Regex.Matches(preambleMask,
+        foreach (Match declMatch in Regex.Matches(masked,
             @"\b(?:const|let|var|function)\s+(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\b",
             RegexOptions.CultureInvariant))
         {
@@ -1650,13 +1670,21 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             Regex.Matches(configBodyMask, @"\bchunkFileNames\s*:", RegexOptions.CultureInvariant).Count != 1)
             return false;
         var entryMaskMatch = Regex.Match(configBodyMask,
-            @"\bentryFileNames\s*:\s*(?:\(\s*[A-Za-z_$][A-Za-z0-9_$]*\s*\)\s*=>\s*fixedNames\s*\[\s*[A-Za-z_$][A-Za-z0-9_$]*\.name\s*\]\s*\?\?\s*)?(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
+            @"\bentryFileNames\s*:\s*(?:\(\s*(?<param>[A-Za-z_$][A-Za-z0-9_$]*)\s*\)\s*=>\s*fixedNames\s*\[\s*(?<arg>[A-Za-z_$][A-Za-z0-9_$]*)\.name\s*\]\s*\?\?\s*)?(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
             RegexOptions.CultureInvariant);
         var chunkMaskMatch = Regex.Match(configBodyMask,
             @"\bchunkFileNames\s*:\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
             RegexOptions.CultureInvariant);
         if (!entryMaskMatch.Success || !chunkMaskMatch.Success)
             return false;
+        if (entryMaskMatch.Groups["param"].Success)
+        {
+            var paramName = entryMaskMatch.Groups["param"].Value;
+            var argName = entryMaskMatch.Groups["arg"].Value;
+            if (!paramName.Equals(argName, StringComparison.Ordinal) ||
+                paramName.Equals("fixedNames", StringComparison.Ordinal))
+                return false;
+        }
         var entryBundlePattern = configBody.Substring(entryMaskMatch.Groups["lit"].Index, entryMaskMatch.Groups["lit"].Length);
         var chunkBundlePattern = configBody.Substring(chunkMaskMatch.Groups["lit"].Index, chunkMaskMatch.Groups["lit"].Length);
         if (!entryBundlePattern.Equals("[name].[hash].bundle.js", StringComparison.Ordinal) ||
