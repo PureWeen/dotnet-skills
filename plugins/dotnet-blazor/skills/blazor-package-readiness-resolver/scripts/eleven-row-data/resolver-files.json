@@ -21,7 +21,7 @@
   "resolver/Lp07RepositoryCommitResolver.cs": "c4ec150cc42c771df97598f027b32842496ea21b5e1f9ae3aa4d9a691f38762e",
   "resolver/Lp08AuthorsResolver.cs": "eafc63f9d8ef6e1afe8801a82eace090460bc03afb34174eed50c6b6de30eb9c",
   "resolver/Lp09ProjectUrlResolver.cs": "a15544263f8a98ea2b3a4fdec8c6d467db8d0927498a29feb8cedb7e9bc5814c",
-  "resolver/Lp10BinaryAttributionResolver.cs": "3fe8a9f4e1248581ca3f407366afe07a81a320c02f579e239b9e2612a9fa18a4",
+  "resolver/Lp10BinaryAttributionResolver.cs": "5bd1db9d5a1afc0b6b966102f542bbe259818e0e045f3a117ab0ae0855b11a5c",
   "resolver/NpmPackageEvidence.cs": "7653ca779bfdbe24e020e205b715243fc3d3cfac25f500725f1d06095bdf8439",
   "resolver/NpmPackageIdentity.cs": "853285195e46b94eee0d8922c64aa5abe6f125dd947c607d9b67585aa141a198",
   "resolver/NuGetNuspecReader.cs": "1ab36917dc536301098e6490a9e6f1000e8d044b01395f10bdfaf1ea210dc4d2",

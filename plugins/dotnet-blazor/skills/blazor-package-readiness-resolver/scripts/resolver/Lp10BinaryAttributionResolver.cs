@@ -1522,20 +1522,17 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 declCounts[id] = declCounts.GetValueOrDefault(id) + 1;
             }
         }
-        if (callbackHeaderMatch is { Success: true })
+        foreach (Match arrowParamMatch in Regex.Matches(masked,
+            @"(?:\(\s*(?<params>[^()]*)\s*\)|(?<single>[A-Za-z_$][A-Za-z0-9_$]*))\s*=>",
+            RegexOptions.CultureInvariant))
         {
-            if (callbackHeaderMatch.Groups["param"].Success)
+            var rawParams = arrowParamMatch.Groups["single"].Success
+                ? arrowParamMatch.Groups["single"].Value
+                : Regex.Replace(arrowParamMatch.Groups["params"].Value, @":[^,)=]+", "", RegexOptions.CultureInvariant);
+            foreach (Match idMatch in Regex.Matches(rawParams, @"\b(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\b", RegexOptions.CultureInvariant))
             {
-                var p = callbackHeaderMatch.Groups["param"].Value;
-                declCounts[p] = declCounts.GetValueOrDefault(p) + 1;
-            }
-            else if (callbackHeaderMatch.Groups["props"].Success)
-            {
-                foreach (var rawProp in callbackHeaderMatch.Groups["props"].Value.Split(',', StringSplitOptions.RemoveEmptyEntries))
-                {
-                    var p = rawProp.Trim();
-                    declCounts[p] = declCounts.GetValueOrDefault(p) + 1;
-                }
+                var id = idMatch.Groups["id"].Value;
+                declCounts[id] = declCounts.GetValueOrDefault(id) + 1;
             }
         }
 
@@ -1640,7 +1637,10 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         }
 
         var declaredEntries = new Dictionary<string, string>(StringComparer.Ordinal);
-        if (Regex.IsMatch(configBodyMask, @"\binput\s*:\s*(?:entries\b\s*(?:,|\})|\{\s*\.\.\.entries\b)", RegexOptions.CultureInvariant))
+        var hasInputSpread = Regex.IsMatch(configBodyMask, @"\binput\s*:\s*\{\s*\.\.\.entries\s*(?:,|\})", RegexOptions.CultureInvariant);
+        if (Regex.Matches(configBodyMask, @"\.\.\.", RegexOptions.CultureInvariant).Count != (hasInputSpread ? 1 : 0))
+            return false;
+        if (hasInputSpread || Regex.IsMatch(configBodyMask, @"\binput\s*:\s*entries\b\s*(?:,|\})", RegexOptions.CultureInvariant))
         {
             if (declCounts.GetValueOrDefault("entries") != 1)
                 return false;
@@ -1735,6 +1735,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             @"\bchunkFileNames\s*:\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
             RegexOptions.CultureInvariant);
         if (!entryMaskMatch.Success || !chunkMaskMatch.Success)
+            return false;
+        if (Regex.Matches(configBodyMask, @"=>", RegexOptions.CultureInvariant).Count != (entryMaskMatch.Groups["param"].Success ? 1 : 0))
             return false;
         if (entryMaskMatch.Groups["param"].Success)
         {
