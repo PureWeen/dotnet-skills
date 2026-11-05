@@ -1484,6 +1484,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             Regex.IsMatch(configBodyMask, @"\b(?:const|let|var|function|return)\b", RegexOptions.CultureInvariant))
             return false;
 
+        var preambleRaw = stripped[..exportMatch.Index];
         var preambleMask = masked[..exportMatch.Index];
         var preambleDepth = new int[preambleMask.Length + 1];
         var runningDepth = 0;
@@ -1630,15 +1631,111 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         var copiedDirs = new HashSet<(string Dependency, string Subdir)>();
 
         if (Regex.IsMatch(masked,
-            @"\b(?:config|configResolved|options|outputOptions|resolveId|load|transform|renderChunk)\s*(?:\(|:)",
+            @"\b(?:config|configResolved|options|outputOptions|resolveId|load|transform|renderChunk)\b",
             RegexOptions.CultureInvariant))
             return false;
+
+        var fnMatches = Regex.Matches(preambleMask,
+            @"\bfunction\s+(?<fn>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(\s*\)\s*(?::\s*[A-Za-z_$][A-Za-z0-9_$]*\s*)?\{",
+            RegexOptions.CultureInvariant);
+        if (fnMatches.Count != Regex.Matches(preambleMask, @"\bfunction\b", RegexOptions.CultureInvariant).Count)
+            return false;
+        var validPluginFns = new HashSet<string>(StringComparer.Ordinal);
+        foreach (Match fnMatch in fnMatches)
+        {
+            if (preambleDepth[fnMatch.Index] != 0)
+                return false;
+            var braceIdx = fnMatch.Index + fnMatch.Length - 1;
+            if (!TryExtractBalancedSlice(preambleRaw, preambleMask, braceIdx, '{', '}', out var fnBodyRaw, out var fnBodyMask, out _))
+                return false;
+            var retMatch = Regex.Match(fnBodyMask, @"\A\s*return\s*\{", RegexOptions.CultureInvariant);
+            if (!retMatch.Success)
+                return false;
+            var retBraceIdx = retMatch.Length - 1;
+            if (!TryExtractBalancedSlice(fnBodyRaw, fnBodyMask, retBraceIdx, '{', '}', out _, out var pluginObjMask, out var retCloseIdx) ||
+                !Regex.IsMatch(fnBodyMask[(retCloseIdx + 1)..], @"\A\s*;?\s*\z", RegexOptions.CultureInvariant))
+                return false;
+
+            var pStart = 0;
+            var pDepth = 0;
+            var seenMembers = new HashSet<string>(StringComparer.Ordinal);
+            for (var i = 0; i <= pluginObjMask.Length; i++)
+            {
+                var ch = i < pluginObjMask.Length ? pluginObjMask[i] : ',';
+                if (ch is '{' or '(' or '[')
+                    pDepth++;
+                else if (ch is '}' or ')' or ']')
+                {
+                    pDepth--;
+                    if (pDepth < 0)
+                        return false;
+                }
+                else if (ch == ',' && pDepth == 0)
+                {
+                    var mMask = pluginObjMask[pStart..i].Trim();
+                    pStart = i + 1;
+                    if (mMask.Length == 0)
+                    {
+                        if (i < pluginObjMask.Length)
+                            return false;
+                        continue;
+                    }
+                    if (Regex.IsMatch(mMask, @"\Aname\s*:\s*(?<q>['""])\s+\k<q>\z", RegexOptions.CultureInvariant))
+                    {
+                        if (!seenMembers.Add("name"))
+                            return false;
+                        continue;
+                    }
+                    var hookMatch = Regex.Match(mMask,
+                        @"\A(?<hook>generateBundle|closeBundle|writeBundle)\s*\(\s*(?:[A-Za-z_$][A-Za-z0-9_$]*(?:\s*,\s*[A-Za-z_$][A-Za-z0-9_$]*)*)?\s*\)\s*\{(?<body>[\s\S]*)\}\z",
+                        RegexOptions.CultureInvariant);
+                    if (!hookMatch.Success || !seenMembers.Add(hookMatch.Groups["hook"].Value))
+                        return false;
+                }
+            }
+            if (pDepth != 0 || !seenMembers.Contains("name"))
+                return false;
+            validPluginFns.Add(fnMatch.Groups["fn"].Value);
+        }
 
         if (rootProps.TryGetValue("plugins", out var pluginsEntry))
         {
             if (!pluginsEntry.Mask.StartsWith('[') ||
-                !TryExtractBalancedSlice(pluginsEntry.Raw, pluginsEntry.Mask, 0, '[', ']', out _, out _, out var pluginsCloseIdx) ||
+                !TryExtractBalancedSlice(pluginsEntry.Raw, pluginsEntry.Mask, 0, '[', ']', out _, out var pluginsMask, out var pluginsCloseIdx) ||
                 !string.IsNullOrWhiteSpace(pluginsEntry.Mask[(pluginsCloseIdx + 1)..]))
+                return false;
+
+            var plStart = 0;
+            var plDepth = 0;
+            for (var i = 0; i <= pluginsMask.Length; i++)
+            {
+                var ch = i < pluginsMask.Length ? pluginsMask[i] : ',';
+                if (ch is '{' or '(' or '[')
+                    plDepth++;
+                else if (ch is '}' or ')' or ']')
+                {
+                    plDepth--;
+                    if (plDepth < 0)
+                        return false;
+                }
+                else if (ch == ',' && plDepth == 0)
+                {
+                    var elemMask = pluginsMask[plStart..i].Trim();
+                    plStart = i + 1;
+                    if (elemMask.Length == 0)
+                    {
+                        if (i < pluginsMask.Length)
+                            return false;
+                        continue;
+                    }
+                    var callMatch = Regex.Match(elemMask, @"\A(?<fn>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(\s*\)\z", RegexOptions.CultureInvariant);
+                    if (!callMatch.Success ||
+                        declCounts.GetValueOrDefault(callMatch.Groups["fn"].Value) != 1 ||
+                        !validPluginFns.Contains(callMatch.Groups["fn"].Value))
+                        return false;
+                }
+            }
+            if (plDepth != 0)
                 return false;
 
             if (masked.Contains("emitFile", StringComparison.Ordinal))
