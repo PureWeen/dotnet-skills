@@ -1631,9 +1631,53 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         var copiedDirs = new HashSet<(string Dependency, string Subdir)>();
 
         if (Regex.IsMatch(masked,
-            @"\b(?:config|configResolved|options|outputOptions|resolveId|load|transform|renderChunk)\b",
+            @"\b(?:config|configResolved|options|outputOptions|resolveId|load|transform|renderChunk|writeFile|writeFileSync|appendFile|appendFileSync|copyFile|copyFileSync|rmSync|unlinkSync|delete)\b|\b(?:Object\.assign|Object\.definePropert|Reflect\.)|\b(?:outDir|initializer|licenseManifest|entries|fixedNames)\s*(?:\.[A-Za-z_$][A-Za-z0-9_$]*|\[\s*[^\]]+\s*\])\s*=(?!=)",
             RegexOptions.CultureInvariant))
             return false;
+
+        var pPos = 0;
+        while (pPos < preambleMask.Length)
+        {
+            while (pPos < preambleMask.Length && (char.IsWhiteSpace(preambleMask[pPos]) || preambleMask[pPos] == ';'))
+                pPos++;
+            if (pPos >= preambleMask.Length)
+                break;
+            var rem = preambleMask[pPos..];
+            var m = Regex.Match(rem, @"\Aimport\s+[^;]+\s+from\s*(?<q>['""])\s+\k<q>\s*;?", RegexOptions.CultureInvariant);
+            if (m.Success)
+            {
+                pPos += m.Length;
+                continue;
+            }
+            m = Regex.Match(rem, @"\Aconst\s+[A-Za-z_$][A-Za-z0-9_$]*\s*(?::\s*[^=;]+\s*)?=\s*(?<q>['""])\s+\k<q>\s*;?", RegexOptions.CultureInvariant);
+            if (m.Success)
+            {
+                pPos += m.Length;
+                continue;
+            }
+            m = Regex.Match(rem, @"\Aconst\s+(?:entries|fixedNames)\b[^={;]*=\s*\{", RegexOptions.CultureInvariant);
+            if (m.Success &&
+                TryExtractBalancedSlice(preambleRaw, preambleMask, pPos + m.Length - 1, '{', '}', out _, out _, out var objCloseIdx))
+            {
+                pPos = objCloseIdx + 1;
+                continue;
+            }
+            m = Regex.Match(rem, @"\Afunction\s+(?<fn>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(\s*\)\s*(?::\s*[A-Za-z_$][A-Za-z0-9_$]*\s*)?\{", RegexOptions.CultureInvariant);
+            if (m.Success &&
+                TryExtractBalancedSlice(preambleRaw, preambleMask, pPos + m.Length - 1, '{', '}', out _, out _, out var fnCloseIdx))
+            {
+                pPos = fnCloseIdx + 1;
+                continue;
+            }
+            m = Regex.Match(rem, @"\AcpSync\s*\(", RegexOptions.CultureInvariant);
+            if (m.Success &&
+                TryExtractBalancedSlice(preambleRaw, preambleMask, pPos + m.Length - 1, '(', ')', out _, out _, out var cpCloseIdx))
+            {
+                pPos = cpCloseIdx + 1;
+                continue;
+            }
+            return false;
+        }
 
         var fnMatches = Regex.Matches(preambleMask,
             @"\bfunction\s+(?<fn>[A-Za-z_$][A-Za-z0-9_$]*)\s*\(\s*\)\s*(?::\s*[A-Za-z_$][A-Za-z0-9_$]*\s*)?\{",
@@ -1742,11 +1786,11 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             {
                 if (consts.TryGetValue("initializer", out var initVal) &&
                     initVal.Equals(packageId + ".lib.module.js", StringComparison.Ordinal) &&
-                    Regex.IsMatch(masked, @"\bfileName\s*:\s*initializer\b\s*(?:,|\})", RegexOptions.CultureInvariant))
+                    Regex.IsMatch(masked, @"\bthis\.emitFile\s*\(\s*\{[^}]*\bfileName\s*:\s*initializer\b\s*(?:,|\})", RegexOptions.CultureInvariant))
                 {
                     initializerBases.Add(packageId);
                 }
-                foreach (Match initMask in Regex.Matches(masked, @"\bfileName\s*:\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
+                foreach (Match initMask in Regex.Matches(masked, @"\bthis\.emitFile\s*\(\s*\{[^}]*\bfileName\s*:\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:,|\})",
                     RegexOptions.CultureInvariant))
                 {
                     var litVal = stripped.Substring(initMask.Groups["lit"].Index, initMask.Groups["lit"].Length);
@@ -1755,6 +1799,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 }
             }
         }
+        if (Regex.Matches(masked, @"\bemitFile\b", RegexOptions.CultureInvariant).Count != initializerBases.Count)
+            return false;
 
         if (!rolldownProps.TryGetValue("input", out var inputEntry) ||
             (rootProps.TryGetValue("input", out var rootInputEntry) && !rootInputEntry.Mask.Equals("entries", StringComparison.Ordinal)))
@@ -1991,6 +2037,8 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             if (sub1 == sub2 && directDepSet.Contains(dep))
                 copiedDirs.Add((dep, sub1));
         }
+        if (Regex.Matches(masked, @"\bcpSync\s*\(", RegexOptions.CultureInvariant).Count != copiedDirs.Count)
+            return false;
 
         if (exactScripts.Count == 0 && initializerBases.Count == 0 && chunkNames.Count == 0)
             return false;
