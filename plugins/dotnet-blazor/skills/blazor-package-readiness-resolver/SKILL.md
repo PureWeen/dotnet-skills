@@ -126,6 +126,7 @@ process-local admission. Caller-authored Sigstore/gh JSON or locally imported so
 archives cannot authorize a positive: exact-commit helper acquisition, bound receipts and positive
 per-entry source/project correspondence are prerequisites. Do not construct receipts or
 set the helper admission key yourself.
+Vite-config-derived attribution is deferred under the [LP-10 Vite contract](references/lp10-vite-contract.md).
 
 For LP-04 `lp04-notice-coverage/2.1.0`, default single-input requests pass the assessed package only
 under the `bundled-web-assets/1` profile (bounded layout/suffix profile, complete retained inventory,
