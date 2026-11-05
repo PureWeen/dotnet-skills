@@ -292,10 +292,13 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         if (runtimePkgDir is not ("" or "src/"))
             return unverified($"shipping package.json in unsupported directory '{runtimePkgDir}'");
 
+        var expectedPkgPath = prov.RootPrefix + runtimePkgDir + "package.json";
+        var pkgEntry = prov.SourceFiles.FirstOrDefault(kv =>
+            kv.Key.Equals(expectedPkgPath, StringComparison.OrdinalIgnoreCase));
         var expectedLockPath = prov.RootPrefix + runtimePkgDir + "package-lock.json";
         var lockEntry = prov.SourceFiles.FirstOrDefault(kv =>
             kv.Key.Equals(expectedLockPath, StringComparison.OrdinalIgnoreCase));
-        if (lockEntry.Key is null ||
+        if (pkgEntry.Key is null || lockEntry.Key is null ||
             !TryResolveLockClosure(lockEntry.Value, runtimeDeps, out var closure) ||
             closure.Count == 0)
             return unverified("source archive lacks a valid package-lock.json covering declared runtime npm dependencies with single SPDX license IDs");
@@ -310,6 +313,18 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 prov.Declaration.Id, out vitePlan);
         }
 
+        var hasDecoupledBundlerNotice = !hasManifestEntry &&
+            vitePlan is null &&
+            HasBundlerScriptInPackageJson(pkgEntry.Value) &&
+            IsGeneratedViteLicenseNotice(noticeFile, noticeText, prov) &&
+            inventory.Assets.All(a =>
+                a.Path.StartsWith("staticwebassets/", StringComparison.Ordinal) &&
+                !a.Path["staticwebassets/".Length..].Contains('/') &&
+                (a.Path.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
+                 a.Path.EndsWith(".mjs", StringComparison.OrdinalIgnoreCase)) &&
+                !prov.SourceFiles.Keys.Any(k =>
+                    k.EndsWith("/" + a.Path["staticwebassets/".Length..], StringComparison.OrdinalIgnoreCase)));
+
         if (hasManifestEntry)
         {
             foreach (var asset in inventory.Assets)
@@ -320,9 +335,13 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     return unverified($"bundled web asset {asset.Path} lacks a digest-bound per-asset source/component map consistent with the lockfile");
             }
         }
-        else if (vitePlan is null ||
-                 !string.Equals(vitePlan.LicenseFileName, noticeFile, StringComparison.Ordinal) ||
-                 !IsGeneratedViteLicenseNotice(noticeFile, noticeText, vitePlan, prov))
+        else if (vitePlan is not null)
+        {
+            if (!string.Equals(vitePlan.LicenseFileName, noticeFile, StringComparison.Ordinal) ||
+                !IsGeneratedViteLicenseNotice(noticeFile, noticeText, prov))
+                return unverified("package lacks either a digest-bound per-asset bundler manifest or an attested Vite build.license notice configuration");
+        }
+        else if (!hasDecoupledBundlerNotice)
         {
             return unverified("package lacks either a digest-bound per-asset bundler manifest or an attested Vite build.license notice configuration");
         }
@@ -346,7 +365,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         {
             if (!noticeSections.TryGetValue((pkgName, pkgVersion), out var section))
             {
-                if (vitePlan is not null &&
+                if ((vitePlan is not null || hasDecoupledBundlerNotice) &&
                     CanonicalLicenseBody.Clauses(pkgLicense) is not null &&
                     !IsPackageNamePresentInAssets(pkgName, inventory, prov.PackageEntries) &&
                     IsViteExcludedNonBrowserDependency(pkgName, pkgVersion, lockEntry.Value))
@@ -394,7 +413,9 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         var orderedExcluded = excludedLockEntries.Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal).ToArray();
         var assetAttributionPhrase = vitePlan is not null
             ? "correspond to declared Vite build outputs"
-            : "have digest-bound producer-declared component/source maps";
+            : hasDecoupledBundlerNotice
+                ? "are covered by a bundler-generated third-party license manifest"
+                : "have digest-bound producer-declared component/source maps";
         var closureExclusionPhrase = orderedExcluded.Length > 0
             ? $" (plus {orderedExcluded.Length} validated non-bundled type-only/SSR-shim lockfile entries: {string.Join(", ", orderedExcluded)})"
             : "";
@@ -1525,7 +1546,6 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
     }
 
     private static bool IsGeneratedViteLicenseNotice(string noticeFile, string noticeText,
-        Lp10BinaryAttributionResolver.AttestedViteBuildPlan vitePlan,
         Lp10BinaryAttributionResolver.VerifiedProvenanceContext prov)
     {
         if (!noticeText.TrimStart().StartsWith("# Licenses", StringComparison.Ordinal) ||

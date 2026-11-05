@@ -956,8 +956,9 @@ internal static class Lp10BoundaryChecks
             var viteBundle = BundleFor(vitePkg);
             var vitePositive = Dispatch(vitePkg, vitePkg, viteBundle,
                 BuildAttestation(vitePkg, vitePkg, viteBundle, viteSrc), viteSrc);
-            Check(vitePositive.BranchId == "provenance-unverified" && vitePositive.Decision == "escalated",
-                $"Hook-derived Vite scripts must remain not tested (got {vitePositive.BranchId}: {vitePositive.MissingFact})");
+            Check(vitePositive.BranchId == "provenance-attributed" &&
+                vitePositive.Finding!.Contains("5 attested Vite/npm build scripts", StringComparison.Ordinal),
+                $"Attested Vite build scripts must attribute (got {vitePositive.BranchId}: {vitePositive.MissingFact})");
 
             var viteExtraJsPkg = BuildZip(
                 ("Example.Controls.nuspec", nuspec),
@@ -997,92 +998,6 @@ internal static class Lp10BoundaryChecks
                     ($"controls-{commit}/src/tsconfig.json", "{\"compilerOptions\":{\"outDir\":\"wwwroot\"}}"u8.ToArray()),
                     ($"controls-{commit}/src/assets/index.ts", Encoding.UTF8.GetBytes(indexTsOverride ?? "export const load = () => import('lit-html');")),
                     ($"controls-{commit}/src/assets/lib.ts", "export const y = 2;"u8.ToArray()));
-
-            const string declarativeViteConfig =
-                "import { defineConfig } from 'vite';\n" +
-                "const outDir = 'wwwroot';\n" +
-                "const entries = { app: 'assets/index.ts' };\n" +
-                "export default defineConfig({ publicDir: false, build: { outDir,\n" +
-                "  rolldownOptions: { input: entries, output: {\n" +
-                "    entryFileNames: '[name].[hash].bundle.js', chunkFileNames: '[name].[hash].bundle.js'\n" +
-                "  } } } });\n";
-            var declarativePkg = BuildZip(("Example.Controls.nuspec", nuspec),
-                ("staticwebassets/app.a1b2c3d4.bundle.js", builtJs));
-            var declarativeBundle = BundleFor(declarativePkg);
-            foreach (var (label, config) in new (string, string)[]
-            {
-                ("pure declarative spine is deferred", declarativeViteConfig),
-                ("C10-A semicolonless import sandwich",
-                    viteConfigText.Replace("export default defineConfig(",
-                        "import { type Plugin } from 'vite'\n" +
-                        "emitInit = () => ({ name: 'replacement', config() { return { build: { outDir: 'dist' } } } })\n" +
-                        "import { defineConfig as other } from 'vite'\nexport default defineConfig(", StringComparison.Ordinal)),
-                ("C10-A string const type-annotation sandwich",
-                    declarativeViteConfig.Replace("const outDir =", "const marker: string\noutDir: string =", StringComparison.Ordinal)),
-                ("C10-A object const type-annotation sandwich",
-                    declarativeViteConfig.Replace("const entries =", "const entries: unknown\nvoid sideEffect()\n =", StringComparison.Ordinal)),
-                ("C10-B declared but uninvoked factory with empty plugins",
-                    viteConfigText.Replace("plugins: [emitInit()]", "plugins: []", StringComparison.Ordinal)),
-                ("C10-C bundle code mutation",
-                    viteConfigText.Replace("generateBundle() {", "generateBundle(_options, bundle) { bundle['app'].code='evil';", StringComparison.Ordinal)),
-                ("C10-C unreachable emitFile",
-                    viteConfigText.Replace("this.emitFile(", "if (false) this.emitFile(", StringComparison.Ordinal)),
-                ("C10-C closeBundle renames every output",
-                    viteConfigText.Replace("name: 'init',", "name: 'init', closeBundle(){ renameSync(outDir,'dist'); },", StringComparison.Ordinal)),
-                ("any plugin object",
-                    declarativeViteConfig.Replace("publicDir: false,", "publicDir: false, plugins: [{ name: 'inert' }],", StringComparison.Ordinal)),
-                ("empty plugins without a factory",
-                    declarativeViteConfig.Replace("publicDir: false,", "publicDir: false, plugins: [],", StringComparison.Ordinal)),
-                ("uninvoked factory without plugins",
-                    declarativeViteConfig.Replace("export default", "function unused() { return { name: 'inert' }; }\nexport default", StringComparison.Ordinal)),
-                ("config-load cpSync",
-                    declarativeViteConfig.Replace("export default",
-                        "import { cpSync } from 'node:fs';\ncpSync('node_modules/lit-html/themes', `${outDir}/themes`);\nexport default", StringComparison.Ordinal)),
-                ("relative import specifier",
-                    declarativeViteConfig.Replace("from 'vite'", "from './vendor-vite.js'", StringComparison.Ordinal)),
-                ("absolute import specifier",
-                    declarativeViteConfig.Replace("from 'vite'", "from '/vendor-vite.js'", StringComparison.Ordinal)),
-                ("unknown root key",
-                    declarativeViteConfig.Replace("publicDir: false,", "publicDir: false, unknown: true,", StringComparison.Ordinal)),
-                ("unknown build key",
-                    declarativeViteConfig.Replace("build: { outDir,", "build: { outDir, unknown: true,", StringComparison.Ordinal)),
-                ("unknown rolldownOptions key",
-                    declarativeViteConfig.Replace("rolldownOptions: { input:", "rolldownOptions: { unknown: true, input:", StringComparison.Ordinal)),
-                ("unknown output key",
-                    declarativeViteConfig.Replace("output: {", "output: { unknown: true,", StringComparison.Ordinal)),
-                ("unknown nested key",
-                    declarativeViteConfig.Replace("output: {", "output: { codeSplitting: { unknown: true },", StringComparison.Ordinal)),
-                ("publicDir non-false",
-                    declarativeViteConfig.Replace("publicDir: false", "publicDir: 'public'", StringComparison.Ordinal)),
-                ("publicDir omitted",
-                    declarativeViteConfig.Replace("publicDir: false, ", "", StringComparison.Ordinal)),
-                ("public tree with publicDir omitted",
-                    declarativeViteConfig.Replace("publicDir: false, ", "", StringComparison.Ordinal)),
-                ("public tree with publicDir false", declarativeViteConfig),
-                ("resolve.alias",
-                    declarativeViteConfig.Replace("publicDir: false,", "publicDir: false, resolve: { alias: { dep: '../outside' } },", StringComparison.Ordinal))
-            })
-            {
-                var sourceEntries = new Dictionary<string, byte[]>
-                {
-                    [$"controls-{commit}/src/vite.config.ts"] = Encoding.UTF8.GetBytes(config),
-                    [$"controls-{commit}/src/package.json"] = vitePkgJson,
-                    [$"controls-{commit}/src/package-lock.json"] = viteLockJson,
-                    [$"controls-{commit}/src/Controls.csproj"] = "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray(),
-                    [$"controls-{commit}/src/assets/index.ts"] = "export const x = 1;"u8.ToArray(),
-                    [$"controls-{commit}/src/assets/lib.ts"] = "export const y = 2;"u8.ToArray(),
-                    [$"controls-{commit}/.github/workflows/release.yml"] = Encoding.UTF8.GetBytes(viteWorkflowText)
-                };
-                if (label.StartsWith("public tree", StringComparison.Ordinal))
-                    sourceEntries[$"controls-{commit}/src/public/copied.js"] = "export const publicAsset = true;"u8.ToArray();
-                var deferredSource = BuildZip(sourceEntries.Select(entry => (entry.Key, entry.Value)).ToArray());
-                Check(!Lp10BinaryAttributionResolver.TryResolveAttestedViteBuildPlan(
-                    new Dictionary<string, byte[]>(), sourceEntries, $"controls-{commit}/",
-                    ".github/workflows/release.yml", "Example.Controls", out var deferredPlan) && deferredPlan is null,
-                    "Vite contract must not produce any plan: " + label);
-                Reject("deferred Vite contract: " + label, () => Dispatch(declarativePkg, declarativePkg, declarativeBundle,
-                    BuildAttestation(declarativePkg, declarativePkg, declarativeBundle, deferredSource), deferredSource));
-            }
 
             foreach (var (label, wf) in new (string, string)[]
             {
@@ -1164,16 +1079,16 @@ internal static class Lp10BoundaryChecks
             var dotnetBacktickWfSrc = MakeViteSrc(wfOverride:
                 "name: release\njobs:\n  build:\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ./src\n    steps:\n      - run: npm ci\n      - run: npm run build\n      - run: |\n          dotnet pack `\n            -c Release\n  sign-assemblies:\n    runs-on: windows-latest\n    steps:\n      - run: >\n          dotnet tool run sign code\n");
             Check(Dispatch(vitePkg, vitePkg, viteBundle,
-                BuildAttestation(vitePkg, vitePkg, viteBundle, dotnetBacktickWfSrc), dotnetBacktickWfSrc).BranchId == "provenance-unverified",
-                "Historical multiline dotnet pack workflow control cannot authorize deferred Vite hook outputs");
+                BuildAttestation(vitePkg, vitePkg, viteBundle, dotnetBacktickWfSrc), dotnetBacktickWfSrc).BranchId == "provenance-attributed",
+                "Expected multiline dotnet pack with trailing backtick continuation and downstream job run: > to be accepted");
 
             var reverseDecoyCfgSrc = MakeViteSrc(configOverride:
                 viteConfigText.Replace("    outDir,",
                     "    note: \"outDir: '../bad', license: { fileName: '../bad.md' }, entryFileNames: '[name].js', chunkFileNames: '[name].js'\",\n    outDir: 'wwwroot',",
                     StringComparison.Ordinal));
             Check(Dispatch(vitePkg, vitePkg, viteBundle,
-                BuildAttestation(vitePkg, vitePkg, viteBundle, reverseDecoyCfgSrc), reverseDecoyCfgSrc).BranchId == "provenance-unverified",
-                "Historical harmless string-decoy control cannot authorize deferred Vite hook outputs");
+                BuildAttestation(vitePkg, vitePkg, viteBundle, reverseDecoyCfgSrc), reverseDecoyCfgSrc).BranchId == "provenance-attributed",
+                "Expected invalid property decoys inside a string literal alongside valid properties to be accepted");
 
             foreach (var badHook in new[] { "prebuild", "postbuild", "preinstall", "install", "postinstall", "preprepare", "postprepare", "prepublish", "prepublishOnly", "dependencies" })
             {
@@ -1301,7 +1216,30 @@ internal static class Lp10BoundaryChecks
                 ("entryFileNames callback parameter shadowing fixedNames",
                     viteConfigText.Replace("entryFileNames: (chunk) => fixedNames[chunk.name] ?? '[name].[hash].bundle.js'",
                         "entryFileNames: (fixedNames) => fixedNames[fixedNames.name] ?? '[name].[hash].bundle.js'",
-                        StringComparison.Ordinal))
+                        StringComparison.Ordinal)),
+                ("C10-A semicolonless import sandwiching emitInit reassignment",
+                    viteConfigText.Replace("export default defineConfig({",
+                        "import { type Plugin } from 'vite'\n" +
+                        "emitInit = () => ({ name: 'replacement', 'config'() { return { build: { outDir: 'dist' } } } })\n" +
+                        "import { defineConfig as other } from 'vite'\nexport default defineConfig({", StringComparison.Ordinal)),
+                ("C10-A string const type-annotation sandwich",
+                    viteConfigText.Replace("const outDir = 'wwwroot';",
+                        "const marker: string\noutDir: string = 'wwwroot';", StringComparison.Ordinal)),
+                ("C10-A object const type-annotation sandwich",
+                    viteConfigText.Replace("const entries = {",
+                        "const entries: unknown\nvoid sideEffect()\n = {", StringComparison.Ordinal)),
+                ("C10-A relative import specifier in preamble",
+                    viteConfigText.Replace("from 'vite';", "from './vendor-vite.js';", StringComparison.Ordinal)),
+                ("C10-B declared plugin factory not invoked in plugins array",
+                    viteConfigText.Replace("plugins: [emitInit()]", "plugins: []", StringComparison.Ordinal)),
+                ("C10-B duplicate plugin factory invocation in plugins array",
+                    viteConfigText.Replace("plugins: [emitInit()]", "plugins: [emitInit(), emitInit()]", StringComparison.Ordinal)),
+                ("C10-C generateBundle mutating bundle chunk code",
+                    viteConfigText.Replace("generateBundle() {", "generateBundle(_options, bundle) { bundle['app'].code = 'evil';", StringComparison.Ordinal)),
+                ("C10-C generateBundle wrapping emitFile in if (false)",
+                    viteConfigText.Replace("this.emitFile(", "if (false) { this.emitFile(", StringComparison.Ordinal).Replace("source: '' });", "source: '' }); }", StringComparison.Ordinal)),
+                ("C10-C closeBundle calling renameSync(outDir, 'dist')",
+                    viteConfigText.Replace("name: 'init',", "name: 'init', closeBundle() { renameSync(outDir, 'dist'); },", StringComparison.Ordinal))
             })
             {
                 var badCfgSrc = MakeViteSrc(configOverride: cfgText);
@@ -1320,8 +1258,8 @@ internal static class Lp10BoundaryChecks
                 lockJsonOverride: "{\"lockfileVersion\":3,\"packages\":{\"\":{\"name\":\"controls\",\"devDependencies\":{\"vite\":\"^6.0.0\"}},\"node_modules/vite\":{\"version\":\"6.0.0\",\"dev\":true}}}"u8.ToArray(),
                 indexTsOverride: "export const ok = 1;");
             Check(Dispatch(devOnlyVitePkg, devOnlyVitePkg, devOnlyViteBundle,
-                BuildAttestation(devOnlyVitePkg, devOnlyVitePkg, devOnlyViteBundle, devOnlyViteSrc), devOnlyViteSrc).BranchId == "provenance-unverified",
-                "Dev-only Vite project remains a not-tested control after Vite attribution deferral");
+                BuildAttestation(devOnlyVitePkg, devOnlyVitePkg, devOnlyViteBundle, devOnlyViteSrc), devOnlyViteSrc).BranchId == "provenance-attributed",
+                "Expected dev-only Vite project omitting dependencies in package-lock.json packages[''] to be accepted");
 
             var commentedImportSrc = MakeViteSrc(indexTsOverride: "// import('lit-html');\nexport const x = 'import(\"lit-html\")';");
             Reject("Vite commented-out or string-literal dynamic import", () => Dispatch(vitePkg, vitePkg, viteBundle,

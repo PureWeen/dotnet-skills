@@ -1014,7 +1014,7 @@ internal static class Lp04Checks
         check(badModeARes.BranchId == "provenance-notices-unverified" && badModeARes.Decision == "escalated",
             "LP-04 Mode A rejects incomplete THIRD-PARTY-LICENSES.md");
 
-        // Historical Vite hook/copy controls now reject before notice interpretation.
+        // Attested Vite build.license Mode A positive & negative boundary checks
         const string viteConfig =
             "import { defineConfig } from 'vite';\n" +
             "import { cpSync } from 'node:fs';\n" +
@@ -1074,8 +1074,9 @@ internal static class Lp04Checks
         var viteSrcPos = BuildViteSource(viteLockWithExcluded);
         var (viteBndPos, viteAttPos) = MakeProvenance(vitePkg, vitePkg, viteSrcPos);
         var viteResPos = Dispatch5(vitePkg, vitePkg, viteBndPos, viteAttPos, viteSrcPos);
-        check(viteResPos.BranchId == "provenance-notices-unverified" && viteResPos.Decision == "escalated",
-            $"LP-04 config-load cpSync must not establish Mode A notice provenance: {viteResPos.BranchId} ({viteResPos.MissingFact})");
+        check(viteResPos.BranchId == "provenance-notices-verified" && viteResPos.Decision == "deterministic" &&
+            viteResPos.Finding!.Contains("@lit-labs/ssr-dom-shim@1.6.0, @types/trusted-types@2.0.7", StringComparison.Ordinal),
+            $"LP-04 Vite build.license Mode A positive failed: {viteResPos.BranchId} ({viteResPos.MissingFact})");
 
         // Negative 1: extra notice section not in lockfile closure (noticeSections subset-of closure check)
         var extraSectionTpl = Encoding.UTF8.GetBytes(
@@ -1090,8 +1091,9 @@ internal static class Lp04Checks
             ("staticwebassets/themes/light/bootstrap.css", viteCss));
         var (extraSecBnd, extraSecAtt) = MakeProvenance(extraSectionPkg, extraSectionPkg, viteSrcPos);
         var extraSecRes = Dispatch5(extraSectionPkg, extraSectionPkg, extraSecBnd, extraSecAtt, viteSrcPos);
-        check(extraSecRes.BranchId == "provenance-notices-unverified" && extraSecRes.Decision == "escalated",
-            "LP-04 rejects Vite notice sections outside runtime closure at the earlier deferred-config gate");
+        check(extraSecRes.BranchId == "provenance-notices-unverified" &&
+            extraSecRes.MissingFact!.Contains("unrelated-pkg@1.0.0", StringComparison.Ordinal),
+            "LP-04 rejects notice sections not present in runtime closure");
 
         // Negative 2: excluded @types/* package with non-canonical / copyleft license (e.g. GPL-3.0-only, LicenseRef-Custom, lowercase mit)
         foreach (var badExcludedLicense in new[] { "GPL-3.0-only", "LicenseRef-Custom", "mit" })
@@ -1101,7 +1103,8 @@ internal static class Lp04Checks
             var badSrc = BuildViteSource(badLock);
             var (badBnd, badAtt) = MakeProvenance(vitePkg, vitePkg, badSrc);
             var badRes = Dispatch5(vitePkg, vitePkg, badBnd, badAtt, badSrc);
-            check(badRes.BranchId == "provenance-notices-unverified" && badRes.Decision == "escalated",
+            check(badRes.BranchId == "provenance-notices-unverified" &&
+                badRes.MissingFact!.Contains("@types/trusted-types@2.0.7", StringComparison.Ordinal),
                 $"LP-04 rejects excluded @types package with {badExcludedLicense} license");
         }
 
@@ -1124,7 +1127,8 @@ internal static class Lp04Checks
         var ssrSubdepSrc = BuildViteSource(ssrWithResolvableSubdepLock);
         var (ssrSubdepBnd, ssrSubdepAtt) = MakeProvenance(ssrWithSubdepPkg, ssrWithSubdepPkg, ssrSubdepSrc);
         var ssrSubdepRes = Dispatch5(ssrWithSubdepPkg, ssrWithSubdepPkg, ssrSubdepBnd, ssrSubdepAtt, ssrSubdepSrc);
-        check(ssrSubdepRes.BranchId == "provenance-notices-unverified" && ssrSubdepRes.Decision == "escalated",
+        check(ssrSubdepRes.BranchId == "provenance-notices-unverified" &&
+            ssrSubdepRes.MissingFact!.Contains("@lit-labs/ssr-dom-shim@1.6.0", StringComparison.Ordinal),
             "LP-04 rejects @lit-labs/ssr-dom-shim when it declares sub-dependencies");
 
         foreach (var extraField in new[]
@@ -1142,7 +1146,8 @@ internal static class Lp04Checks
             var badSsrSrc = BuildViteSource(badSsrLock);
             var (badSsrBnd, badSsrAtt) = MakeProvenance(vitePkg, vitePkg, badSsrSrc);
             var badSsrRes = Dispatch5(vitePkg, vitePkg, badSsrBnd, badSsrAtt, badSsrSrc);
-            check(badSsrRes.BranchId == "provenance-notices-unverified" && badSsrRes.Decision == "escalated",
+            check(badSsrRes.BranchId == "provenance-notices-unverified" &&
+                badSsrRes.MissingFact!.Contains("@lit-labs/ssr-dom-shim@1.6.0", StringComparison.Ordinal),
                 $"LP-04 rejects @lit-labs/ssr-dom-shim with {extraField}");
         }
 
@@ -1241,8 +1246,8 @@ internal static class Lp04Checks
             ("staticwebassets/index.a1b2c3d4.bundle.js", yearlessInlineBytes),
             ("staticwebassets/themes/light/bootstrap.css", viteCss));
         var (yearlessBnd, yearlessAtt) = MakeProvenance(yearlessPkg, yearlessPkg, viteSrcPos);
-        check(Dispatch5(yearlessPkg, yearlessPkg, yearlessBnd, yearlessAtt, viteSrcPos).BranchId == "provenance-notices-unverified",
-            "LP-04 historical yearless copyright control cannot bypass deferred Vite notice provenance");
+        check(Dispatch5(yearlessPkg, yearlessPkg, yearlessBnd, yearlessAtt, viteSrcPos).BranchId == "provenance-notices-verified",
+            "LP-04 Mode A accepts yearless symbol-less 'copyright Acme Corporation' in root LICENSE");
 
         // Negative 6b: Non-optional transitive peerDependencies must be covered; uninstalled optional peerDependencies are allowed
         var viteLockOptionalPeerUninstalled = viteLockWithExcluded.Replace(
@@ -1251,8 +1256,8 @@ internal static class Lp04Checks
             StringComparison.Ordinal);
         var optPeerSrc = BuildViteSource(viteLockOptionalPeerUninstalled);
         var (optPeerBnd, optPeerAtt) = MakeProvenance(vitePkg, vitePkg, optPeerSrc);
-        check(Dispatch5(vitePkg, vitePkg, optPeerBnd, optPeerAtt, optPeerSrc).BranchId == "provenance-notices-unverified",
-            "LP-04 historical optional-peer control cannot bypass deferred Vite notice provenance");
+        check(Dispatch5(vitePkg, vitePkg, optPeerBnd, optPeerAtt, optPeerSrc).BranchId == "provenance-notices-verified",
+            "LP-04 Mode A allows uninstalled optional transitive peerDependencies");
 
         var viteLockRequiredPeerUncovered = viteLockWithExcluded.Replace(
             "\"node_modules/@lit-labs/ssr-dom-shim\":{\"version\":\"1.6.0\",\"license\":\"BSD-3-Clause\"}",
@@ -1265,6 +1270,19 @@ internal static class Lp04Checks
         var (reqPeerBnd, reqPeerAtt) = MakeProvenance(vitePkg, vitePkg, reqPeerSrc);
         check(Dispatch5(vitePkg, vitePkg, reqPeerBnd, reqPeerAtt, reqPeerSrc).BranchId == "provenance-notices-unverified",
             "LP-04 Mode A rejects uncovered non-optional transitive peerDependencies");
+
+        // Decoupled LP-04 bundler-generated notice positive: verifies THIRD-PARTY-LICENSES.md + package-lock.json + inline notices
+        // for top-level bundled JS even when vite.config.ts uses a custom shape outside LP-10's TryResolveAttestedViteBuildPlan.
+        var decoupledPkg = BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", viteTplBytes),
+            ("staticwebassets/index.a1b2c3d4.bundle.js", bundledScript));
+        var decoupledSrc = BuildViteSource(viteLockWithExcluded, configText: "export default { customBundlerShape: true };\n");
+        var (decoupledBnd, decoupledAtt) = MakeProvenance(decoupledPkg, decoupledPkg, decoupledSrc);
+        var decoupledRes = Dispatch5(decoupledPkg, decoupledPkg, decoupledBnd, decoupledAtt, decoupledSrc);
+        check(decoupledRes.BranchId == "provenance-notices-verified" && decoupledRes.Decision == "deterministic",
+            $"LP-04 decoupled bundler-generated notice should verify without LP-10 Vite plan: {decoupledRes.BranchId} ({decoupledRes.MissingFact})");
 
         // Negative 7: Bundler-manifest path with package.json dependency version mismatching package-lock.json
         JsonCase("package.json range mismatching package-lock.json root dependency spec", "package.json",

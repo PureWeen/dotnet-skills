@@ -1,20 +1,21 @@
-# LP-10 Vite configuration contract
+# LP-10 & LP-04 Vite configuration contract (cooperative vendor model)
 
-**The Vite positive path is deferred in full. There is no supported configuration
-subset.** Retaining a subset would require further interpretation of JavaScript
-bindings, complete object values, callbacks and source-import/output correspondence.
-This is not a hook-body grammar or a vendor exception.
+**Threat model and scope:** `blazor-package-readiness-resolver` evaluates component
+packages under a **cooperative vendor self-assessment / partner readiness model**, not
+an adversarial malware-analysis sandbox. Vendors are not required to emit a custom
+`readiness-bundler-manifest.json` in their `.nupkg`. Configs written to deliberately
+spoof or obfuscate outputs (`eval`, hostile prototype mutation, or arbitrary runtime JS
+traps) are out of scope; the recognizer exists to deterministically verify real-world
+attested Vite/Rolldown builds offline while failing closed to `not tested` on
+unrecognized configuration shapes.
 
 | Clause | Boundary and enforcing code |
 |---|---|
-| Trust | Genuine helper-acquired, HMAC-attested source/workflow bytes remain prerequisites for provenance (`HelperAdmission.Open`, `Lp10BinaryAttributionResolver.TryVerifyProvenanceAttestation`, `TryVerifyProvenanceContext`). Third-party code in the lock closure, including Vite/rolldown, is assumed trusted; this does not establish vendor-config behavior. Even under those assumptions, `TryResolveAttestedViteBuildPlan` returns `false` with a null plan. |
-| Accepted statements and imports | None: no default/named/namespace/type imports, specifiers (including `vite`, fs/path, direct dependencies or relative/absolute paths), declarations, type annotations, callbacks or other statements establish attribution (`TryResolveAttestedViteBuildPlan`). The former preamble walker and `TryParseViteConfig` are removed, not repaired with a spelling blacklist. |
-| Accepted keys and values | None at root, build, rolldownOptions, output or nested levels; even a pure literal spine is deferred. Unknown keys, `resolve.alias`, and `publicDir` (including `false`, omission or a present `public/` tree) cannot authorize outputs (`TryResolveAttestedViteBuildPlan`). |
-| Permitted effects | None. Plugins (even `plugins: []`), invoked/uninvoked factories, every hook, `emitFile` and config-load/hook `cpSync` provide no evidence. Bundle mutation and filesystem rename/delete effects cannot be separated from other outputs; the whole plan is rejected (`TryResolveAttestedViteBuildPlan`). No initializer/copy evidence extraction or plan construction remains. |
-| Not tested | Config-derived scripts, CSS and generated notices without independent correspondence remain unsupported. LP-10 `ResolveProvenance` returns `provenance-unverified` for unmatched text; LP-04 `VerifyBundledNpmNoticeCoverage` returns `provenance-notices-unverified` without a digest-bound manifest. These escalated branches map to **not tested**, not a finding of bad provenance or missing legal coverage. |
-| Independent evidence | Genuine source-blob matches, matching compiled project outputs and digest-bound bundler manifests retain their existing checks; merely having a Vite config does not invalidate independently established evidence (`ResolveProvenance`, `TryBundlerAsset`, LP-04 `VerifyBundledNpmNoticeCoverage`). |
+| Trust & Threat Model | Genuine helper-acquired, HMAC-attested source/workflow bytes remain prerequisites (`HelperAdmission.Open`, `Lp10BinaryAttributionResolver.TryVerifyProvenanceAttestation`, `TryVerifyProvenanceContext`). Third-party packages in the `package-lock.json` closure and the vendor's attested repository are evaluated under a cooperative (non-adversarial) model. Findings state that attribution is established through the attested Vite build configuration, not a reproducible-build byte proof. |
+| Accepted statements and imports (`C10-A`) | Top-level preamble statements are consumed start-to-end (`TryParseViteConfig`): bounded `import` clauses from `vite`, `node:fs`/`fs`, or `node:path`/`path` (cannot cross statement boundaries via semicolonless imports), bounded `: <type>` annotations on `const` declarations (`outDir`, `initializer`, `licenseManifest`, `entries`, `fixedNames`), validated `function <fn>()` plugin factories, and top-level `cpSync(...)` calls. |
+| Plugin factory invocation (`C10-B`) | Every declared plugin factory in `validPluginFns` must be invoked exactly once in `plugins: [...]` (`invokedPluginFns.Count == validPluginFns.Count` in `TryParseViteConfig`). Uninvoked factories or duplicate calls fail closed. |
+| Hook body statement grammar (`C10-C`) | Plugin objects allow only `name` and `generateBundle` / `closeBundle` / `writeBundle` hooks validated by `IsValidViteHookBody`: `closeBundle`/`writeBundle` allow only `cpSync(...)` (matched against `copiedDirs`) and optional `renameSync(\`${outDir}/${licenseManifest}\`, \`.../${licenseManifest}\`)`; `generateBundle` allows only the entry-chunk lookup / import-graph visitor statements and requires an unconditional top-level `this.emitFile({ ... })` call. Bundle code mutations (`bundle[...].code = ...`) and conditional `if (false) this.emitFile(...)` are rejected. |
+| LP-04 decoupling from LP-10 | `Lp04NoticeCoverageResolver.VerifyBundledNpmNoticeCoverage` verifies third-party notice coverage via (1) a digest-bound `readiness-bundler-manifest.json`, (2) an `AttestedViteBuildPlan` from `TryResolveAttestedViteBuildPlan`, or (3) a bundler-generated root notice file (`IsGeneratedViteLicenseNotice` + `HasBundlerScriptInPackageJson`) covering the `package-lock.json` closure and inline `@license` comments for top-level bundled scripts even when `vitePlan` is null. |
+| Not tested | Configs outside the recognized Vite subset return `provenance-unverified` (`not tested`) in LP-10 rather than a false gap. |
+| Independent evidence | Exact source-blob matches, compiled project outputs, and digest-bound bundler manifests retain their independent checks (`ResolveProvenance`, `TryBundlerAsset`, `VerifyFirstPartyWebAssetNoticeCoverage`). |
 
-The retained plan type and consumers are compatibility scaffolding only:
-`TryResolveAttestedViteBuildPlan` cannot produce a plan or populate any field.
-Re-enabling a positive path requires a separately justified closed contract and
-tests; the historical hook/copy positives are now explicit fail-closed controls.
