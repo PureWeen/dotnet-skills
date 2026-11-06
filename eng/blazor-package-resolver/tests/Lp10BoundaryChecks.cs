@@ -911,7 +911,7 @@ internal static class Lp10BoundaryChecks
 
             const string viteConfigText =
                 "import { defineConfig } from 'vite';\n" +
-                "const outDir = 'wwwroot';\n" +
+                "const outDir: string = 'wwwroot';\n" +
                 "const initializer = 'Example.Controls.lib.module.js';\n" +
                 "const entries = { app: 'assets/index.ts', api: 'assets/lib.ts' };\n" +
                 "const fixedNames = { api: 'index.js' };\n" +
@@ -1144,7 +1144,7 @@ internal static class Lp10BoundaryChecks
                     viteConfigText.Replace("groups: [{ name: 'vendor', test: /vendor/ }]",
                         "groups: [\"name: 'vendor', test: /vendor/\"]", StringComparison.Ordinal)),
                 ("shadowed nested const outDir after non-literal top-level const outDir",
-                    viteConfigText.Replace("const outDir = 'wwwroot';",
+                    viteConfigText.Replace("const outDir: string = 'wwwroot';",
                         "const outDir = String('dist');\n{ const outDir = 'wwwroot'; }", StringComparison.Ordinal)),
                 ("shadowed const entries inside defineConfig callback body",
                     viteConfigText.Replace("export default defineConfig({",
@@ -1223,7 +1223,7 @@ internal static class Lp10BoundaryChecks
                         "emitInit = () => ({ name: 'replacement', 'config'() { return { build: { outDir: 'dist' } } } })\n" +
                         "import { defineConfig as other } from 'vite'\nexport default defineConfig({", StringComparison.Ordinal)),
                 ("C10-A string const type-annotation sandwich",
-                    viteConfigText.Replace("const outDir = 'wwwroot';",
+                    viteConfigText.Replace("const outDir: string = 'wwwroot';",
                         "const marker: string\noutDir: string = 'wwwroot';", StringComparison.Ordinal)),
                 ("C10-A object const type-annotation sandwich",
                     viteConfigText.Replace("const entries = {",
@@ -1237,7 +1237,7 @@ internal static class Lp10BoundaryChecks
                 ("C10-C generateBundle mutating bundle chunk code",
                     viteConfigText.Replace("generateBundle() {", "generateBundle(_options, bundle) { bundle['app'].code = 'evil';", StringComparison.Ordinal)),
                 ("C10-C generateBundle wrapping emitFile in if (false)",
-                    viteConfigText.Replace("this.emitFile(", "if (false) { this.emitFile(", StringComparison.Ordinal).Replace("source: '' });", "source: '' }); }", StringComparison.Ordinal)),
+                    viteConfigText.Replace("this.emitFile(", "if (false) { this.emitFile(", StringComparison.Ordinal).Replace("fileName: initializer });", "fileName: initializer }); }", StringComparison.Ordinal)),
                 ("C10-C closeBundle calling renameSync(outDir, 'dist')",
                     viteConfigText.Replace("name: 'init',", "name: 'init', closeBundle() { renameSync(outDir, 'dist'); },", StringComparison.Ordinal))
             })

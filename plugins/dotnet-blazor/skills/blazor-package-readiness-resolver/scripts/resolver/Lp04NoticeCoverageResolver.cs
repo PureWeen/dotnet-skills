@@ -315,7 +315,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
 
         var hasDecoupledBundlerNotice = !hasManifestEntry &&
             vitePlan is null &&
-            HasBundlerScriptInPackageJson(pkgEntry.Value) &&
+            HasBundlerScriptInPackageJson(pkgEntry.Value, returnOnMalformed: false) &&
             IsGeneratedViteLicenseNotice(noticeFile, noticeText, prov) &&
             inventory.Assets.All(a =>
                 a.Path.StartsWith("staticwebassets/", StringComparison.Ordinal) &&
@@ -1334,22 +1334,22 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         "@rspack/core", "@rspack/cli", "rolldown", "browserify", "@vercel/ncc", "microbundle"
     };
 
-    private static bool HasBundlerScriptInPackageJson(byte[] pkgJsonBytes)
+    private static bool HasBundlerScriptInPackageJson(byte[] pkgJsonBytes, bool returnOnMalformed = true)
     {
         if (!TryStrictUtf8(pkgJsonBytes, out var text))
-            return true;
+            return returnOnMalformed;
         try
         {
             using var doc = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = 32 });
             if (doc.RootElement.ValueKind != JsonValueKind.Object ||
                 !JsonStringValidation.IsWellFormed(doc.RootElement))
-                return true;
+                return returnOnMalformed;
             foreach (var depField in new[] { "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" })
             {
                 if (!doc.RootElement.TryGetProperty(depField, out var deps))
                     continue;
                 if (deps.ValueKind != JsonValueKind.Object)
-                    return true;
+                    return returnOnMalformed;
                 foreach (var prop in deps.EnumerateObject())
                 {
                     if (BundlerPackageNames.Contains(prop.Name))
@@ -1359,11 +1359,11 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             if (!doc.RootElement.TryGetProperty("scripts", out var scripts))
                 return false;
             if (scripts.ValueKind != JsonValueKind.Object)
-                return true;
+                return returnOnMalformed;
             foreach (var script in scripts.EnumerateObject())
             {
                 if (script.Value.ValueKind != JsonValueKind.String)
-                    return true;
+                    return returnOnMalformed;
                 var cmd = script.Value.GetString() ?? "";
                 if (Regex.IsMatch(cmd, @"\b(?:vite|webpack|rollup|esbuild|parcel|tsup|rspack|rolldown|browserify|ncc|microbundle)\b|--bundle\b|\bbun\s+build\b",
                         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
@@ -1373,7 +1373,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
-            return true;
+            return returnOnMalformed;
         }
     }
 

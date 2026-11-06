@@ -1284,6 +1284,20 @@ internal static class Lp04Checks
         check(decoupledRes.BranchId == "provenance-notices-verified" && decoupledRes.Decision == "deterministic",
             $"LP-04 decoupled bundler-generated notice should verify without LP-10 Vite plan: {decoupledRes.BranchId} ({decoupledRes.MissingFact})");
 
+        // Decoupled LP-04 negative: malformed scripts field in package.json must not satisfy HasBundlerScriptInPackageJson
+        var malformedScriptsSrc = BuildZip(
+            ($"controls-{commit}/.github/workflows/release.yml", Encoding.UTF8.GetBytes(viteWorkflow)),
+            ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+            ($"controls-{commit}/src/assets/index.ts", sourceScript),
+            ($"controls-{commit}/src/vite.config.ts", "export default { customBundlerShape: true };\n"u8.ToArray()),
+            ($"controls-{commit}/src/tsconfig.json", "{\"compilerOptions\":{\"outDir\":\"wwwroot\"}}"u8.ToArray()),
+            ($"controls-{commit}/src/package.json", "{\"name\":\"controls\",\"scripts\":123,\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"u8.ToArray()),
+            ($"controls-{commit}/src/package-lock.json", Encoding.UTF8.GetBytes(viteLockWithExcluded)));
+        var (malScriptsBnd, malScriptsAtt) = MakeProvenance(decoupledPkg, decoupledPkg, malformedScriptsSrc);
+        var malScriptsRes = Dispatch5(decoupledPkg, decoupledPkg, malScriptsBnd, malScriptsAtt, malformedScriptsSrc);
+        check(malScriptsRes.BranchId == "provenance-notices-unverified",
+            "LP-04 decoupled bundler notice rejects malformed non-object scripts field in package.json");
+
         // Negative 7: Bundler-manifest path with package.json dependency version mismatching package-lock.json
         JsonCase("package.json range mismatching package-lock.json root dependency spec", "package.json",
             "{\"dependencies\":{\"lit-html\":\"^4.0.0\"}}");

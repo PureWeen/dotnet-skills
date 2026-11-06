@@ -374,6 +374,17 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
             HasBundlerManifestEntry(packageEntries))
             return false;
 
+        var pkgNonSig = packageEntries.Where(kv =>
+            !kv.Key.Equals(".signature.p7s", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        var relNonSig = releaseEntries.Where(kv =>
+            !kv.Key.Equals(".signature.p7s", StringComparison.OrdinalIgnoreCase))
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+        if (pkgNonSig.Count == 0 || pkgNonSig.Count != relNonSig.Count ||
+            !pkgNonSig.All(kv => relNonSig.TryGetValue(kv.Key, out var relBytes) &&
+                kv.Value.AsSpan().SequenceEqual(relBytes)))
+            return false;
+
         if (!TryVerifyProvenanceBundle(provenanceBundle.Content, releasePackage.Identity.Sha256,
                 repository, declaration.Commit, out var workflowPath) ||
             !TryVerifyProvenanceAttestation(provenanceAttestation.Content, package.Identity.Sha256,
@@ -1614,7 +1625,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
 
         var consts = new Dictionary<string, string>(StringComparer.Ordinal);
         foreach (Match m in Regex.Matches(preambleMask,
-            @"\bconst\s+(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:;|\r?\n(?!\s*[+?.:\[`])|\z)",
+            @"\bconst\s+(?<id>[A-Za-z_$][A-Za-z0-9_$]*)\s*(?::\s*[A-Za-z0-9_$<>, \t\[\]|]+)?\s*=\s*(?<q>['""])(?<lit>\s+)\k<q>\s*(?:;|\r?\n(?!\s*[+?.:\[`])|\z)",
             RegexOptions.CultureInvariant))
         {
             var id = m.Groups["id"].Value;
