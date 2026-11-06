@@ -62,7 +62,7 @@ Acquisition and evidence admission are separate from offline classification.
    For the 11-row autofill and handoff verification helper:
 
    ```text
-   python -I "<SKILL_DIR>/scripts/autofill-eleven.py" run --root "<assessment_dir>" --nupkg "<supplied.nupkg>" [--offline | --allow-network]
+   python -I "<SKILL_DIR>/scripts/autofill-eleven.py" run --root "<assessment_dir>" --nupkg "<supplied.nupkg>" [--offline | --allow-network] [--source-availability public-source|closed-source] [--release-nupkg "<release.nupkg>" --provenance-bundle "<bundle.json>"] [--release-sbom "<spdx.json>"] [--npm-archives "<candidates.json>"]
    python -I "<SKILL_DIR>/scripts/autofill-eleven.py" check --root "<assessment_dir>" --state "<state.json>" --assessment "<eleven.canonical.json>"
    ```
 
@@ -126,19 +126,21 @@ process-local admission. Caller-authored Sigstore/gh JSON or locally imported so
 archives cannot authorize a positive: exact-commit helper acquisition, bound receipts and positive
 per-entry source/project correspondence are prerequisites. Do not construct receipts or
 set the helper admission key yourself.
-Vite-config-derived attribution is deferred under the [LP-10 Vite contract](references/lp10-vite-contract.md).
+Vite-config-derived attribution is bounded by the [LP-10 Vite contract](references/lp10-vite-contract.md).
 
 For LP-04 `lp04-notice-coverage/2.1.0`, default single-input requests pass the assessed package only
 under the `bundled-web-assets/1` profile (bounded layout/suffix profile, complete retained inventory,
 digest and six unresolved reasons mapped to `not tested`, including an empty supported-profile scan;
 it does not prove the absence of other web code).
-The helper-admitted provenance path requires a digest-bound per-asset source/component map
-and complete SPDX-specific notices whose labels exactly match each covered lock entry's
-single SPDX `license` ID. Missing, non-string, expression or mismatched declarations stay
+The helper-admitted provenance path verifies notice coverage via a digest-bound per-asset
+source/component map, an attested Vite build plan, or a bundler-generated root notice file
+(`references/lp10-vite-contract.md`) whose SPDX-specific notices match each covered lock entry's
+single SPDX `license` ID (or via attested first-party web-asset coverage when zero runtime npm
+dependencies are declared). Missing, non-string, expression or mismatched declarations stay
 unverified; agreement is still producer-declared metadata, not legal sufficiency.
 Reject duplicate decoded JSON property names in every object, including ignored fields.
-Mode B remains unverified: exact repository bytes do not prove authorship. Missing evidence resolves
-`provenance-notices-unverified` (`not tested`).
+Without helper-admitted SLSA provenance, exact repository bytes alone do not prove authorship and
+missing evidence resolves `provenance-notices-unverified` (`not tested`).
 V1 roles/packets are refused, never converted or used as a verified/gap fallback.
 Preserve `bundled_web_assets` alongside the compact observation.
 
