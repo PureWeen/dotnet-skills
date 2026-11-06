@@ -1,0 +1,167 @@
+name: blazor-package-readiness-resolver
+description: Offline package dispatch, checked bindings, conservative failures and machine-readable results.
+type: capability
+defaults:
+  timeout: 8m
+  runs: 1
+stimuli:
+  - name: static-machine-results
+    tags:
+      capability: machine-readable-package-results
+      risk: unbound-or-incomplete-results
+      journey: inspect-local-package
+    prompt: >-
+      Inspect sample.nupkg using only local static checks. Write the package readiness row
+      results to result.json with exact input digests, row IDs and qualified findings.
+      Do not execute anything from the package or turn the output into a full release report.
+    environment:
+      files:
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python setup.py result.json all
+      - type: prompt
+    rubric:
+      - Produces actual machine-readable results for the eleven implemented package rows, bound to the supplied package bytes.
+      - Does not claim all package readiness criteria or component behavior were checked.
+  - name: checked-evidence-dispatch
+    tags:
+      capability: checked-evidence-dispatch
+      risk: invented-or-modified-evidence
+      journey: replay-checked-request
+    prompt: >-
+      Run the offline check described by request.json and save its machine-readable result
+      in result.json. The file pins the exact inputs; it deliberately contains no expected
+      answer. Preserve its requested row and evidence identities.
+    environment:
+      files:
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python setup.py result.json
+      - type: prompt
+    rubric:
+      - Produces the supplied request's actual qualified result without fabricating expected answers or modifying its inputs.
+      - Reports the unresolved notice-coverage scope rather than guessing a positive or gap.
+  - name: changed-binding-refusal
+    tags:
+      capability: digest-binding-validation
+      risk: tampered-evidence-acceptance
+      journey: validate-supplied-evidence
+    prompt: >-
+      Process changed.json against the local package. If its evidence binding is invalid,
+      report the failure and stop; do not repair the supplied hashes or invent replacement
+      findings. No downloads or package execution are permitted.
+    environment:
+      files:
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: output-matches
+        config:
+          pattern: "(?i)(invalid|mismatch|binding|digest)"
+      - type: prompt
+    rubric:
+      - Actually attempts the supplied request and reports its nonzero invalid-input outcome.
+      - Does not edit the digest, drop the input or describe the package as verified.
+  - name: offline-cwd-isolation
+    tags:
+      capability: hostile-directory-isolation
+      risk: untrusted-build-execution
+      journey: inspect-package-offline
+    prompt: >-
+      Check sample.nupkg statically and save result.json. This directory and the package
+      contain build customizations that must never run. Use no feeds, network retrieval,
+      package restore, assessed project build or sample execution.
+    environment:
+      files:
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python setup.py result.json all
+      - type: prompt
+    rubric:
+      - Produces static evidence without importing the assessment directory's build targets or executing packaged targets.
+      - Does not contact feeds or restore or execute assessed package dependencies.
+  - name: strict-request-shape
+    tags:
+      capability: request-shape-admission
+      risk: ambiguous-contract-acceptance
+      journey: validate-request-format
+    prompt: >-
+      Validate and process malformed.json without rewriting it. A duplicate contract field
+      must not be silently accepted by choosing one occurrence. Report a truthful failure,
+      not a successful assessment.
+    environment:
+      files:
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: output-matches
+        config:
+          pattern: "(?i)(invalid|duplicate|reject|fail)"
+      - type: prompt
+    rubric:
+      - Attempts strict request admission and reports its invalid-contract outcome.
+      - Does not normalize away duplicate fields or fabricate row results.
+  - name: insufficient-notice-evidence
+    tags:
+      capability: notice-evidence-limits
+      risk: unsupported-notice-conclusion
+      journey: assess-notice-preservation
+    prompt: >-
+      For sample.nupkg, determine whether required third-party notices have been preserved.
+      No dependency inventory, bundled-asset inventory or obligation reviews were supplied.
+      Save the static package results in result.json and explain the actual evidence limit.
+    environment:
+      files:
+        - src: fixtures
+          dest: .
+      commands:
+        - python setup.py
+    graders:
+      - type: run-command
+        config:
+          command: python setup.py result.json all
+      - type: prompt
+    rubric:
+      - Leaves notice coverage unresolved and not tested, not a gap or positive based on a license expression.
+      - Names the missing complete checked scope and evidence rather than treating it as an owner-private fact.
+  - name: nuget-troubleshooting-dormancy
+    tags:
+      capability: restore-help-routing-boundary
+      risk: unsolicited-readiness-assessment
+      journey: diagnose-feed-restore
+      expect_activation: "false"
+    prompt: My ordinary ASP.NET app gets NU1301 while restoring. How do I diagnose its feed and proxy configuration?
+    graders:
+      - type: prompt
+    rubric:
+      - Recognizes package readiness reporting is out of scope and gives feed diagnostics without producing an unsolicited assessment.
+  - name: application-execution-dormancy
+    tags:
+      capability: runtime-help-routing-boundary
+      risk: unsolicited-package-assessment
+      journey: start-development-server
+      expect_activation: "false"
+    prompt: How do I start a local Blazor development server and choose its port? I do not need a package assessment.
+    graders:
+      - type: prompt
+    rubric:
+      - Recognizes package evidence assessment is out of scope and explains development-server usage without producing an unsolicited report.
