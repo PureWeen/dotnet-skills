@@ -873,7 +873,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
         "the", "a", "an", "owner", "holder", "notice", "authors", "contributors", "the authors", "the contributors"
     };
 
-    private static List<string> ExtractCopyrightHolders(string text, bool allowYearlessSymbol = false)
+    internal static List<string> ExtractCopyrightHolders(string text, bool allowYearlessSymbol = false)
     {
         var holders = new List<string>();
         var pattern = allowYearlessSymbol
@@ -1042,6 +1042,10 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 if (Regex.IsMatch(segment, @"\A(?:(?:Copyright\b|\(c\)|©)|All\s+rights\s+reserved\.?\z)",
                         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
                     continue;
+                if (Regex.IsMatch(segment,
+                        @"\A(?:SPDX-License-Identifier\s*:|@preserve\b)",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
+                    continue;
                 segment = Regex.Replace(segment,
                     @"\A(?:@license\s+|\b(?:Licensed|Released|licenses\s+this\s+file\s+to\s+you)\s+under\s+)",
                     "", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant).Trim();
@@ -1059,9 +1063,6 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             if (atLicMatch.Groups["sameLine"].Success)
             {
                 var sameLine = atLicMatch.Groups["sameLine"].Value.Trim();
-                if (Regex.IsMatch(sameLine, @"\A(?:Copyright\b|\(c\)|©)",
-                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-                    continue;
                 ValidateClauseSegments(sameLine);
             }
             else if (atLicMatch.Groups["nextLine"].Success)
@@ -1072,10 +1073,6 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     unrecognized = true;
                     continue;
                 }
-                if (Regex.IsMatch(nextLine,
-                        @"\A(?:(?:Copyright\b|\(c\)|©)|SPDX-License-Identifier\s*:|@license\b|@preserve\b|(?:Licensed|Released)\s+under\b)|(?:\blicenses\s+this\s+file\s+to\s+you\s+under\b)",
-                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-                    continue;
                 ValidateClauseSegments(nextLine);
             }
             else
@@ -1344,6 +1341,7 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
             if (doc.RootElement.ValueKind != JsonValueKind.Object ||
                 !JsonStringValidation.IsWellFormed(doc.RootElement))
                 return returnOnMalformed;
+            var hasBundler = false;
             foreach (var depField in new[] { "dependencies", "devDependencies", "optionalDependencies", "peerDependencies" })
             {
                 if (!doc.RootElement.TryGetProperty(depField, out var deps))
@@ -1352,12 +1350,14 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                     return returnOnMalformed;
                 foreach (var prop in deps.EnumerateObject())
                 {
+                    if (prop.Value.ValueKind != JsonValueKind.String)
+                        return returnOnMalformed;
                     if (BundlerPackageNames.Contains(prop.Name))
-                        return true;
+                        hasBundler = true;
                 }
             }
             if (!doc.RootElement.TryGetProperty("scripts", out var scripts))
-                return false;
+                return hasBundler;
             if (scripts.ValueKind != JsonValueKind.Object)
                 return returnOnMalformed;
             foreach (var script in scripts.EnumerateObject())
@@ -1367,9 +1367,9 @@ public sealed class Lp04NoticeCoverageResolver : IDeterministicResolver
                 var cmd = script.Value.GetString() ?? "";
                 if (Regex.IsMatch(cmd, @"\b(?:vite|webpack|rollup|esbuild|parcel|tsup|rspack|rolldown|browserify|ncc|microbundle)\b|--bundle\b|\bbun\s+build\b",
                         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant))
-                    return true;
+                    hasBundler = true;
             }
-            return false;
+            return hasBundler;
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {

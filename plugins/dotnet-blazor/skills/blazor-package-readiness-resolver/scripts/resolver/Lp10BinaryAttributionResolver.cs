@@ -858,6 +858,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         }
 
         var directDeps = new Dictionary<string, string>(StringComparer.Ordinal);
+        IEnumerable<string> runtimeDeps = [];
         try
         {
             using var pkgDoc = JsonDocument.Parse(pkgJsonText, new JsonDocumentOptions { MaxDepth = 32 });
@@ -886,8 +887,9 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
                 lvProp.ValueKind != JsonValueKind.Number ||
                 !lvProp.TryGetInt32(out var lv) || lv < 2 ||
                 !Lp04NoticeCoverageResolver.TryResolveLockClosure(
-                    lockJsonBytes, directDeps, out _, requireLicense: false))
+                    lockJsonBytes, directDeps, out var runtimeClosure, requireLicense: false))
                 return false;
+            runtimeDeps = runtimeClosure.Select(dependency => dependency.Name).ToArray();
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
@@ -897,7 +899,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         if (!VerifyWorkflowRunsNpmBuildInSingleJob(wfText, npmDir))
             return false;
 
-        if (!TryParseViteConfig(viteConfigText, packageId, directDeps.Keys, sourceFiles, rootPrefix, npmDir, out plan))
+        if (!TryParseViteConfig(viteConfigText, packageId, directDeps.Keys, runtimeDeps, sourceFiles, rootPrefix, npmDir, out plan))
             return false;
 
         return true;
@@ -1529,6 +1531,7 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         string viteConfigText,
         string packageId,
         IEnumerable<string> directDeps,
+        IEnumerable<string> runtimeDeps,
         Dictionary<string, byte[]> sourceFiles,
         string rootPrefix,
         string npmDir,
@@ -2024,6 +2027,13 @@ public sealed class Lp10BinaryAttributionResolver : IDeterministicResolver
         if (!entryBundlePattern.Equals("[name].[hash].bundle.js", StringComparison.Ordinal) ||
             !chunkBundlePattern.Equals("[name].[hash].bundle.js", StringComparison.Ordinal))
             return false;
+
+        foreach (var dependency in runtimeDeps)
+        {
+            var stem = dependency.StartsWith('@') ? dependency[1..].Replace('/', '.') : dependency;
+            if (Regex.IsMatch(stem, @"\A[A-Za-z0-9._\-]+\z", RegexOptions.CultureInvariant))
+                chunkNames.Add(stem);
+        }
 
         foreach (var entryKey in declaredEntries.Keys)
         {

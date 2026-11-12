@@ -73,6 +73,12 @@ def lp03_installed_checks(plugin, work):
         nupkg.write_bytes(package("example.controls", dependencies='<dependencies><dependency id="example.dependency" version="0.5.0"/></dependencies>'))
         document = root / "release.spdx.json"
         document.write_bytes(encoded(sbom()))
+        if label == "offline-exact-plus-extra":
+            wrapped = root / "release.spdx.zip"
+            with zipfile.ZipFile(wrapped, "w", compression=zipfile.ZIP_DEFLATED) as zipped:
+                zipped.writestr("manifest.spdx.json", document.read_bytes())
+                zipped.writestr("manifest.spdx.json.sha256", hashlib.sha256(document.read_bytes()).hexdigest())
+            document = wrapped
         dependencies = []
         if supplied:
             for name, content in (("dependency.nupkg", selected_bytes), ("extra.nupkg", package("extra"))):
@@ -112,6 +118,16 @@ def lp03_installed_checks(plugin, work):
             if feed == "dotnet-public" and any("api.nuget.org" in url for url in calls):
                 raise ValueError("Explicit mirror acquisition silently fell back to nuget.org.")
             if label == "offline-exact-plus-extra":
+                wrapper = next(root / name for name in state["files"] if name.endswith("/release-sbom.zip"))
+                wrapper_bytes = wrapper.read_bytes()
+                wrapper.write_bytes(wrapper_bytes + b" ")
+                try:
+                    tool["open_state"](root, Path(receipt["state"]))
+                except ValueError:
+                    pass
+                else:
+                    raise ValueError("Changed SBOM ZIP wrapper was accepted by saved state.")
+                wrapper.write_bytes(wrapper_bytes)
                 if len([p for p in lp03_request["inputs"] if p["role"].startswith("dependency-")]) != 1:
                     raise ValueError("Extra supplied archive leaked into authoritative inventory.")
                 check = Namespace(command="check", state=receipt["state"], assessment=receipt["assessment"])

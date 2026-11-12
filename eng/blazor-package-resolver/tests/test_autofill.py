@@ -13,6 +13,7 @@ import unittest
 from unittest import mock
 import unicodedata
 import zipfile
+import zlib
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parents[2]
@@ -72,6 +73,99 @@ def empty_observations():
 
 
 class SbomCollectionTests(unittest.TestCase):
+    def test_release_sbom_zip_extracts_only_bounded_manifest_and_optional_checksum(self):
+        raw = b'{"spdxVersion":"SPDX-2.2"}'
+        for checksum in (False, True):
+            entries = {"manifest.spdx.json": raw}
+            if checksum:
+                entries["manifest.spdx.json.sha256"] = tool.sha(raw).encode("ascii")
+            with self.subTest(checksum=checksum):
+                self.assertEqual(tool.release_sbom_from_zip(archive(entries)), raw)
+        invalid = [
+            {"other.json": raw},
+            {"nested/manifest.spdx.json": raw},
+            {"../manifest.spdx.json": raw},
+            {"manifest.spdx.json": raw, "extra.json": raw},
+            {"manifest.spdx.json": raw, "MANIFEST.SPDX.JSON": raw},
+            {"manifest.spdx.json": raw, "manifest.spdx.json.sha256": b"0" * 64},
+            {"manifest.spdx.json": b"x" * (tool.SBOM_LIMIT + 1)},
+        ]
+        for entries in invalid:
+            with self.subTest(names=list(entries)), self.assertRaises((ValueError, zipfile.BadZipFile)):
+                tool.release_sbom_from_zip(archive(entries))
+        with self.assertRaises(ValueError):
+            tool.release_sbom_from_zip(archive({"manifest.spdx.json": raw}) + b"trailing")
+        linked = zipfile.ZipInfo("manifest.spdx.json")
+        linked.external_attr = (0o120777 << 16)
+        with self.assertRaises(ValueError):
+            tool.release_sbom_from_zip(archive({linked: raw}))
+        encrypted = bytearray(archive({"manifest.spdx.json": raw}))
+        encrypted[6] |= 1
+        central = encrypted.index(b"PK\x01\x02")
+        encrypted[central + 8] |= 1
+        with self.assertRaises(ValueError):
+            tool.release_sbom_from_zip(bytes(encrypted))
+        maximum = b"x" * tool.SBOM_LIMIT
+        for compression in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+            entry = zipfile.ZipInfo("manifest.spdx.json")
+            entry.compress_type = compression
+            self.assertEqual(tool.release_sbom_from_zip(archive({entry: maximum})), maximum)
+        with self.assertRaises(ValueError):
+            tool.release_sbom_from_zip(b"x" * (tool.SBOM_ZIP_LIMIT + 1))
+        duplicate = io.BytesIO()
+        with zipfile.ZipFile(duplicate, "w") as zipped:
+            zipped.writestr("manifest.spdx.json", raw)
+            with self.assertWarns(UserWarning):
+                zipped.writestr("manifest.spdx.json", raw)
+        with self.assertRaises(ValueError):
+            tool.release_sbom_from_zip(duplicate.getvalue())
+        corrupt = bytearray(archive({"manifest.spdx.json": raw}))
+        corrupt[corrupt.index(raw)] ^= 1
+        with self.assertRaises(zipfile.BadZipFile):
+            tool.release_sbom_from_zip(bytes(corrupt))
+
+    def test_release_sbom_zip_rejects_surplus_deflate_with_matching_prefix_crc(self):
+        prefix = b"{}"
+        entry = zipfile.ZipInfo("manifest.spdx.json")
+        entry.compress_type = zipfile.ZIP_DEFLATED
+        forged = bytearray(archive({entry: prefix + b" " * (2 * tool.MIB - len(prefix))}))
+        central = forged.index(b"PK\x01\x02")
+        for offset in (14, central + 16):
+            forged[offset:offset + 4] = zlib.crc32(prefix).to_bytes(4, "little")
+        for offset in (22, central + 24):
+            forged[offset:offset + 4] = len(prefix).to_bytes(4, "little")
+        for reader in (tool.archive_inventory, tool.release_sbom_from_zip):
+            with self.subTest(reader=reader.__name__), self.assertRaises((ValueError, zipfile.BadZipFile)):
+                reader(bytes(forged))
+
+    def test_release_sbom_zip_retains_wrapper_and_designates_extracted_bytes(self):
+        raw = b'{"spdxVersion":"SPDX-3.0"}'
+        with tempfile.TemporaryDirectory(prefix="sbom-zip-") as directory:
+            root = Path(directory).resolve()
+            capture = root / "capture"
+            capture.mkdir()
+            main, wrapped = capture / "package.nupkg", root / "release.zip"
+            main.write_bytes(package())
+            wrapped.write_bytes(archive({"manifest.spdx.json": raw}))
+            def admit(request, output):
+                pins = tool.load(request)["inputs"]
+                sbom_pin = next(pin for pin in pins if pin["role"] == "sbom")
+                self.assertEqual(sbom_pin["sha256"], tool.sha(raw))
+                self.assertEqual(tool.load(capture / "lp-03-scope.json")["sbom_sha256"], tool.sha(raw))
+                tool.dump(output, {"schema_version": 2, "producer": "sbom-inventory/2.0.0",
+                    "inputs": pins, "admission": {"disposition": "unsupported",
+                        "detail": "Unsupported SPDX version.", "inventory": None}})
+            transport = mock.Mock(side_effect=AssertionError("Unsupported SBOM must not fetch."))
+            collector = tool.Collector(root, capture, 64, True, transport, admit=admit)
+            collector.collect(main, tool.package_metadata(main.read_bytes()), None, [],
+                              source_allowed=False, release_sbom=wrapped)
+            transport.assert_not_called()
+            self.assertEqual(collector.sbom.read_bytes(), raw)
+            record = collector.records[0]
+            self.assertEqual(record["sha256"], tool.sha(wrapped.read_bytes()))
+            self.assertEqual((root / record["retained_path"]).read_bytes(), wrapped.read_bytes())
+            self.assertEqual(collector.total, sum(p.stat().st_size for p in capture.iterdir()))
+
     def test_package_metadata_supports_all_nuspec_namespaces(self):
         namespaces = ("", *(f"http://schemas.microsoft.com/packaging/{version}/nuspec.xsd"
                             for version in ("2010/07", "2011/08", "2011/10", "2012/06", "2013/01", "2013/05")))

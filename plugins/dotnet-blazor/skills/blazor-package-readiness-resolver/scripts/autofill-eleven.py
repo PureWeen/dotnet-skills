@@ -3,6 +3,7 @@
 import argparse
 import base64
 from collections import deque
+from copy import copy
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -31,6 +32,7 @@ from eleven_rows import VERSION, ROWS, checked_result, decisions
 MIB = 1024 * 1024
 PACKAGE_LIMIT = 8 * MIB
 SBOM_LIMIT = MIB
+SBOM_ZIP_LIMIT = SBOM_LIMIT + 65536
 SOURCE_LIMIT = 64 * MIB
 TOTAL_LIMIT = 256 * MIB
 NUGET_FEEDS = {
@@ -176,6 +178,21 @@ def package_metadata(data):
             "commit": repository.get("commit"), "groups": sorted(groups), "dependencies": dependencies}
 
 
+def read_zip_member_bounded(archive, entry, capture=False):
+    bounded = copy(entry)
+    # ZipExtFile otherwise truncates at file_size, hiding surplus inflated bytes.
+    bounded.file_size = entry.file_size + 1
+    chunks, consumed = [], 0
+    with archive.open(bounded) as stream:
+        while chunk := stream.read(min(65536, entry.file_size + 1 - consumed)):
+            consumed += len(chunk)
+            require(consumed <= entry.file_size, "ZIP entry exceeds declared size.")
+            if capture:
+                chunks.append(chunk)
+    require(consumed == entry.file_size, "Incomplete ZIP entry.")
+    return b"".join(chunks)
+
+
 def archive_inventory(data, source=False):
     require(0 < len(data) <= (SOURCE_LIMIT if source else PACKAGE_LIMIT), "Archive byte limit.")
     # ZipFile otherwise accepts arbitrarily large central-directory allocations before entry checks.
@@ -206,14 +223,35 @@ def archive_inventory(data, source=False):
             require(total <= 64 * MIB and entry.file_size <= 64 * MIB and
                     (not entry.is_dir() or entry.file_size == 0), "Expanded ZIP byte limit.")
             if not entry.is_dir():
-                consumed = 0
-                with archive.open(entry) as stream:
-                    while chunk := stream.read(65536):
-                        consumed += len(chunk)
-                        require(consumed <= entry.file_size, "ZIP entry exceeds declared size.")
-                require(consumed == entry.file_size, "Incomplete ZIP entry.")
+                read_zip_member_bounded(archive, entry)
                 names.append(name)
     return names
+
+
+def release_sbom_from_zip(data):
+    require(0 < len(data) <= SBOM_ZIP_LIMIT, "Release SBOM ZIP byte limit.")
+    end = data.rfind(b"PK\x05\x06")
+    require(end >= 0 and end + 22 == len(data) and data[end + 20:end + 22] == b"\0\0" and
+            1 <= int.from_bytes(data[end + 10:end + 12], "little") <= 2,
+            "Release SBOM ZIP needs one manifest and an optional checksum, without trailing bytes.")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        entries = archive.infolist()
+        names = {entry.filename for entry in entries}
+        require(len(entries) == len(names) and
+                names in ({"manifest.spdx.json"}, {"manifest.spdx.json", "manifest.spdx.json.sha256"}),
+                "Release SBOM ZIP needs root manifest.spdx.json and only its optional .sha256 sidecar.")
+        for entry in entries:
+            maximum = SBOM_LIMIT if entry.filename == "manifest.spdx.json" else 64
+            require(entry.file_size <= maximum and
+                    entry.compress_type in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED),
+                    "Release SBOM ZIP member size or compression is unsupported.")
+        archive_inventory(data)
+        manifest = read_zip_member_bounded(archive, archive.getinfo("manifest.spdx.json"), capture=True)
+        if "manifest.spdx.json.sha256" in names:
+            require(read_zip_member_bounded(archive, archive.getinfo("manifest.spdx.json.sha256"),
+                                           capture=True) == sha(manifest).encode("ascii"),
+                    "Release SBOM ZIP checksum differs from manifest bytes.")
+        return manifest
 
 
 def source_url(metadata):
@@ -405,7 +443,13 @@ class Collector:
             if record["result"] != "succeeded":
                 return None
             data = read(path, maximum)
-            if kind == "sbom":
+            if kind == "sbom-zip":
+                manifest = release_sbom_from_zip(data)
+                path = self.capture / "release.spdx.json"
+                write(path, manifest)
+                self.total += len(manifest)
+                metadata = None
+            elif kind == "sbom":
                 metadata = None
             elif subject == "source":
                 archive_inventory(data, source=True)
@@ -415,8 +459,10 @@ class Collector:
                 if identity is not None:
                     require((metadata["id"], metadata["version"]) == identity, "Downloaded identity differs from requested ID/version.")
             return path, metadata
-        except (ValueError, ET.ParseError, UnicodeError, zipfile.BadZipFile, NotImplementedError):
+        except (ValueError, ET.ParseError, UnicodeError, zipfile.BadZipFile, NotImplementedError) as error:
             record.update(result="invalid-content", detail_code="unsupported-or-invalid-content")
+            if kind == "sbom-zip":
+                self.diagnostics.append(f"Release SBOM ZIP not admitted: {error}")
             return None
         except OSError:
             record.update(result="unavailable", detail_code="local-io-failure")
@@ -451,10 +497,13 @@ class Collector:
                         "Supplied dependencies must be distinct and exclude the root.")
                 self.dependencies[key] = item
         if release_sbom is not None:
-            if self.total + SBOM_LIMIT + 324 * 1024 > TOTAL_LIMIT:
+            zipped = Path(release_sbom).suffix.lower() == ".zip"
+            maximum = SBOM_ZIP_LIMIT if zipped else SBOM_LIMIT
+            if self.total + maximum + (SBOM_LIMIT if zipped else 0) + 324 * 1024 > TOTAL_LIMIT:
                 self.diagnostics.append("Checked-byte budget cannot reserve raw SBOM plus bounded native admission packet; no import/request sent.")
                 return self.report()
-            retained = self.obtain("documentation", "release.spdx.json", SBOM_LIMIT, local=release_sbom, kind="sbom")
+            retained = self.obtain("documentation", "release-sbom.zip" if zipped else "release.spdx.json",
+                                   maximum, local=release_sbom, kind="sbom-zip" if zipped else "sbom")
             self.sbom = retained[0] if retained else None
             if self.sbom:
                 require(self.admit is not None, "SBOM collection requires the bundled native admission component.")
@@ -1188,7 +1237,7 @@ def main():
     run.add_argument("--dependency", action="append", default=[])
     run.add_argument("--row-packets")
     run.add_argument("--npm-archives", help="Caller-designated exact local npm tarballs and SHA-256 pins; no publisher authentication or registry requests.")
-    run.add_argument("--release-sbom", help="Designate these exact raw SBOM bytes for this root as the caller's authoritative release-wide inventory. Structural checks do not prove completeness or publication; no owner attestation or capture is invented.")
+    run.add_argument("--release-sbom", help="Designate raw SPDX JSON, or a ZIP with root manifest.spdx.json and optional exact SHA-256 sidecar, for this root as the caller's authoritative release-wide inventory. Structural checks do not prove completeness or publication; no owner attestation or capture is invented.")
     run.add_argument("--release-nupkg", help="Optional SLSA-attested GitHub Release .nupkg for LP-10 build provenance verification.")
     run.add_argument("--provenance-bundle", help="Optional Sigstore SLSA v1 provenance bundle JSON for LP-10 build provenance verification.")
     run.add_argument("--nuget-feed", choices=tuple(NUGET_FEEDS), default="nuget.org")

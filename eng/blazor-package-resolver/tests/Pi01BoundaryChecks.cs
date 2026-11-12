@@ -54,6 +54,7 @@ internal static class Pi01BoundaryChecks
             "pi01-metadata-null-custom-attribute-value",
             "pi01-signed-with-unsigned-pe-overlay",
             "pi01-signed-with-authenticode-certificate",
+            "pi01-signed-with-gzip-in-authenticode-content",
             "pi01-prefixed-nested-with-passive-name",
             "pi01-native-bundle-shaped",
             "pi01-verified-signed",
@@ -157,6 +158,7 @@ internal static class Pi01BoundaryChecks
         }
         CheckBranch(registry, Pack([("lib/Signature.netmodule", module)]),
             "unsafe-assembly", "Module with a nonzero signature directory");
+        CheckSignaturePreflight();
         var damagedCrc = Pack([("data.txt", "safe"u8.ToArray())]);
         var central = damagedCrc.AsSpan().LastIndexOf("PK\x01\x02"u8);
         Check(central >= 0, "Generated ZIP central entry");
@@ -166,6 +168,44 @@ internal static class Pi01BoundaryChecks
             "Over-limit package byte count");
         CheckRetained(registry, Path.Combine(directory, "acceptance.json"));
         Console.WriteLine("PI-01 supplemental module, ZIP name, alias, ordering, culture, resource, crypto and metadata checks passed.");
+    }
+
+    private static void CheckSignaturePreflight()
+    {
+        foreach (var (label, signature, table) in new[]
+        {
+            ("local count", new byte[] { 0x07, 0xdf, 0xff, 0xff, 0xff }, 17),
+            ("parameter count", new byte[] { 0x00, 0xdf, 0xff, 0xff, 0xff, 0x01 }, 6),
+            ("method specification count", new byte[] { 0x0a, 0xdf, 0xff, 0xff, 0xff }, 43),
+        })
+            CheckThrows(() => Pi01PeInspector.PreflightSignatureForTests(signature, table),
+                "PI-01 bounded " + label);
+
+        foreach (var (label, signature) in new[]
+        {
+            ("generic argument count", new byte[] { 0x15, 0x12, 0x05, 0xdf, 0xff, 0xff, 0xff }),
+            ("array rank", new byte[] { 0x14, 0x08, 0xdf, 0xff, 0xff, 0xff }),
+            ("array size count", new byte[] { 0x14, 0x08, 0x01, 0xdf, 0xff, 0xff, 0xff }),
+            ("array lower-bound count", new byte[] { 0x14, 0x08, 0x01, 0x00, 0xdf, 0xff, 0xff, 0xff }),
+            ("nested function-pointer parameter count",
+                new byte[] { 0x1b, 0x00, 0xdf, 0xff, 0xff, 0xff, 0x01 }),
+        })
+            CheckThrows(() => Pi01PeInspector.PreflightTypeSignatureForTests(signature),
+                "PI-01 bounded " + label);
+
+        Pi01PeInspector.PreflightSignatureForTests(
+            [0x10, 0x7f, 0x01, 0x01, 0x1e, 0x00], 6);
+        Pi01PeInspector.PreflightTypeSignatureForTests(
+            [0x15, 0x12, 0x05, 0x02, 0x08, 0x0e]);
+        Pi01PeInspector.PreflightTypeSignatureForTests(
+            [0x14, 0x08, 0x03, 0x02, 0x04, 0x05, 0x02, 0x00, 0x00]);
+        Pi01PeInspector.PreflightTypeSignatureForTests(
+            [0x1b, 0x00, 0x01, 0x01, 0x08]);
+        var modifiers = Enumerable.Range(0, 32).SelectMany(index =>
+            new byte[] { index % 2 == 0 ? (byte)0x1f : (byte)0x20, 0x05 }).ToArray();
+        Pi01PeInspector.PreflightTypeSignatureForTests([.. modifiers, 0x08]);
+        CheckThrows(() => Pi01PeInspector.PreflightTypeSignatureForTests(
+            [.. modifiers, 0x1f, 0x05, 0x08]), "PI-01 bounded custom-modifier depth");
     }
 
     private static byte[] Pack(IEnumerable<(string Name, byte[] Bytes)> entries, byte[]? nuspec = null)
@@ -245,5 +285,18 @@ internal static class Pi01BoundaryChecks
     {
         if (!success)
             throw new InvalidDataException(message);
+    }
+
+    private static void CheckThrows(Action action, string message)
+    {
+        try
+        {
+            action();
+        }
+        catch (BadImageFormatException)
+        {
+            return;
+        }
+        throw new InvalidDataException(message);
     }
 }

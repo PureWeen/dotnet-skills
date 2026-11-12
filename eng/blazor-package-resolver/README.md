@@ -98,11 +98,17 @@ Unsupported archives/licenses remain not tested. No npm download or scripts run.
 All SBOM NuGet downloads honor `--nuget-feed`; selected `dotnet-public` never falls
 back to `api.nuget.org`. Per-member outcomes include missing/oversized evidence.
 
-The helper's explicit `--release-sbom` intake retains the raw bytes and designation,
+The helper's explicit `--release-sbom` intake retains the raw JSON bytes and designation,
 calls native admission, and, only when authorized, retrieves missing exact members
 anonymously from nuget.org's flat container within the existing record/deadline/byte
 budgets. It neither samples minima in this mode nor silently switches a selected
-mirror. Local/offline imports never invent acquisition observations.
+mirror. It also accepts a bounded `.zip` transport containing root `manifest.spdx.json`
+and optionally its exact 64-byte lowercase `.sha256` sidecar. Extracted JSON is limited
+to 1 MiB, the wrapper to 1 MiB + 64 KiB; extra/nested/linked/encrypted members,
+unsupported compression and mismatched sidecars reject. Both wrapper and extracted bytes
+are retained and pinned; the designation binds the JSON digest, not the wrapper digest.
+No filesystem extraction or assessed-code execution occurs. Other archive layouts need
+caller extraction first. Local/offline imports never invent acquisition observations.
 
 The historical Phase A contract (materialized at `lp03/README.md` by `tests/corpus.py`), original
 oracle, recipes, input/grant/review bytes and 66/77 guard/witness ledger remain
@@ -303,10 +309,17 @@ LP-10 1.1.0 additionally supports trusted-helper provenance admission: exact-com
 anonymous source acquisition, process-local authenticated verification receipts, exact
 release payload equivalence, and positive per-entry text/source or project/output identity
 correspondence. Generic web-tree presence and absent DLL contradictions are insufficient.
-LP-04 2.1.0 preserves package-only D-lite, with a stricter provenance-assisted Mode A requiring
-digest-bound per-asset component/source maps and complete SPDX-specific notice clauses.
-SSR package names do not prove exclusion. Mode B is unverified because repository equality
-does not establish first-party authorship.
+LP-04 2.1.0 preserves package-only D-lite. Provenance-assisted Mode A verifies complete
+SPDX-specific notices through a digest-bound per-asset component/source map, an attested
+Vite build plan, or a recognized bundler-generated root notice covering the runtime lock
+closure and inline banners. Mode B verifies attested first-party web-asset coverage when
+there are no runtime npm dependencies; repository equality alone is insufficient.
+Attribution-bearing canonical notices require a named holder; exact generic
+placeholders such as `The Authors` or `Contributors` remain outside this
+conservative attribution profile. This is not a legal-invalidity finding.
+Unsupported layouts/evidence remain `not tested`. See the shipping
+[Vite contract](../../plugins/dotnet-blazor/skills/blazor-package-readiness-resolver/references/lp10-vite-contract.md)
+for automatic runtime-dependency chunk naming and the lexical workflow-recognition boundary.
 LP-03 1.4.0 also requires inventoried versions to satisfy each root NuGet dependency range.
 
 `dotnet run --project eng\blazor-package-resolver\tests\ResolverChecks.csproj -- breadth`
@@ -442,10 +455,16 @@ cryptographically invalid and verified strong-name signed assemblies; the
 positive branch requires an unambiguous complete inventory. Strong-name RSA
 verification uses the assembly public key and detects changed signature or
 signed PE bytes. Its Authenticode certificate inspection accounts for
-certificate-table bytes but does **not** establish publisher identity or
+certificate-table bytes through structural DER/CMS validation, not substring
+magic scans inside cryptographic keys, signatures or digests. It does **not** establish publisher identity or
 certificate-chain trust (the separate PI-02 requirement). Complete metadata
 table/signature/CustomAttribute decoding and full assembly-qualified enum
-identity checks precede decisive signing states; untrusted packaged code is
+identity checks precede decisive signing states. A bounded signature preflight
+checks allocation counts against remaining bytes before decoding, with a 65,535
+element cap, 32-level nesting limit and maximum array rank 32; generic method
+arity is not an allocation count and is not constrained by remaining type bytes.
+The single frozen gzip-in-valid-digest case has a named result-only correction;
+its package/PE bytes and all other frozen inputs remain unchanged. Untrusted packaged code is
 never executed or loaded. Valid managed modules with no Assembly table are
 non-assemblies; malformed modules or modules claiming strong-name signing
 cannot establish a complete inventory. ZIP names require flagged valid UTF-8

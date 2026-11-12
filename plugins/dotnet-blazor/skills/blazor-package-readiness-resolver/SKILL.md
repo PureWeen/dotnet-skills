@@ -62,7 +62,7 @@ Acquisition and evidence admission are separate from offline classification.
    For the 11-row autofill and handoff verification helper:
 
    ```text
-   python -I "<SKILL_DIR>/scripts/autofill-eleven.py" run --root "<assessment_dir>" --nupkg "<supplied.nupkg>" [--offline | --allow-network] [--source-availability public-source|closed-source] [--release-nupkg "<release.nupkg>" --provenance-bundle "<bundle.json>"] [--release-sbom "<spdx.json>"] [--npm-archives "<candidates.json>"]
+   python -I "<SKILL_DIR>/scripts/autofill-eleven.py" run --root "<assessment_dir>" --nupkg "<supplied.nupkg>" [--offline | --allow-network] [--source-availability public-source|closed-source] [--release-nupkg "<release.nupkg>" --provenance-bundle "<bundle.json>"] [--release-sbom "<spdx.json-or-zip>"] [--npm-archives "<candidates.json>"]
    python -I "<SKILL_DIR>/scripts/autofill-eleven.py" check --root "<assessment_dir>" --state "<state.json>" --assessment "<eleven.canonical.json>"
    ```
 
@@ -147,6 +147,46 @@ Preserve `bundled_web_assets` alongside the compact observation.
 Status vocabulary remains `verified`, `gap`, `owner evidence required`, `not tested`,
 `not applicable`. Consume the row's complete qualified result; a caller must not invent a status
 solely from `decision` or exit code.
+
+## GitHub release evidence and npm staging
+
+For `<owner>/<repo>@<tag>`, inspect assets with
+`gh release view <tag> --repo <owner>/<repo> --json assets`. Download the exact release
+`.nupkg`, SPDX 2.2 SBOM and published Sigstore provenance bundle to a staging directory with
+`gh release download <tag> --repo <owner>/<repo> --dir <staging> --pattern <asset-name>`.
+If no bundle asset is published, save the UTF-8 JSON returned by
+`gh api repos/<owner>/<repo>/attestations/sha256:<release-nupkg-sha256>`.
+The helper runs `gh attestation verify`; downloaded JSON alone does not admit provenance.
+The tag locates release assets; the package-declared exact commit governs source acquisition.
+
+Pass `--release-nupkg`, `--provenance-bundle` and `--release-sbom` for release-assisted checks.
+`--release-sbom` accepts raw JSON or a bounded `.zip` containing
+root `manifest.spdx.json` and optionally `manifest.spdx.json.sha256` (exact 64-byte
+lowercase digest). The JSON limit is 1 MiB and the ZIP limit is 1 MiB + 64 KiB.
+Both wrapper and JSON are pinned; scope binds the JSON digest. Extract other ZIP layouts first.
+Native admission still rejects unsupported SPDX versions; wrapping does not establish authority.
+
+`--allow-network` acquires GitHub source and NuGet dependencies, **not** release assets or npm
+tarballs. Stage exact `.tgz` files with `npm pack --ignore-scripts <name>@<version>` only when
+network is authorized. Pass `--npm-archives <candidates.json>` using this assessor-side packet
+(not a manifest vendors must publish):
+
+```json
+{
+  "schema_version": 1,
+  "basis": "caller-designated-exact-npm-archives/1",
+  "root_sha256": "<assessed-nupkg-sha256>",
+  "sbom_sha256": "<raw-or-extracted-spdx-json-sha256>",
+  "archives": [
+ {"purl": "pkg:npm/%40scope/example@1.2.3", "path": "scope-example-1.2.3.tgz", "sha256": "<tarball-sha256>"}
+  ]
+}
+```
+
+Use actual lowercase digests, exact SBOM identities and portable paths relative to this JSON.
+Include every inventoried npm dependency, not just direct/runtime dependencies.
+Never fabricate missing archives or pins: unavailable evidence remains `not tested`.
+The hashes bind caller-designated archive bytes, not publisher authenticity.
 
 ## Pitfalls and nonclaims
 

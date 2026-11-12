@@ -235,14 +235,6 @@ static void ValidateCertificates(ReadOnlyMemory<byte> data)
             data.Span.Slice(cursor + length, alignedLength - length).ContainsAnyExcept((byte)0))
             throw new BadImageFormatException("Uninventoried WIN_CERTIFICATE alignment bytes.");
         var content = data.Slice(cursor + 8, length - 8);
-        if (content.Span.IndexOf("MZ"u8) >= 0 ||
-            content.Span.IndexOf("PK\x03\x04"u8) >= 0 ||
-            content.Span.IndexOf("PK\x01\x02"u8) >= 0 ||
-            content.Span.IndexOf("PK\x05\x06"u8) >= 0 ||
-            content.Span.IndexOf(new byte[] { 0x1f, 0x8b }) >= 0 ||
-            content.Span.IndexOf("MSCF"u8) >= 0 ||
-            content.Span.IndexOf(new byte[] { 0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c }) >= 0)
-            throw new BadImageFormatException("Potential PE or nested container in certificate data.");
         var reader = new AsnReader(content, AsnEncodingRules.DER);
         ReadOnlyMemory<byte> encoded = reader.ReadEncodedValue();
         ValidateDerTree(encoded);
@@ -853,12 +845,291 @@ static string MetadataSchema(int table) => table switch
     _ => throw new BadImageFormatException($"Unsupported metadata table {table}."),
 };
 
+private ref struct SignaturePreflight
+{
+    private const int MaxCount = ushort.MaxValue;
+    private const int MaxDepth = 32;
+    private const int MaxArrayRank = 32;
+    private readonly ReadOnlySpan<byte> bytes;
+    private int offset;
+
+    internal SignaturePreflight(ReadOnlySpan<byte> bytes)
+    {
+        if (bytes.Length > 1024 * 1024)
+            throw new BadImageFormatException("Metadata signature exceeds supported size.");
+        this.bytes = bytes;
+        offset = 0;
+    }
+
+    private int Remaining => bytes.Length - offset;
+    private byte PeekByte() => Remaining > 0
+        ? bytes[offset]
+        : throw new BadImageFormatException("Truncated metadata signature.");
+    private byte ReadByte() => Remaining > 0
+        ? bytes[offset++]
+        : throw new BadImageFormatException("Truncated metadata signature.");
+
+    private uint ReadCompressedUnsigned()
+    {
+        byte first = ReadByte();
+        if ((first & 0x80) == 0)
+            return first;
+        if ((first & 0xc0) == 0x80)
+            return (uint)(((first & 0x3f) << 8) | ReadByte());
+        if ((first & 0xe0) == 0xc0)
+            return (uint)(((first & 0x1f) << 24) |
+                          (ReadByte() << 16) | (ReadByte() << 8) | ReadByte());
+        throw new BadImageFormatException("Invalid compressed integer in metadata signature.");
+    }
+
+    private void ReadCompressedSigned() => _ = ReadCompressedUnsigned();
+
+    private int ReadCount(string kind)
+    {
+        uint count = ReadCompressedUnsigned();
+        if (count > MaxCount || count > Remaining)
+            throw new BadImageFormatException(
+                $"{kind} count exceeds supported or available signature bytes.");
+        return (int)count;
+    }
+
+    private static int Kind(byte header) => (header & 0x0f) switch
+    {
+        0x06 => 4,
+        0x07 => 17,
+        0x08 => 23,
+        0x0a => 43,
+        _ => 6,
+    };
+
+    private byte ReadHeader(int expected)
+    {
+        byte header = ReadByte();
+        if (Kind(header) != expected)
+            throw new BadImageFormatException("Unexpected metadata signature header.");
+        return header;
+    }
+
+    internal void ReadTopLevel(int table)
+    {
+        int kind = Kind(PeekByte());
+        switch (table, kind)
+        {
+            case (4, 4):
+            case (10, 4):
+                ReadField();
+                break;
+            case (6, 6):
+            case (10, 6):
+            case (17, 6):
+                ReadMethod(0);
+                break;
+            case (17, 17):
+                ReadLocals();
+                break;
+            case (23, 23):
+                ReadProperty();
+                break;
+            case (43, 43):
+                ReadMethodSpecification();
+                break;
+            default:
+                throw new BadImageFormatException(
+                    $"Unsupported signature kind in table {table}.");
+        }
+        ThrowIfNotEmpty();
+    }
+
+    internal void ReadMethodOnly()
+    {
+        ReadMethod(0);
+        ThrowIfNotEmpty();
+    }
+
+    internal void ReadTypeOnly()
+    {
+        ReadType(0, false);
+        ThrowIfNotEmpty();
+    }
+
+    private void ReadField()
+    {
+        _ = ReadHeader(4);
+        ReadType(0, false);
+    }
+
+    private void ReadLocals()
+    {
+        _ = ReadHeader(17);
+        int count = ReadCount("Local variable");
+        for (int index = 0; index < count; index++)
+            ReadType(0, false);
+    }
+
+    private void ReadProperty()
+    {
+        _ = ReadHeader(23);
+        int count = ReadCount("Property parameter");
+        ReadType(0, true);
+        for (int index = 0; index < count; index++)
+            ReadParameter(0);
+    }
+
+    private void ReadMethodSpecification()
+    {
+        _ = ReadHeader(43);
+        int count = ReadCount("Method specification argument");
+        for (int index = 0; index < count; index++)
+            ReadType(0, false);
+    }
+
+    private void ReadMethod(int depth)
+    {
+        CheckDepth(depth);
+        byte header = ReadHeader(6);
+        if ((header & 0x10) != 0)
+            _ = ReadCompressedUnsigned();
+        int count = ReadCount("Method parameter");
+        ReadType(depth + 1, true);
+        for (int index = 0; index < count; index++)
+            ReadParameter(depth + 1);
+    }
+
+    private void ReadParameter(int depth)
+    {
+        if (PeekByte() == 0x41)
+            _ = ReadByte();
+        ReadType(depth, false);
+    }
+
+    private void ReadType(int depth, bool allowVoid)
+    {
+        CheckDepth(depth);
+        while (PeekByte() is 0x1f or 0x20)
+        {
+            CheckDepth(++depth);
+            _ = ReadByte();
+            _ = ReadCompressedUnsigned();
+        }
+        byte code = ReadByte();
+        switch (code)
+        {
+            case 0x01 when allowVoid:
+            case >= 0x02 and <= 0x0e:
+            case 0x16:
+            case 0x18:
+            case 0x19:
+            case 0x1c:
+                return;
+            case 0x0f:
+                ReadType(depth + 1, true);
+                return;
+            case 0x10:
+            case 0x1d:
+            case 0x45:
+                ReadType(depth + 1, false);
+                return;
+            case 0x11:
+            case 0x12:
+            case 0x13:
+            case 0x1e:
+                _ = ReadCompressedUnsigned();
+                return;
+            case 0x14:
+                ReadArray(depth + 1);
+                return;
+            case 0x15:
+                ReadGenericInstantiation(depth + 1);
+                return;
+            case 0x1b:
+                ReadMethod(depth + 1);
+                return;
+            default:
+                throw new BadImageFormatException(
+                    $"Unsupported type code 0x{code:x2} in metadata signature.");
+        }
+    }
+
+    private void ReadGenericInstantiation(int depth)
+    {
+        byte kind = ReadByte();
+        if (kind is not (0x11 or 0x12))
+            throw new BadImageFormatException(
+                "Generic instantiation lacks a class or value-type token.");
+        _ = ReadCompressedUnsigned();
+        int count = ReadCount("Generic type argument");
+        for (int index = 0; index < count; index++)
+            ReadType(depth, false);
+    }
+
+    private void ReadArray(int depth)
+    {
+        ReadType(depth, false);
+        uint rank = ReadCompressedUnsigned();
+        if (rank is 0 or > MaxArrayRank)
+            throw new BadImageFormatException("Array rank exceeds supported signature shape.");
+        int sizes = ReadCount("Array size");
+        if ((uint)sizes > rank)
+            throw new BadImageFormatException("Array size count exceeds its rank.");
+        for (int index = 0; index < sizes; index++)
+            _ = ReadCompressedUnsigned();
+        int lowerBounds = ReadCount("Array lower-bound");
+        if ((uint)lowerBounds > rank)
+            throw new BadImageFormatException("Array lower-bound count exceeds its rank.");
+        for (int index = 0; index < lowerBounds; index++)
+            ReadCompressedSigned();
+    }
+
+    private static void CheckDepth(int depth)
+    {
+        if (depth > MaxDepth)
+            throw new BadImageFormatException(
+                "Metadata signature nesting exceeds supported depth.");
+    }
+
+    private void ThrowIfNotEmpty()
+    {
+        if (Remaining != 0)
+            throw new BadImageFormatException("Trailing metadata signature bytes.");
+    }
+}
+
+static void PreflightSignature(ReadOnlySpan<byte> signature, int table)
+{
+    var preflight = new SignaturePreflight(signature);
+    preflight.ReadTopLevel(table);
+}
+
+static void PreflightMethodSignature(ReadOnlySpan<byte> signature)
+{
+    var preflight = new SignaturePreflight(signature);
+    preflight.ReadMethodOnly();
+}
+
+static void PreflightTypeSignature(ReadOnlySpan<byte> signature)
+{
+    var preflight = new SignaturePreflight(signature);
+    preflight.ReadTypeOnly();
+}
+
+#if RESOLVER_TEST_HOOKS
+internal static void PreflightSignatureForTests(byte[] signature, int table) =>
+    PreflightSignature(signature, table);
+internal static void PreflightTypeSignatureForTests(byte[] signature) =>
+    PreflightTypeSignature(signature);
+#endif
+
 static void ValidateSignature(MetadataReader metadata, MetadataTypeProvider provider,
     int table, BlobHandle handle)
 {
     var reader = metadata.GetBlobReader(handle);
     if (reader.Length > 1024 * 1024)
         throw new BadImageFormatException("Metadata signature exceeds supported size.");
+    byte[] signature = metadata.GetBlobBytes(handle);
+    if (table == 27)
+        PreflightTypeSignature(signature);
+    else
+        PreflightSignature(signature, table);
     var decoder = new SignatureDecoder<string, object?>(provider, metadata, null);
     if (table is 4 or 6 or 10 or 17 or 23 or 43)
     {
@@ -913,6 +1184,9 @@ static void ValidateAttribute(MetadataReader metadata, MetadataTypeProvider prov
     if (constructorName != ".ctor")
         throw new BadImageFormatException($"Non-constructor custom attribute in row {row}.");
     var signatureReader = metadata.GetBlobReader(ctor);
+    if (signatureReader.Length > 1024 * 1024)
+        throw new BadImageFormatException("Metadata signature exceeds supported size.");
+    PreflightMethodSignature(metadata.GetBlobBytes(ctor));
     var decoder = new SignatureDecoder<string, object?>(provider, metadata, null);
     var signature = decoder.DecodeMethodSignature(ref signatureReader);
     if (signatureReader.RemainingBytes != 0 || signature.Header.Kind != SignatureKind.Method ||
@@ -1063,6 +1337,9 @@ sealed class MetadataTypeProvider(MetadataReader metadata) :
         {
             var signature = reader.GetTypeSpecification(handle).Signature;
             var blob = reader.GetBlobReader(signature);
+            if (blob.Length > 1024 * 1024)
+                throw new BadImageFormatException("Metadata signature exceeds supported size.");
+            PreflightTypeSignature(reader.GetBlobBytes(signature));
             var decoder = new SignatureDecoder<string, object?>(this, reader, context);
             string result = decoder.DecodeType(ref blob);
             if (blob.RemainingBytes != 0)

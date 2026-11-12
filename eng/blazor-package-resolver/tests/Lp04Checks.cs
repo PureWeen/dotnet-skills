@@ -352,19 +352,19 @@ internal static class Lp04Checks
         check(dotnetValidRes.BranchId == "provenance-notices-verified" && dotnetValidRes.Decision == "deterministic",
             "LP-04 Mode B accepts standard .NET Foundation header when root LICENSE attributes .NET Foundation");
 
-        var theAuthorsLicenseBytes = Encoding.UTF8.GetBytes(
-            "The MIT License (MIT)\nCopyright (c) 2026 The Authors\n\n" + CanonicalLicenseBody.Clauses("MIT"));
-        var dotnetMismatchPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", theAuthorsLicenseBytes), ("staticwebassets/scripts/app.js", dotnetHeaderJs));
+        var otherAuthorsLicenseBytes = Encoding.UTF8.GetBytes(
+            "The MIT License (MIT)\nCopyright (c) 2026 Example Authors Group\n\n" + CanonicalLicenseBody.Clauses("MIT"));
+        var dotnetMismatchPkg = BuildZip(("Example.Controls.nuspec", nuspec), ("LICENSE.txt", otherAuthorsLicenseBytes), ("staticwebassets/scripts/app.js", dotnetHeaderJs));
         var dotnetMismatchSrc = BuildZip(
             ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
-            ($"controls-{commit}/LICENSE.txt", theAuthorsLicenseBytes),
+            ($"controls-{commit}/LICENSE.txt", otherAuthorsLicenseBytes),
             ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
             ($"controls-{commit}/src/wwwroot/scripts/app.js", dotnetHeaderJs));
         var (dotnetMismatchBnd, dotnetMismatchAtt) = MakeProvenance(dotnetMismatchPkg, dotnetMismatchPkg, dotnetMismatchSrc);
         var dotnetMismatchRes = Dispatch5(dotnetMismatchPkg, dotnetMismatchPkg, dotnetMismatchBnd, dotnetMismatchAtt, dotnetMismatchSrc);
         check(dotnetMismatchRes.BranchId == "provenance-notices-unverified" &&
             dotnetMismatchRes.MissingFact!.Contains("inline copyright holder '.NET Foundation' is not covered", StringComparison.Ordinal),
-            "LP-04 Mode B extracts '.NET Foundation' (not 'the') and rejects when root LICENSE only attributes 'The Authors'");
+            "LP-04 Mode B extracts '.NET Foundation' (not 'the') and rejects when root LICENSE attributes another named holder");
 
         // Mode B negative: truncated root LICENSE.txt
         var truncatedLicensePkg = BuildZip(
@@ -759,6 +759,84 @@ internal static class Lp04Checks
             modeARes.BundledWebAssets!.Assets.Count == 1,
             "LP-04 Mode A bundled npm notice coverage verified");
 
+        CaseResult ResolveModeAInline(string banner)
+        {
+            var inline = Encoding.UTF8.GetBytes(banner + "\nexport const y = 2;\n");
+            var package = BuildZip(
+                ("Example.Controls.nuspec", nuspec),
+                ("LICENSE", licenseBytes),
+                ("THIRD-PARTY-LICENSES.md", tplBytes),
+                ("staticwebassets/bundle.js", inline),
+                ("readiness-bundler-manifest.json", Manifest(inline)));
+            var source = BuildZip(
+                ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+                ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+                ($"controls-{commit}/src/index.ts", sourceScript),
+                ($"controls-{commit}/src/output.js", inline),
+                ($"controls-{commit}/package.json", "{\"name\":\"controls\",\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"u8.ToArray()),
+                ($"controls-{commit}/package-lock.json",
+                    "{\"name\":\"controls\",\"lockfileVersion\":3,\"packages\":{\"\":{\"dependencies\":{\"lit-html\":\"^3.3.3\"}},\"node_modules/lit-html\":{\"version\":\"3.3.3\",\"license\":\"BSD-3-Clause\"}}}"u8.ToArray()));
+            var (bundle, attestation) = MakeProvenance(package, package, source);
+            return Dispatch5(package, package, bundle, attestation, source);
+        }
+
+        CaseResult ResolveModeBInline(string banner)
+        {
+            var inline = Encoding.UTF8.GetBytes(banner + "\nexport const x = 1;\n");
+            var package = BuildZip(
+                ("Example.Controls.nuspec", nuspec),
+                ("LICENSE.txt", licenseBytes),
+                ("staticwebassets/scripts/app.js", inline));
+            var source = BuildZip(
+                ($"controls-{commit}/.github/workflows/release.yml", "name: release\n"u8.ToArray()),
+                ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
+                ($"controls-{commit}/src/wwwroot/scripts/app.js", inline));
+            var (bundle, attestation) = MakeProvenance(package, package, source);
+            return Dispatch5(package, package, bundle, attestation, source);
+        }
+
+        foreach (var (layout, separator, modeAUnknown, modeAKnown, modeBUnknown, modeBKnown) in new[]
+        {
+            ("same-line", "|",
+                "/** @license Copyright 2017 Google LLC | CustomFoo */",
+                "/** @license Copyright 2017 Google LLC | BSD-3-Clause */",
+                "/** @license Copyright (c) 2026 Example Corp. | CustomFoo */",
+                "/** @license Copyright (c) 2026 Example Corp. | MIT */"),
+            ("same-line", ";",
+                "/** @license Copyright 2017 Google LLC;Licensed under CustomFoo */",
+                "/** @license Copyright 2017 Google LLC;Licensed under BSD-3-Clause */",
+                "/** @license Copyright (c) 2026 Example Corp.;Licensed under CustomFoo */",
+                "/** @license Copyright (c) 2026 Example Corp.;Licensed under MIT */"),
+            ("next-line", "|",
+                "/**\n * @license\n * Copyright 2017 Google LLC | CustomFoo\n */",
+                "/**\n * @license\n * Copyright 2017 Google LLC | BSD-3-Clause\n */",
+                "/**\n * @license\n * Copyright (c) 2026 Example Corp. | CustomFoo\n */",
+                "/**\n * @license\n * Copyright (c) 2026 Example Corp. | MIT\n */"),
+            ("next-line", ";",
+                "/**\n * @license\n * Copyright 2017 Google LLC;Licensed under CustomFoo\n */",
+                "/**\n * @license\n * Copyright 2017 Google LLC;Licensed under BSD-3-Clause\n */",
+                "/**\n * @license\n * Copyright (c) 2026 Example Corp.;Licensed under CustomFoo\n */",
+                "/**\n * @license\n * Copyright (c) 2026 Example Corp.;Licensed under MIT\n */")
+        })
+        {
+            var modeAUnknownResult = ResolveModeAInline(modeAUnknown);
+            check(modeAUnknownResult.BranchId == "provenance-notices-unverified" &&
+                modeAUnknownResult.MissingFact!.Contains("unrecognized license declaration", StringComparison.Ordinal),
+                $"LP-04 Mode A rejects {layout} copyright-first @license {separator} unknown clause: " +
+                $"{modeAUnknownResult.BranchId} ({modeAUnknownResult.MissingFact})");
+            check(ResolveModeAInline(modeAKnown).BranchId == "provenance-notices-verified",
+                $"LP-04 Mode A accepts {layout} copyright-first @license {separator} known clause");
+
+            var modeBUnknownResult = ResolveModeBInline(modeBUnknown);
+            check(modeBUnknownResult.BranchId == "provenance-notices-unverified" &&
+                modeBUnknownResult.MissingFact!.Contains("unrecognized license declaration", StringComparison.Ordinal),
+                $"LP-04 Mode B rejects {layout} copyright-first @license {separator} unknown clause");
+            check(ResolveModeBInline(modeBKnown).BranchId == "provenance-notices-verified",
+                $"LP-04 Mode B accepts {layout} copyright-first @license {separator} known clause");
+        }
+        check(ResolveModeAInline("/** @license Copyright 2017 Google LLC */").BranchId ==
+            "provenance-notices-verified", "LP-04 Mode A preserves copyright-only @license banner");
+
         using var jsonSourceZip = new ZipArchive(new MemoryStream(modeASrc), ZipArchiveMode.Read);
         var sourceEntries = jsonSourceZip.Entries.Select(entry =>
         {
@@ -958,6 +1036,24 @@ internal static class Lp04Checks
             "\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES ARE DISCLAIMED.";
         check(!CanonicalLicenseBody.Matches("BSD-3-Clause", incompleteBsd),
             "B3 old greater-than-180-character BSD fixture without canonical conditions must fail closed");
+        check(!CanonicalLicenseBody.Matches("MIT", "Copyright\n" + CanonicalLicenseBody.Mit),
+            "B3 bare Copyright prefix is not an attribution");
+        check(!CanonicalLicenseBody.Matches("MIT", "Copyrightnotice\n" + CanonicalLicenseBody.Mit),
+            "B3 Copyrightnotice prefix is not an attribution");
+        foreach (var holder in new[] { "notice", "The Authors", "Contributors" })
+            check(!CanonicalLicenseBody.Matches("MIT", "Copyright (c) 2026 " + holder + "\n" +
+                CanonicalLicenseBody.Mit),
+                "B3 generic placeholder does not establish a named holder: " + holder);
+        foreach (var attribution in new[]
+        {
+            "Copyright .NET Foundation",
+            "Copyright (c) .NET Foundation",
+            "Copyright © .NET Foundation",
+            "Copyright 2026 .NET Foundation",
+            "Copyright (c) 2020-2026 Example Corp."
+        })
+            check(CanonicalLicenseBody.Matches("MIT", attribution + "\n" + CanonicalLicenseBody.Mit),
+            "B3 canonical attribution accepts " + attribution);
 
         var hiddenPreambleTpl = Encoding.UTF8.GetBytes(Encoding.UTF8.GetString(tplBytes).Replace(
             "Copyright 2017 Google LLC\n", "Copyright 2017 Google LLC\nRedistribution and use in source\n" +
@@ -1077,6 +1173,45 @@ internal static class Lp04Checks
         check(viteResPos.BranchId == "provenance-notices-verified" && viteResPos.Decision == "deterministic" &&
             viteResPos.Finding!.Contains("@lit-labs/ssr-dom-shim@1.6.0, @types/trusted-types@2.0.7", StringComparison.Ordinal),
             $"LP-04 Vite build.license Mode A positive failed: {viteResPos.BranchId} ({viteResPos.MissingFact})");
+
+        var floatingUiScript =
+            "/** @license Copyright (c) 2021 Floating UI contributors | MIT */\nexport const computePosition = () => {};\n"u8.ToArray();
+        var floatingUiLock = viteLockWithExcluded.Replace(
+            "\"dependencies\":{\"@types/trusted-types\":\"^2.0.0\",\"@lit-labs/ssr-dom-shim\":\"^1.6.0\"}",
+            "\"dependencies\":{\"@types/trusted-types\":\"^2.0.0\",\"@lit-labs/ssr-dom-shim\":\"^1.6.0\",\"@floating-ui/dom\":\"^1.6.13\"}",
+            StringComparison.Ordinal).Replace(
+            "\"node_modules/@types/trusted-types\"",
+            "\"node_modules/@floating-ui/dom\":{\"version\":\"1.6.13\",\"license\":\"MIT\"},\"node_modules/@types/trusted-types\"",
+            StringComparison.Ordinal);
+        var floatingUiNotice = Encoding.UTF8.GetBytes(
+            Encoding.UTF8.GetString(viteTplBytes) +
+            "\n\n## @floating-ui/dom - 1.6.13 (MIT)\n\nCopyright (c) 2021 Floating UI contributors\n" +
+            CanonicalLicenseBody.Clauses("MIT"));
+        byte[] FloatingUiPackage(byte[] notices) => BuildZip(
+            ("Example.Controls.nuspec", nuspec),
+            ("LICENSE", licenseBytes),
+            ("THIRD-PARTY-LICENSES.md", notices),
+            ("staticwebassets/index.a1b2c3d4.bundle.js", bundledScript),
+            ("staticwebassets/floating-ui.dom.e5f6a7b8.bundle.js", floatingUiScript),
+            ("staticwebassets/themes/light/bootstrap.css", viteCss));
+        var floatingUiSrc = BuildViteSource(floatingUiLock);
+        var floatingUiPkg = FloatingUiPackage(floatingUiNotice);
+        var (floatingUiBnd, floatingUiAtt) = MakeProvenance(floatingUiPkg, floatingUiPkg, floatingUiSrc);
+        var floatingUiRes = Dispatch5(floatingUiPkg, floatingUiPkg, floatingUiBnd, floatingUiAtt, floatingUiSrc);
+        check(floatingUiRes.BranchId == "provenance-notices-verified" &&
+            floatingUiRes.Finding!.Contains("@floating-ui/dom", StringComparison.Ordinal),
+            $"LP-04 Vite accepts transitive @floating-ui/dom chunk name floating-ui.dom: {floatingUiRes.BranchId} ({floatingUiRes.MissingFact})");
+
+        var floatingUiMissingNoticePkg = FloatingUiPackage(viteTplBytes);
+        var (floatingMissingBnd, floatingMissingAtt) =
+            MakeProvenance(floatingUiMissingNoticePkg, floatingUiMissingNoticePkg, floatingUiSrc);
+        var floatingMissingRes = Dispatch5(floatingUiMissingNoticePkg, floatingUiMissingNoticePkg,
+            floatingMissingBnd, floatingMissingAtt, floatingUiSrc);
+        check(floatingMissingRes.BranchId == "provenance-notices-unverified" &&
+            floatingMissingRes.MissingFact!.Contains(
+                "missing a version-matched entry for runtime npm dependency @floating-ui/dom@1.6.13",
+                StringComparison.Ordinal),
+            "LP-04 Vite rejects transitive @floating-ui/dom chunk when its notice is missing");
 
         // Negative 1: extra notice section not in lockfile closure (noticeSections subset-of closure check)
         var extraSectionTpl = Encoding.UTF8.GetBytes(
@@ -1284,19 +1419,32 @@ internal static class Lp04Checks
         check(decoupledRes.BranchId == "provenance-notices-verified" && decoupledRes.Decision == "deterministic",
             $"LP-04 decoupled bundler-generated notice should verify without LP-10 Vite plan: {decoupledRes.BranchId} ({decoupledRes.MissingFact})");
 
-        // Decoupled LP-04 negative: malformed scripts field in package.json must not satisfy HasBundlerScriptInPackageJson
-        var malformedScriptsSrc = BuildZip(
+        // Decoupled LP-04 negatives: an early bundler match must not hide malformed later values.
+        byte[] BuildDecoupledSource(string packageJson) => BuildZip(
             ($"controls-{commit}/.github/workflows/release.yml", Encoding.UTF8.GetBytes(viteWorkflow)),
             ($"controls-{commit}/src/Example.Controls.csproj", "<Project Sdk=\"Microsoft.NET.Sdk.Razor\"/>"u8.ToArray()),
             ($"controls-{commit}/src/assets/index.ts", sourceScript),
             ($"controls-{commit}/src/vite.config.ts", "export default { customBundlerShape: true };\n"u8.ToArray()),
             ($"controls-{commit}/src/tsconfig.json", "{\"compilerOptions\":{\"outDir\":\"wwwroot\"}}"u8.ToArray()),
-            ($"controls-{commit}/src/package.json", "{\"name\":\"controls\",\"scripts\":123,\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"u8.ToArray()),
+            ($"controls-{commit}/src/package.json", Encoding.UTF8.GetBytes(packageJson)),
             ($"controls-{commit}/src/package-lock.json", Encoding.UTF8.GetBytes(viteLockWithExcluded)));
-        var (malScriptsBnd, malScriptsAtt) = MakeProvenance(decoupledPkg, decoupledPkg, malformedScriptsSrc);
-        var malScriptsRes = Dispatch5(decoupledPkg, decoupledPkg, malScriptsBnd, malScriptsAtt, malformedScriptsSrc);
-        check(malScriptsRes.BranchId == "provenance-notices-unverified",
-            "LP-04 decoupled bundler notice rejects malformed non-object scripts field in package.json");
+        foreach (var (label, packageJson) in new[]
+        {
+            ("early vite dependency plus malformed scripts",
+                "{\"name\":\"controls\",\"devDependencies\":{\"vite\":\"^5.0.0\"},\"scripts\":123,\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"),
+            ("early vite script plus later malformed script",
+                "{\"name\":\"controls\",\"scripts\":{\"build\":\"vite build\",\"later\":123},\"dependencies\":{\"lit-html\":\"^3.3.3\"}}"),
+            ("early vite dependency plus later malformed dependency",
+                "{\"name\":\"controls\",\"devDependencies\":{\"vite\":\"^5.0.0\",\"later\":123},\"dependencies\":{\"lit-html\":\"^3.3.3\"}}")
+        })
+        {
+            var malformedSource = BuildDecoupledSource(packageJson);
+            var (malformedBundle, malformedAttestation) =
+                MakeProvenance(decoupledPkg, decoupledPkg, malformedSource);
+            check(Dispatch5(decoupledPkg, decoupledPkg, malformedBundle,
+                    malformedAttestation, malformedSource).BranchId == "provenance-notices-unverified",
+                "LP-04 decoupled bundler notice rejects " + label);
+        }
 
         // Negative 7: Bundler-manifest path with package.json dependency version mismatching package-lock.json
         JsonCase("package.json range mismatching package-lock.json root dependency spec", "package.json",

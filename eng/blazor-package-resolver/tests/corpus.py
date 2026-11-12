@@ -1143,6 +1143,8 @@ def historical_parent_bytes(fixtures, name, allow_git=True):
         reconstructed = (fixtures / name).read_bytes().replace(b'"resolver_version": "1.1.0"', b'"resolver_version": "1.0.0"', 1)
     elif name in patches['cases']:
         doc = json.loads((fixtures / name).read_bytes())
+        if name == "pi01/cases.json":
+            reverse_pi01_certificate_magic_result_delta(doc)
         for case, (diff_top, diff_exp, removed_exp) in zip(doc['cases'], patches['cases'][name]):
             case.update(diff_top)
             for key in removed_exp:
@@ -1205,6 +1207,95 @@ def nuspec_namespace_version_delta(suite, row):
               result["resolver_id"] == resolver and result["resolver_version"] == before,
               "Unexpected historical nuspec namespace result identity: " + row)
         result["resolver_version"] = after
+
+
+def pi01_certificate_magic_result_delta(suite):
+    """Named PI-01 result-only correction; all package and PE bytes remain frozen."""
+    case_id = "pi01-signed-with-gzip-in-authenticode-content"
+    target = next((case for case in suite["cases"] if case["case_id"] == case_id), None)
+    control = next((case for case in suite["cases"]
+                    if case["case_id"] == "pi01-signed-with-authenticode-certificate"), None)
+    check(target is not None and control is not None, "Missing PI-01 certificate result controls")
+    identity = target["inputs"]
+    check(identity == [{
+        "role": "package",
+        "path": "packages/signed-with-gzip-in-authenticode-content.nupkg",
+        "sha256": "437926fe05221ba3eca1e6753700f461e3fff2dc01c798d5c37af02740f74826",
+    }], "Unexpected PI-01 gzip-digest input identity")
+    before = target["expected"]
+    check(before["branch_id"] == "unsafe-assembly" and
+          before["decision"] == "escalated" and before["applicability"] == "unknown" and
+          before["finding"] is None and
+          before["missing_fact"] == "Potential .NET assembly cannot be safely classified." and
+          before["required_input"] == "inspectable-complete-pe-cli-assembly" and
+          before["next_category"] == "package-owner",
+          "Unexpected historical PI-01 gzip-digest result")
+    prefix = ("Inspected PE/CLI candidates (sorted by ordinal path; "
+              "SHA-256 covers exact ZIP entry bytes): ")
+    target_records = json.loads(before["evidence_contract"].removeprefix(prefix))
+    control_records = json.loads(control["expected"]["evidence_contract"].removeprefix(prefix))
+    check(len(target_records) == len(control_records) == 1 and
+          target_records[0] == {
+              "path": "lib/net8.0/Sample.PI01.dll",
+              "sha256": "fed2745b8989ac1767c807dbdedd27961ec0122f4b77134d15ffa161f9ccbf22",
+              "size_bytes": 5408,
+              "state": "unsafe",
+          } and control_records[0]["state"] == "verified-signed" and
+          set(control_records[0]) == {
+              "cryptographic_evidence", "path", "sha256", "size_bytes", "state",
+          }, "Unexpected PI-01 certificate evidence shape")
+    target_records[0].update(
+        state="verified-signed",
+        cryptographic_evidence=control_records[0]["cryptographic_evidence"])
+    before.update(
+        branch_id="verified-signed",
+        decision="deterministic",
+        applicability="applicable",
+        evidence_contract=prefix + json.dumps(
+            target_records, sort_keys=True, separators=(",", ":")),
+        finding=("Every inventoried shipped .NET assembly has a cryptographically verified "
+                 "strong-name signature; PI-01 is met for this package."),
+        missing_fact=None,
+        required_input=None,
+        next_category=None)
+    target["rationale"] = (
+        "PI-01 signed-with-gzip-in-authenticode-content: every assembly RSA signature "
+        "verifies against its metadata public key.")
+
+
+def reverse_pi01_certificate_magic_result_delta(suite):
+    """Reconstruct the pre-correction result before applying historical parent patches."""
+    target = next((case for case in suite["cases"]
+                   if case["case_id"] == "pi01-signed-with-gzip-in-authenticode-content"), None)
+    check(target is not None, "Missing corrected PI-01 gzip-digest result")
+    result = target["expected"]
+    prefix = ("Inspected PE/CLI candidates (sorted by ordinal path; "
+              "SHA-256 covers exact ZIP entry bytes): ")
+    records = json.loads(result["evidence_contract"].removeprefix(prefix))
+    check(result["branch_id"] == "verified-signed" and
+          result["decision"] == "deterministic" and result["applicability"] == "applicable" and
+          result["finding"] == ("Every inventoried shipped .NET assembly has a cryptographically "
+                                "verified strong-name signature; PI-01 is met for this package.") and
+          result["missing_fact"] is None and result["required_input"] is None and
+          result["next_category"] is None and len(records) == 1 and
+          records[0]["state"] == "verified-signed" and
+          set(records[0]) == {
+              "cryptographic_evidence", "path", "sha256", "size_bytes", "state",
+          }, "Unexpected corrected PI-01 gzip-digest result")
+    records[0].pop("cryptographic_evidence")
+    records[0]["state"] = "unsafe"
+    result.update(
+        branch_id="unsafe-assembly",
+        decision="escalated",
+        applicability="unknown",
+        evidence_contract=prefix + json.dumps(records, sort_keys=True, separators=(",", ":")),
+        finding=None,
+        missing_fact="Potential .NET assembly cannot be safely classified.",
+        required_input="inspectable-complete-pe-cli-assembly",
+        next_category="package-owner")
+    target["rationale"] = (
+        "PI-01 signed-with-gzip-in-authenticode-content: a PE/CLI candidate cannot "
+        "safely establish assembly signing.")
 
 
 def tooling_fixes_delta(suite):
@@ -1300,8 +1391,11 @@ def check_parent_file(name, before, after):
     if name in ("pi01/cases.json", "pi01/acceptance.json"):
         expected = json.loads(before)
         nuspec_namespace_version_delta(expected, "PI-01")
+        if name == "pi01/cases.json":
+            pi01_certificate_magic_result_delta(expected)
         reviewed = (json.dumps(expected, indent=2, ensure_ascii=True) + "\n").encode()
-        check(after == reviewed, "Unreviewed PI-01 change outside nuspec-namespaces version delta: " + name)
+        check(after == reviewed,
+              "Unreviewed PI-01 change outside namespace and certificate-magic result deltas: " + name)
         return
     if name == "lp01/README.md":
         check(sha(before) == "93eaab58da17a9c14d687159edaa84ad134406c1e5b38ab78e523fa89a8fe039" and
@@ -1456,6 +1550,13 @@ def materialize(destination):
                 data = b"".join(chunks)
             else:
                 raise ValueError("Unsupported output recipe")
+            if name == "pi01/cases.json":
+                check(len(data) == 219969 and
+                      sha(data) == "3b067d70d08eb196eff4bcf5328e6638b3b32dbc7998737bf9da3585cd603107",
+                      "Unexpected historical PI-01 cases before reviewed result delta")
+                suite = json.loads(data)
+                pi01_certificate_magic_result_delta(suite)
+                data = (json.dumps(suite, indent=2, ensure_ascii=True) + "\n").encode()
             actual_recipes[name] = data
     check(len(pins) == len(lock["files"]) and set(pins) == set(actual_recipes), "Missing/extra outputs")
     check(sum(len(data) for data in actual_recipes.values()) <= 64 * 1024 * 1024, "Total byte limit")
@@ -1548,7 +1649,8 @@ def main():
         print("Corpus verified:", len(lock["files"]), "exact paths;",
               sum(pin[1] for pin in lock["files"]), "bytes; locked canonical outputs verified"
               " (only named LP-01 declaration, LP-02 public-availability, lp03-sbom-declarations-1.1.0"
-              ", nuspec-namespaces version-only and LP-04 D-lite result-only deltas are allowed against parent).")
+              ", nuspec-namespaces version-only, LP-04 D-lite result-only and PI-01 certificate-magic"
+              " result-only deltas are allowed against parent).")
     else:
         manifest = fixtures / ("cases.json" if args.row == "foundation" else args.row + "/cases.json")
         subprocess.run(["dotnet", "run", "--no-restore", "--project",

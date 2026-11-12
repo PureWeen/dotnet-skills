@@ -999,6 +999,35 @@ internal static class Lp10BoundaryChecks
                     ($"controls-{commit}/src/assets/index.ts", Encoding.UTF8.GetBytes(indexTsOverride ?? "export const load = () => import('lit-html');")),
                     ($"controls-{commit}/src/assets/lib.ts", "export const y = 2;"u8.ToArray()));
 
+            var runtimeSplitLock = Encoding.UTF8.GetBytes(
+                """{"lockfileVersion":3,"packages":{"":{"dependencies":{"lit-html":"^3.3.3"}},"node_modules/lit-html":{"version":"3.3.3","dependencies":{"@floating-ui/dom":"^1.8.0"}},"node_modules/@floating-ui/dom":{"version":"1.8.0"},"node_modules/dev-only":{"version":"1.0.0","dev":true}}}""");
+            var runtimeSplitSource = MakeViteSrc(lockJsonOverride: runtimeSplitLock);
+            foreach (var (stem, accepted) in new[]
+            {
+                ("floating-ui.dom", true), ("dom", false), ("other.dom", false),
+                ("dev-only", false), ("undeclared", false)
+            })
+            {
+                var splitPackage = BuildZip(
+                    ("Example.Controls.nuspec", nuspec),
+                    ("staticwebassets/index.js", builtJs),
+                    ($"staticwebassets/{stem}.2M8hrNeO.bundle.js", builtJs));
+                var splitBundle = BundleFor(splitPackage);
+                var result = Dispatch(splitPackage, splitPackage, splitBundle,
+                    BuildAttestation(splitPackage, splitPackage, splitBundle, runtimeSplitSource), runtimeSplitSource);
+                Check(result.BranchId == (accepted ? "provenance-attributed" : "provenance-unverified"),
+                    "Vite runtime-closure split chunk " + stem);
+            }
+            foreach (var filename in new[] { "floating-ui.dom.js", "floating-ui.dom.short.bundle.js", "vendor.js" })
+            {
+                var splitPackage = BuildZip(
+                    ("Example.Controls.nuspec", nuspec), ("staticwebassets/" + filename, builtJs));
+                var splitBundle = BundleFor(splitPackage);
+                Reject("Vite dependency split still requires the declared hash template: " + filename, () =>
+                    Dispatch(splitPackage, splitPackage, splitBundle,
+                        BuildAttestation(splitPackage, splitPackage, splitBundle, runtimeSplitSource), runtimeSplitSource));
+            }
+
             foreach (var (label, wf) in new (string, string)[]
             {
                 ("commented-out npm ci in workflow",
@@ -1262,8 +1291,9 @@ internal static class Lp10BoundaryChecks
                 "Expected dev-only Vite project omitting dependencies in package-lock.json packages[''] to be accepted");
 
             var commentedImportSrc = MakeViteSrc(indexTsOverride: "// import('lit-html');\nexport const x = 'import(\"lit-html\")';");
-            Reject("Vite commented-out or string-literal dynamic import", () => Dispatch(vitePkg, vitePkg, viteBundle,
-                BuildAttestation(vitePkg, vitePkg, viteBundle, commentedImportSrc), commentedImportSrc));
+            Check(Dispatch(vitePkg, vitePkg, viteBundle,
+                BuildAttestation(vitePkg, vitePkg, viteBundle, commentedImportSrc), commentedImportSrc).BranchId == "provenance-attributed",
+                "Vite runtime-closure chunks do not require explicit dynamic imports");
 
             foreach (var manifestEntryName in new[] { "readiness-bundler-manifest.json", "READINESS-BUNDLER-MANIFEST.JSON" })
             {

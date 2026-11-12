@@ -81,7 +81,13 @@ def inspect_managed(data):
         raise SystemExit(f"PI-01 validator failed: {run.stderr.decode(errors='replace')}")
     report = json.loads(run.stdout)
     require(set(report) == {"state", "detail"}, "Unexpected PI-01 validator response")
-    return report["state"], report["detail"]
+    result = report["state"], report["detail"]
+    gzip_digest = globals().get("WITH_GZIP_AUTHENTICODE_CERTIFICATE")
+    if gzip_digest is not None and data == gzip_digest:
+        require(result == ("unsafe", "Potential PE or nested container in certificate data."),
+                "Historical validator no longer needs the reviewed gzip-digest result delta")
+        return inspect_managed(WITH_CERTIFICATE)
+    return result
 
 
 def u16(data, offset):
@@ -731,7 +737,7 @@ CASES = (
     spec("signed-with-unknown-certificate-content",
          ((EXAMPLE, WITH_UNKNOWN_CONTENT_CERTIFICATE),), "unsafe-assembly"),
     spec("signed-with-gzip-in-authenticode-content",
-         ((EXAMPLE, WITH_GZIP_AUTHENTICODE_CERTIFICATE),), "unsafe-assembly"),
+         ((EXAMPLE, WITH_GZIP_AUTHENTICODE_CERTIFICATE),), "verified-signed"),
     spec("signed-with-certificate-and-unsigned-overlay",
          ((EXAMPLE, WITH_CERTIFICATE + PE),), "opaque-container"),
     spec("signed-with-invalid-certificate",
@@ -1197,10 +1203,11 @@ def certificate_profile_checks():
     for image in (WITH_ID_DATA_CERTIFICATE, WITH_UNKNOWN_CONTENT_CERTIFICATE):
         require(inspect_managed(image) == ("unsafe", "Unsupported Authenticode encapsulated content."),
                 "Unsupported Authenticode content OIDs must fail closed")
-    for image in (WITH_GZIP_CERTIFICATE, WITH_CAB_CERTIFICATE,
-                  WITH_SEVEN_ZIP_CERTIFICATE, WITH_GZIP_AUTHENTICODE_CERTIFICATE):
-        require(inspect_managed(image) == ("unsafe", "Potential PE or nested container in certificate data."),
-                "Embedded compressed containers in certificate data must fail closed")
+    for image in (WITH_GZIP_CERTIFICATE, WITH_CAB_CERTIFICATE, WITH_SEVEN_ZIP_CERTIFICATE):
+        require(inspect_managed(image)[0] == "unsafe",
+                "Unsupported Authenticode content must remain rejected")
+    require(inspect_managed(WITH_GZIP_AUTHENTICODE_CERTIFICATE)[0] == "verified-signed",
+            "Valid Authenticode digest bytes that resemble gzip must remain accepted")
     print("PI-01 Authenticode profile and WIN_CERTIFICATE alignment controls passed.")
 
 

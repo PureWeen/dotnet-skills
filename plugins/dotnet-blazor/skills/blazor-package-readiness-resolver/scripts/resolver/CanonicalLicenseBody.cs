@@ -286,7 +286,8 @@ internal static class CanonicalLicenseBody
         if (!grantStart.Success || Normalize(body[grantStart.Index..]) != canonical) return false;
         var lines = body[..grantStart.Index]
             .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return lines.Any(line => line.StartsWith("Copyright", StringComparison.OrdinalIgnoreCase)) &&
+        return Lp04NoticeCoverageResolver.ExtractCopyrightHolders(
+                body[..grantStart.Index], allowYearlessSymbol: true).Count > 0 &&
             lines.All(line => line.StartsWith("Copyright", StringComparison.OrdinalIgnoreCase) ||
                 line.Equals("All rights reserved.", StringComparison.OrdinalIgnoreCase) ||
                 line == spdx || line == spdx + " License" ||
