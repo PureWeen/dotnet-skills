@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <Import Project="..\..\plugins\dotnet-blazor\skills\blazor-package-readiness-resolver\scripts\resolver\Resolver.props" />
+</Project>
